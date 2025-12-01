@@ -27,13 +27,6 @@ export default function App() {
 
   return (
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "1.5rem" }}>
-      <header style={{ marginBottom: "1.5rem", display: "flex", justifyContent: "space-between" }}>
-        <h1 style={{ margin: 0 }}>Manity</h1>
-        <button onClick={() => setShowSettings((v) => !v)}>
-          {showSettings ? "Close settings" : "API settings"}
-        </button>
-      </header>
-
       {showSettings && (
         <section
           style={{
@@ -42,8 +35,16 @@ export default function App() {
             padding: "1rem",
             marginBottom: "1.5rem",
             background: "#fafafa",
+            position: "relative",
           }}
         >
+          <button
+            onClick={() => setShowSettings(false)}
+            style={{ position: "absolute", top: 12, right: 12 }}
+            aria-label="Close settings"
+          >
+            Close
+          </button>
           <h2>API key</h2>
           <p style={{ fontSize: "0.9rem" }}>
             Your API key is stored only in this browser (localStorage) and is sent only to the model provider when you explicitly make a
@@ -68,7 +69,7 @@ export default function App() {
       )}
 
       <main>
-        <ManityApp />
+        <ManityApp onOpenSettings={() => setShowSettings(true)} />
       </main>
     </div>
   );

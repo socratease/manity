@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare } from 'lucide-react';
+import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings } from 'lucide-react';
 
-export default function ManityApp() {
+export default function ManityApp({ onOpenSettings = () => {} }) {
   const timelineInputRef = useRef(null);
   const projectUpdateInputRef = useRef(null);
   
@@ -1015,6 +1015,13 @@ export default function ManityApp() {
           >
             <Plus size={18} />
             New Project
+          </button>
+          <button
+            onClick={onOpenSettings}
+            style={{ ...styles.navItem, ...styles.settingsButton }}
+          >
+            <Settings size={18} />
+            API Settings
           </button>
         </div>
       </div>
@@ -2032,6 +2039,14 @@ const styles = {
     gap: '8px',
     transition: 'all 0.2s ease',
     fontWeight: '500',
+  },
+
+  settingsButton: {
+    marginTop: '12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    border: '1px solid var(--cloud)',
   },
 
   main: {
