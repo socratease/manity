@@ -7,6 +7,11 @@ export default function App() {
   const [tempKey, setTempKey] = useState("");
   const [showSettings, setShowSettings] = useState(false);
 
+  const openSettings = () => {
+    setShowSettings(true);
+    setTempKey(apiKey ? "********" : "");
+  };
+
   useEffect(() => {
     if (apiKey) {
       setTempKey("********");
@@ -69,7 +74,7 @@ export default function App() {
       )}
 
       <main>
-        <ManityApp onOpenSettings={() => setShowSettings(true)} />
+        <ManityApp onOpenSettings={openSettings} />
       </main>
     </div>
   );
