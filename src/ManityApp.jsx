@@ -1,5 +1,29 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2 } from 'lucide-react';
+import {
+  Plus,
+  Users,
+  Clock,
+  TrendingUp,
+  CheckCircle2,
+  Circle,
+  ChevronRight,
+  MessageCircle,
+  Sparkles,
+  ArrowLeft,
+  Calendar,
+  AlertCircle,
+  AlertTriangle,
+  Edit2,
+  Send,
+  ChevronDown,
+  Check,
+  X,
+  MessageSquare,
+  Settings,
+  Lock,
+  Unlock,
+  Trash2
+} from 'lucide-react';
 
 const addIdsToActivities = (activities, prefix) =>
   activities.map((activity, idx) => ({
@@ -209,6 +233,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [projectUpdateCursorPosition, setProjectUpdateCursorPosition] = useState(0);
   const [activityEditEnabled, setActivityEditEnabled] = useState(false);
   const [activityEdits, setActivityEdits] = useState({});
+  const [projectDeletionUnlocked, setProjectDeletionUnlocked] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [deleteError, setDeleteError] = useState('');
 
   useEffect(() => {
     if (activityEditEnabled) {
@@ -347,6 +375,43 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       const { [activityId]: _, ...rest } = prev;
       return rest;
     });
+  };
+
+  const openProjectDeleteModal = (project) => {
+    if (!projectDeletionUnlocked) return;
+
+    setProjectToDelete(project);
+    setDeleteConfirmation('');
+    setDeleteError('');
+  };
+
+  const cancelProjectDeletion = () => {
+    setProjectToDelete(null);
+    setDeleteConfirmation('');
+    setDeleteError('');
+  };
+
+  const confirmProjectDeletion = () => {
+    if (!projectToDelete) return;
+
+    if (deleteConfirmation.trim() !== projectToDelete.name) {
+      setDeleteError('Project name does not match. Please type it exactly to confirm.');
+      return;
+    }
+
+    setProjects(prevProjects => prevProjects.filter(project => project.id !== projectToDelete.id));
+
+    if (viewingProjectId === projectToDelete.id) {
+      setViewingProjectId(null);
+    }
+    if (selectedProject?.id === projectToDelete.id) {
+      setSelectedProject(null);
+    }
+
+    setProjectToDelete(null);
+    setDeleteConfirmation('');
+    setDeleteError('');
+    setProjectDeletionUnlocked(false);
   };
 
   const toggleTask = (taskId) => {
@@ -778,6 +843,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const getStatusIcon = (status) => {
     if (status === 'completed') {
       return <CheckCircle2 size={16} style={{ color: 'var(--sage)' }} />;
+    } else if (status === 'closed') {
+      return <Lock size={16} style={{ color: 'var(--stone)' }} />;
     } else if (status === 'in-progress') {
       return <Clock size={16} style={{ color: 'var(--amber)' }} />;
     } else {
@@ -792,6 +859,29 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   };
 
   const viewingProject = viewingProjectId ? projects.find(p => p.id === viewingProjectId) : null;
+  const projectStatusWeight = {
+    active: 0,
+    'in-progress': 1,
+    planning: 2,
+    'on-hold': 3,
+    completed: 4,
+    closed: 5
+  };
+
+  const sortProjectsByStatusAndRecency = (list) => {
+    return [...list].sort((a, b) => {
+      const statusDiff = (projectStatusWeight[a.status] ?? 99) - (projectStatusWeight[b.status] ?? 99);
+      if (statusDiff !== 0) return statusDiff;
+
+      const aDate = new Date(a.recentActivity[0]?.date || a.targetDate || a.startDate).getTime();
+      const bDate = new Date(b.recentActivity[0]?.date || b.targetDate || b.startDate).getTime();
+      return bDate - aDate;
+    });
+  };
+
+  const sortedProjects = sortProjectsByStatusAndRecency(projects);
+  const activeProjects = sortedProjects.filter(p => !['completed', 'closed'].includes(p.status));
+  const completedProjects = sortedProjects.filter(p => ['completed', 'closed'].includes(p.status));
 
   useEffect(() => {
     if (showDailyCheckin && projects.length > 0 && !selectedProject) {
@@ -816,6 +906,15 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }
   }, [viewingProjectId]);
 
+  useEffect(() => {
+    if (activeView !== 'overview' || viewingProjectId) {
+      setProjectDeletionUnlocked(false);
+      setProjectToDelete(null);
+      setDeleteConfirmation('');
+      setDeleteError('');
+    }
+  }, [activeView, viewingProjectId]);
+
   const getPriorityColor = (priority) => {
     const colors = {
       high: 'var(--coral)',
@@ -824,6 +923,129 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     };
     return colors[priority] || 'var(--stone)';
   };
+
+  const renderProjectCard = (project, index, delayOffset = 0) => (
+    <div
+      key={project.id}
+      style={{
+        ...styles.projectCard,
+        animationDelay: `${(delayOffset + index) * 100}ms`
+      }}
+    >
+      <div style={styles.cardHeader}>
+        <div style={styles.cardTitleWrap}>
+          <div style={styles.cardTitleRow}>
+            <h3 style={styles.projectTitle}>{project.name}</h3>
+            <div
+              style={{
+                ...styles.priorityBadge,
+                backgroundColor: getPriorityColor(project.priority) + '20',
+                color: getPriorityColor(project.priority)
+              }}
+            >
+              {project.priority}
+            </div>
+          </div>
+          {projectDeletionUnlocked && (
+            <button
+              onClick={() => openProjectDeleteModal(project)}
+              style={styles.projectDeleteButton}
+              aria-label={`Delete ${project.name}`}
+            >
+              <Trash2 size={16} />
+            </button>
+          )}
+        </div>
+        <div style={styles.cardMetaRow}>
+          <div style={styles.stakeholders}>
+            <Users size={14} style={{ color: 'var(--stone)' }} />
+            <span style={styles.stakeholderText}>
+              {project.stakeholders.slice(0, 2).map(s => s.name).join(', ')}
+              {project.stakeholders.length > 2 && ` +${project.stakeholders.length - 2}`}
+            </span>
+          </div>
+          <span style={{ ...styles.statusBadgeSmall, textTransform: 'capitalize' }}>{project.status}</span>
+        </div>
+      </div>
+
+      <div style={styles.progressSection}>
+        <div style={styles.progressHeader}>
+          <span style={styles.progressLabel}>Progress</span>
+          <span style={styles.progressValue}>{project.progress}%</span>
+        </div>
+        <div style={styles.progressBar}>
+          <div
+            style={{
+              ...styles.progressFill,
+              width: `${project.progress}%`,
+              backgroundColor: getPriorityColor(project.priority)
+            }}
+          />
+        </div>
+      </div>
+
+      <div style={styles.updateSection}>
+        <div style={styles.updateLabel}>
+          <MessageCircle size={14} style={{ color: 'var(--stone)' }} />
+          Latest Update
+        </div>
+        <p style={styles.updateText}>{project.lastUpdate}</p>
+      </div>
+
+      {(() => {
+        const tasksNeedingAttention = [];
+        project.plan.forEach(task => {
+          task.subtasks.forEach(subtask => {
+            if (subtask.status !== 'completed') {
+              const dueDateInfo = formatDueDate(subtask.dueDate, subtask.status, subtask.completedDate);
+              if (dueDateInfo.isOverdue || dueDateInfo.isDueSoon) {
+                tasksNeedingAttention.push({
+                  title: subtask.title,
+                  dueDateInfo: dueDateInfo
+                });
+              }
+            }
+          });
+        });
+
+        if (tasksNeedingAttention.length > 0) {
+          return (
+            <div style={styles.actionsSection}>
+              <h4 style={styles.actionsSectionTitle}>Tasks Needing Attention</h4>
+              {tasksNeedingAttention.slice(0, 3).map((task, idx) => (
+                <div key={idx} style={styles.actionItemSmall}>
+                  <Circle size={8} style={{ color: task.dueDateInfo.color, marginTop: '6px' }} />
+                  <div style={styles.actionTextContent}>
+                    <span style={{
+                      ...styles.actionTextSmall,
+                      color: task.dueDateInfo.isOverdue ? 'var(--coral)' : 'var(--charcoal)'
+                    }}>
+                      {task.title}
+                    </span>
+                    <span style={styles.actionDueText}>Due {task.dueDateInfo.formattedDate} • {task.dueDateInfo.text}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        }
+        return null;
+      })()}
+
+      <div style={styles.cardFooter}>
+        <span style={styles.lastActivityText}>
+          Last activity: {formatDateTime(project.recentActivity[0]?.date)}
+        </span>
+        <button
+          onClick={() => setViewingProjectId(project.id)}
+          style={styles.cardButton}
+        >
+          View Details
+          <ChevronRight size={16} />
+        </button>
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -1041,6 +1263,59 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         </div>
       )}
 
+      {/* Project Deletion Modal */}
+      {projectToDelete && (
+        <div style={styles.modalOverlay}>
+          <div style={{ ...styles.modal, maxWidth: '520px' }}>
+            <div style={styles.modalHeader}>
+              <div style={{ ...styles.modalIconWrapper, backgroundColor: 'var(--coral)' + '15' }}>
+                <AlertTriangle size={24} style={{ color: 'var(--coral)' }} />
+              </div>
+              <h2 style={styles.modalTitle}>Delete project?</h2>
+              <p style={{ ...styles.modalSubtitle, color: 'var(--charcoal)' }}>
+                Deleting <strong>{projectToDelete.name}</strong> is permanent. Type the project name to confirm.
+              </p>
+            </div>
+
+            <div style={styles.modalBody}>
+              <p style={styles.dangerText}>This action cannot be undone.</p>
+              <input
+                type="text"
+                value={deleteConfirmation}
+                onChange={(e) => {
+                  setDeleteConfirmation(e.target.value);
+                  setDeleteError('');
+                }}
+                placeholder={`Type "${projectToDelete.name}" to confirm`}
+                style={styles.deleteConfirmInput}
+                autoFocus
+              />
+              {deleteError && <div style={styles.errorText}>{deleteError}</div>}
+            </div>
+
+            <div style={styles.modalActions}>
+              <button
+                onClick={confirmProjectDeletion}
+                style={{
+                  ...styles.dangerButton,
+                  opacity: deleteConfirmation.trim() === projectToDelete.name ? 1 : 0.5,
+                  cursor: deleteConfirmation.trim() === projectToDelete.name ? 'pointer' : 'not-allowed'
+                }}
+                disabled={deleteConfirmation.trim() !== projectToDelete.name}
+              >
+                Delete Project
+              </button>
+              <button
+                onClick={cancelProjectDeletion}
+                style={styles.skipButton}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Interface */}
       <div style={styles.sidebar}>
         <div style={styles.sidebarContent}>
@@ -1218,6 +1493,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                         <option value="active">Active</option>
                         <option value="on-hold">On Hold</option>
                         <option value="completed">Completed</option>
+                        <option value="closed">Closed</option>
                       </select>
                     ) : (
                       <span style={styles.statusBadgeSmall}>{viewingProject.status}</span>
@@ -1957,122 +2233,53 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               <div>
                 <h2 style={styles.pageTitle}>Your Projects</h2>
                 <p style={styles.pageSubtitle}>
-                  {projects.filter(p => p.status === 'active').length} active · {projects.length} total
+                  {activeProjects.length} active · {projects.length} total
                 </p>
               </div>
             </header>
 
-            <div style={styles.projectsGrid}>
-              {projects.map((project, index) => (
-                <div
-                  key={project.id}
-                  style={{
-                    ...styles.projectCard,
-                    animationDelay: `${index * 100}ms`
-                  }}
-                >
-                  <div style={styles.cardHeader}>
-                    <div style={styles.cardTitleRow}>
-                      <h3 style={styles.projectTitle}>{project.name}</h3>
-                      <div
-                        style={{
-                          ...styles.priorityBadge,
-                          backgroundColor: getPriorityColor(project.priority) + '20',
-                          color: getPriorityColor(project.priority)
-                        }}
-                      >
-                        {project.priority}
-                      </div>
-                    </div>
-                    <div style={styles.stakeholders}>
-                      <Users size={14} style={{ color: 'var(--stone)' }} />
-                      <span style={styles.stakeholderText}>
-                        {project.stakeholders.slice(0, 2).map(s => s.name).join(', ')}
-                        {project.stakeholders.length > 2 && ` +${project.stakeholders.length - 2}`}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div style={styles.progressSection}>
-                    <div style={styles.progressHeader}>
-                      <span style={styles.progressLabel}>Progress</span>
-                      <span style={styles.progressValue}>{project.progress}%</span>
-                    </div>
-                    <div style={styles.progressBar}>
-                      <div
-                        style={{
-                          ...styles.progressFill,
-                          width: `${project.progress}%`,
-                          backgroundColor: getPriorityColor(project.priority)
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div style={styles.updateSection}>
-                    <div style={styles.updateLabel}>
-                      <MessageCircle size={14} style={{ color: 'var(--stone)' }} />
-                      Latest Update
-                    </div>
-                    <p style={styles.updateText}>{project.lastUpdate}</p>
-                  </div>
-
-                  {/* Tasks Needing Attention */}
-                  {(() => {
-                    const tasksNeedingAttention = [];
-                    project.plan.forEach(task => {
-                      task.subtasks.forEach(subtask => {
-                        if (subtask.status !== 'completed') {
-                          const dueDateInfo = formatDueDate(subtask.dueDate, subtask.status, subtask.completedDate);
-                          if (dueDateInfo.isOverdue || dueDateInfo.isDueSoon) {
-                            tasksNeedingAttention.push({
-                              title: subtask.title,
-                              dueDateInfo: dueDateInfo
-                            });
-                          }
-                        }
-                      });
-                    });
-
-                    if (tasksNeedingAttention.length > 0) {
-                      return (
-                        <div style={styles.actionsSection}>
-                          <h4 style={styles.actionsSectionTitle}>Tasks Needing Attention</h4>
-                          {tasksNeedingAttention.slice(0, 3).map((task, idx) => (
-                            <div key={idx} style={styles.actionItemSmall}>
-                              <Circle size={8} style={{ color: task.dueDateInfo.color, marginTop: '6px' }} />
-                              <div style={styles.actionTextContent}>
-                                <span style={{
-                                  ...styles.actionTextSmall,
-                                  color: task.dueDateInfo.isOverdue ? 'var(--coral)' : 'var(--charcoal)'
-                                }}>
-                                  {task.title}
-                                </span>
-                                <span style={styles.actionDueText}>Due {task.dueDateInfo.formattedDate} • {task.dueDateInfo.text}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
-
-                  <div style={styles.cardFooter}>
-                    <span style={styles.lastActivityText}>
-                      Last activity: {formatDateTime(project.recentActivity[0]?.date)}
-                    </span>
-                    <button 
-                      onClick={() => setViewingProjectId(project.id)}
-                      style={styles.cardButton}
-                    >
-                      View Details
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
-                </div>
-              ))}
+            <div style={styles.overviewToolbar}>
+              <div>
+                <div style={styles.toolbarLabel}>Overview controls</div>
+                <p style={styles.toolbarHint}>Unlock deletion to permanently remove a project from Momentum.</p>
+              </div>
+              <button
+                onClick={() => setProjectDeletionUnlocked(!projectDeletionUnlocked)}
+                style={styles.activityLockButton}
+                title={projectDeletionUnlocked ? 'Lock to disable project deletion' : 'Unlock to delete projects'}
+              >
+                {projectDeletionUnlocked ? <Unlock size={18} /> : <Lock size={18} />}
+              </button>
             </div>
+
+            <div style={styles.sectionHeaderRow}>
+              <h3 style={styles.sectionTitle}>Active & Upcoming</h3>
+              <span style={styles.sectionHint}>
+                {activeProjects.length} project{activeProjects.length === 1 ? '' : 's'}
+              </span>
+            </div>
+
+            {activeProjects.length === 0 ? (
+              <div style={styles.emptyState}>
+                <p style={styles.emptyStateText}>No active projects. Completed items stay archived below.</p>
+              </div>
+            ) : (
+              <div style={styles.projectsGrid}>
+                {activeProjects.map((project, index) => renderProjectCard(project, index))}
+              </div>
+            )}
+
+            {completedProjects.length > 0 && (
+              <div style={styles.completedSection}>
+                <div style={styles.sectionHeaderRow}>
+                  <h3 style={styles.sectionTitle}>Completed & Closed</h3>
+                  <span style={styles.sectionHint}>Kept for reference at the bottom</span>
+                </div>
+                <div style={styles.projectsGrid}>
+                  {completedProjects.map((project, index) => renderProjectCard(project, index + activeProjects.length))}
+                </div>
+              </div>
+            )}
           </>
         )}
       </main>
@@ -2222,6 +2429,32 @@ const styles = {
     alignItems: 'flex-start',
   },
 
+  overviewToolbar: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    padding: '14px 0',
+    borderBottom: '1px solid var(--cloud)',
+    marginBottom: '12px',
+    gap: '12px',
+  },
+
+  toolbarLabel: {
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '700',
+    color: 'var(--charcoal)',
+    margin: 0,
+    letterSpacing: '0.3px',
+  },
+
+  toolbarHint: {
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--stone)',
+    margin: '4px 0 0 0',
+  },
+
   pageTitle: {
     fontSize: '28px',
     fontWeight: '600',
@@ -2234,6 +2467,40 @@ const styles = {
     fontSize: '14px',
     color: 'var(--stone)',
     margin: 0,
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  sectionHeaderRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    margin: '20px 0 12px 0',
+    gap: '12px',
+  },
+
+  sectionHint: {
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--stone)',
+  },
+
+  completedSection: {
+    marginTop: '24px',
+    paddingTop: '12px',
+    borderTop: '1px solid var(--cloud)',
+  },
+
+  emptyState: {
+    padding: '16px',
+    border: '1px dashed var(--cloud)',
+    borderRadius: '12px',
+    backgroundColor: '#FFFFFF',
+  },
+
+  emptyStateText: {
+    margin: 0,
+    fontSize: '14px',
+    color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
   },
 
@@ -2271,11 +2538,26 @@ const styles = {
     borderBottom: '1px solid var(--cloud)',
   },
 
+  cardTitleWrap: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'space-between',
+    gap: '12px',
+  },
+
   cardTitleRow: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     marginBottom: '8px',
+  },
+
+  cardMetaRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    gap: '12px',
+    flexWrap: 'wrap',
   },
 
   projectTitle: {
@@ -2300,6 +2582,20 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
+  },
+
+  projectDeleteButton: {
+    width: '36px',
+    height: '36px',
+    borderRadius: '10px',
+    border: '1px solid var(--cloud)',
+    backgroundColor: '#FFFFFF',
+    color: 'var(--coral)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
   },
 
   stakeholderText: {
@@ -2510,6 +2806,31 @@ const styles = {
     padding: '32px 40px 40px',
   },
 
+  dangerText: {
+    color: 'var(--coral)',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '700',
+    margin: '0 0 12px 0',
+  },
+
+  deleteConfirmInput: {
+    width: '100%',
+    padding: '12px',
+    borderRadius: '10px',
+    border: '1px solid var(--cloud)',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    boxSizing: 'border-box',
+  },
+
+  errorText: {
+    color: 'var(--coral)',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    marginTop: '8px',
+    fontWeight: '600',
+  },
+
   recentUpdatesSection: {
     marginBottom: '24px',
     padding: '16px',
@@ -2711,6 +3032,20 @@ const styles = {
     gap: '8px',
     transition: 'all 0.2s ease',
     boxShadow: '0 4px 12px rgba(139, 111, 71, 0.3)',
+  },
+
+  dangerButton: {
+    padding: '14px 20px',
+    borderRadius: '10px',
+    border: 'none',
+    backgroundColor: 'var(--coral)',
+    color: '#FFFFFF',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '700',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 6px 18px rgba(214, 124, 92, 0.3)',
   },
 
   skipButton: {
