@@ -209,6 +209,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [projectUpdateCursorPosition, setProjectUpdateCursorPosition] = useState(0);
   const [activityEditEnabled, setActivityEditEnabled] = useState(false);
   const [activityEdits, setActivityEdits] = useState({});
+  const [loggedInUser, setLoggedInUser] = useState(() =>
+    (projects[0]?.stakeholders?.[0]?.name) || ''
+  );
+  const [focusedField, setFocusedField] = useState(null);
 
   useEffect(() => {
     if (activityEditEnabled) {
@@ -230,23 +234,23 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const handleDailyCheckin = (projectId) => {
     if (checkinNote.trim()) {
-      setProjects(projects.map(p => 
-        p.id === projectId 
+      setProjects(projects.map(p =>
+        p.id === projectId
           ? {
               ...p,
               recentActivity: [
-                { id: generateActivityId(), date: new Date().toISOString(), note: checkinNote, author: 'You' },
+                { id: generateActivityId(), date: new Date().toISOString(), note: checkinNote, author: loggedInUser },
                 ...p.recentActivity
               ]
             }
           : p
       ));
       setCheckinNote('');
-      
+
       // Move to next project or close if done
-      const currentIndex = projects.findIndex(p => p.id === projectId);
-      if (currentIndex < projects.length - 1) {
-        setSelectedProject(projects[currentIndex + 1]);
+      const currentIndex = visibleProjects.findIndex(p => p.id === projectId);
+      if (currentIndex < visibleProjects.length - 1) {
+        setSelectedProject(visibleProjects[currentIndex + 1]);
       } else {
         setShowDailyCheckin(false);
         setSelectedProject(null);
@@ -261,7 +265,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
           ? {
               ...p,
               recentActivity: [
-                { id: generateActivityId(), date: new Date().toISOString(), note: newUpdate, author: 'You' },
+                { id: generateActivityId(), date: new Date().toISOString(), note: newUpdate, author: loggedInUser },
                 ...p.recentActivity
               ]
             }
@@ -419,7 +423,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
             stakeholders: stakeholdersArray,
             description: editValues.description,
             recentActivity: [
-              { id: generateActivityId(), date: new Date().toISOString(), note: 'Updated project details', author: 'You' },
+              { id: generateActivityId(), date: new Date().toISOString(), note: 'Updated project details', author: loggedInUser },
               ...p.recentActivity
             ]
           }
@@ -534,7 +538,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                   id: generateActivityId(),
                   date: new Date().toISOString(),
                   note: subtaskComment, // Just the comment text, not the prefix
-                  author: 'You',
+                  author: loggedInUser,
                   taskContext: { taskId, subtaskId, taskTitle, subtaskTitle }
                 },
                 ...p.recentActivity
@@ -594,10 +598,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   // Get all possible tags for autocomplete
   const getAllTags = () => {
     const tags = [];
-    
+
     // Add all unique stakeholders
     const allStakeholders = new Set();
-    projects.forEach(p => {
+    visibleProjects.forEach(p => {
       p.stakeholders.forEach(s => {
         const stakeholderString = `${s.name} (${s.team})`;
         allStakeholders.add(stakeholderString);
@@ -608,9 +612,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     });
     
     // Add all projects
-    projects.forEach(p => {
+    visibleProjects.forEach(p => {
       tags.push({ type: 'project', value: p.id, display: p.name });
-      
+
       // Add all tasks and subtasks
       p.plan.forEach(task => {
         tags.push({ type: 'task', value: task.id, display: `${p.name} → ${task.title}`, projectId: p.id });
@@ -714,19 +718,33 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     return parts.length > 0 ? parts : [{ type: 'text', content: text }];
   };
 
+  const getAllStakeholders = () => {
+    const stakeholderMap = new Map();
+    projects.forEach(project => {
+      project.stakeholders.forEach(stakeholder => {
+        if (!stakeholderMap.has(stakeholder.name)) {
+          stakeholderMap.set(stakeholder.name, stakeholder);
+        }
+      });
+    });
+    return Array.from(stakeholderMap.values());
+  };
+
+  const visibleProjects = projects.filter(project =>
+    project.stakeholders.some(stakeholder => stakeholder.name === loggedInUser)
+  );
+
   const handleAddTimelineUpdate = () => {
     if (timelineUpdate.trim()) {
-      // Determine which project to add to (for now, add to first project)
-      // In a real app, you might want to let user select or detect from tags
-      const targetProjectId = projects[0]?.id;
-      
+      const targetProjectId = viewingProjectId || visibleProjects[0]?.id;
+
       if (targetProjectId) {
         setProjects(projects.map(p =>
           p.id === targetProjectId
             ? {
                 ...p,
                 recentActivity: [
-                  { id: generateActivityId(), date: new Date().toISOString(), note: timelineUpdate, author: 'You' },
+                  { id: generateActivityId(), date: new Date().toISOString(), note: timelineUpdate, author: loggedInUser },
                   ...p.recentActivity
                 ]
               }
@@ -740,8 +758,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const getAllActivities = () => {
     const allActivities = [];
-    
-    projects.forEach(project => {
+
+    visibleProjects.forEach(project => {
       project.recentActivity.forEach(activity => {
         allActivities.push({
           ...activity,
@@ -794,10 +812,32 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const viewingProject = viewingProjectId ? projects.find(p => p.id === viewingProjectId) : null;
 
   useEffect(() => {
-    if (showDailyCheckin && projects.length > 0 && !selectedProject) {
-      setSelectedProject(projects[0]);
+    const stakeholders = getAllStakeholders();
+    if (!loggedInUser && stakeholders.length > 0) {
+      setLoggedInUser(stakeholders[0].name);
+    } else if (loggedInUser && stakeholders.length > 0 && !stakeholders.some(s => s.name === loggedInUser)) {
+      setLoggedInUser(stakeholders[0].name);
     }
-  }, [showDailyCheckin]);
+  }, [projects, loggedInUser]);
+
+  useEffect(() => {
+    if (viewingProjectId && !visibleProjects.some(p => p.id === viewingProjectId)) {
+      setViewingProjectId(null);
+    }
+  }, [loggedInUser, viewingProjectId, visibleProjects]);
+
+  useEffect(() => {
+    if (!showDailyCheckin) return;
+
+    if (visibleProjects.length > 0 && (!selectedProject || !visibleProjects.some(p => p.id === selectedProject.id))) {
+      setSelectedProject(visibleProjects[0]);
+    }
+
+    if (showDailyCheckin && visibleProjects.length === 0) {
+      setShowDailyCheckin(false);
+      setSelectedProject(null);
+    }
+  }, [showDailyCheckin, visibleProjects, selectedProject]);
 
   useEffect(() => {
     // Auto-expand all tasks when viewing a project
@@ -824,6 +864,13 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     };
     return colors[priority] || 'var(--stone)';
   };
+
+  const renderEditingHint = (field) =>
+    focusedField === field ? (
+      <div style={styles.editingAsHint}>
+        editing as <span style={styles.editingAsName}>{loggedInUser}</span>
+      </div>
+    ) : null;
 
   return (
     <>
@@ -966,10 +1013,14 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                     handleDailyCheckin(selectedProject.id);
                   }
                 }}
+                onFocus={() => setFocusedField('daily-checkin')}
+                onBlur={() => setFocusedField(null)}
                 placeholder="Share any updates, blockers, or progress made..."
                 style={styles.textarea}
                 autoFocus
               />
+
+              {renderEditingHint('daily-checkin')}
 
               <div style={styles.modalActions}>
                 <button
@@ -983,9 +1034,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                 <button
                   onClick={() => {
                     // Skip to next project
-                    const currentIndex = projects.findIndex(p => p.id === selectedProject.id);
-                    if (currentIndex < projects.length - 1) {
-                      setSelectedProject(projects[currentIndex + 1]);
+                    const currentIndex = visibleProjects.findIndex(p => p.id === selectedProject.id);
+                    if (currentIndex < visibleProjects.length - 1) {
+                      setSelectedProject(visibleProjects[currentIndex + 1]);
                       setCheckinNote('');
                     } else {
                       setShowDailyCheckin(false);
@@ -1025,13 +1076,13 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               </p>
 
               <div style={styles.progressIndicator}>
-                {projects.map((p, idx) => (
+                {visibleProjects.map((p, idx) => (
                   <div
                     key={p.id}
                     style={{
                       ...styles.progressDot,
                       backgroundColor: p.id === selectedProject.id ? 'var(--amber)' : 'var(--cloud)',
-                      opacity: idx <= projects.indexOf(selectedProject) ? 1 : 0.3
+                      opacity: idx <= visibleProjects.indexOf(selectedProject) ? 1 : 0.3
                     }}
                   />
                 ))}
@@ -1077,7 +1128,12 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               Timeline
             </button>
             <button
-              onClick={() => setShowDailyCheckin(true)}
+              onClick={() => {
+                if (visibleProjects.length > 0) {
+                  setSelectedProject(visibleProjects[0]);
+                  setShowDailyCheckin(true);
+                }
+              }}
               style={styles.navItem}
             >
               Daily Check-in
@@ -1095,16 +1151,40 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
           </div>
         </div>
 
-        <button
-          onClick={onOpenSettings}
-          style={styles.settingsIconButton}
-          aria-label="Open settings"
-        >
-          <Settings size={18} />
-        </button>
       </div>
 
       <main style={styles.main}>
+        <div style={styles.topBar}>
+          <div />
+          <div style={styles.topBarRight}>
+            <div style={styles.userIndicator}>
+              <div style={styles.userAvatar}>{(loggedInUser || '?').split(' ').map(n => n[0]).join('')}</div>
+              <div style={styles.userDetails}>
+                <span style={styles.userLabel}>Logged in</span>
+                <select
+                  value={loggedInUser}
+                  onChange={(e) => setLoggedInUser(e.target.value)}
+                  style={styles.userSelect}
+                  aria-label="Select logged in user"
+                >
+                  {getAllStakeholders().map(stakeholder => (
+                    <option key={stakeholder.name} value={stakeholder.name}>
+                      {stakeholder.name} ({stakeholder.team})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            </div>
+            <button
+              onClick={onOpenSettings}
+              style={styles.settingsIconButton}
+              aria-label="Open settings"
+            >
+              <Settings size={18} />
+            </button>
+          </div>
+        </div>
+
         {viewingProject ? (
           // Project Details View
           <div style={styles.detailsContainer}>
@@ -1120,11 +1200,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               <div>
                 <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
                 {editMode ? (
-                  <textarea
-                    value={editValues.description}
-                    onChange={(e) => setEditValues({...editValues, description: e.target.value})}
-                    style={{...styles.detailsDescription, ...styles.editTextarea, minHeight: '80px'}}
-                  />
+                  <>
+                    <textarea
+                      value={editValues.description}
+                      onChange={(e) => setEditValues({...editValues, description: e.target.value})}
+                      onFocus={() => setFocusedField('project-description')}
+                      onBlur={() => setFocusedField(null)}
+                      style={{...styles.detailsDescription, ...styles.editTextarea, minHeight: '80px'}}
+                    />
+                    {renderEditingHint('project-description')}
+                  </>
                 ) : (
                   <p style={styles.detailsDescription}>{viewingProject.description}</p>
                 )}
@@ -1301,12 +1386,17 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               <div style={styles.compactCard}>
                 <h4 style={styles.compactCardTitle}>Stakeholders</h4>
                 {editMode ? (
-                  <textarea
-                    value={editValues.stakeholders}
-                    onChange={(e) => setEditValues({...editValues, stakeholders: e.target.value})}
-                    style={{...styles.editTextarea, minHeight: '60px', fontSize: '13px'}}
-                    placeholder="Name, Team (one per line)"
-                  />
+                  <>
+                    <textarea
+                      value={editValues.stakeholders}
+                      onChange={(e) => setEditValues({...editValues, stakeholders: e.target.value})}
+                      onFocus={() => setFocusedField('stakeholders')}
+                      onBlur={() => setFocusedField(null)}
+                      style={{...styles.editTextarea, minHeight: '60px', fontSize: '13px'}}
+                      placeholder="Name, Team (one per line)"
+                    />
+                    {renderEditingHint('stakeholders')}
+                  </>
                 ) : (
                   <div style={styles.stakeholderCompactList}>
                     {viewingProject.stakeholders.map((stakeholder, idx) => (
@@ -1496,10 +1586,13 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                                         <textarea
                                           value={subtaskComment}
                                           onChange={(e) => setSubtaskComment(e.target.value)}
+                                          onFocus={() => setFocusedField('subtask-comment')}
+                                          onBlur={() => setFocusedField(null)}
                                           placeholder="Add a comment..."
                                           style={styles.commentInput}
                                           autoFocus
                                         />
+                                        {renderEditingHint('subtask-comment')}
                                         <div style={styles.commentActions}>
                                           <button
                                             onClick={() => handleSubtaskComment(task.id, subtask.id, task.title, subtask.title)}
@@ -1677,9 +1770,12 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                       ref={projectUpdateInputRef}
                       value={newUpdate}
                       onChange={handleProjectUpdateChange}
+                      onFocus={() => setFocusedField('project-update')}
+                      onBlur={() => setFocusedField(null)}
                       placeholder="Add an update... Use @ to tag"
                       style={styles.projectUpdateInput}
                     />
+                    {renderEditingHint('project-update')}
                     
                     {/* Tag Suggestions Dropdown */}
                     {showProjectTagSuggestions && (
@@ -1762,8 +1858,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                               <textarea
                                 value={activityEdits[activity.id] ?? activity.note}
                                 onChange={(e) => updateActivityNote(activity.id, e.target.value)}
+                                onFocus={() => setFocusedField(`activity-${activity.id}`)}
+                                onBlur={() => setFocusedField(null)}
                                 style={styles.activityNoteInput}
                               />
+                              {renderEditingHint(`activity-${activity.id}`)}
                               <button
                                 style={styles.activityDeleteButton}
                                 onClick={() => deleteActivity(activity.id)}
@@ -1803,7 +1902,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               <div>
                 <h2 style={styles.pageTitle}>Timeline</h2>
                 <p style={styles.pageSubtitle}>
-                  Activity across all {projects.length} projects
+                  Activity across all {visibleProjects.length} projects
                 </p>
               </div>
             </header>
@@ -1826,9 +1925,12 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                     ref={timelineInputRef}
                     value={timelineUpdate}
                     onChange={handleTimelineUpdateChange}
+                    onFocus={() => setFocusedField('timeline-update')}
+                    onBlur={() => setFocusedField(null)}
                     placeholder="What's new? Use @ to tag people, projects, or tasks..."
                     style={styles.timelineInput}
                   />
+                  {renderEditingHint('timeline-update')}
                   
                   {/* Tag Suggestions Dropdown */}
                   {showTagSuggestions && (
@@ -1917,8 +2019,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                             <textarea
                               value={activityEdits[activity.id] ?? activity.note}
                               onChange={(e) => updateActivityNote(activity.id, e.target.value)}
+                              onFocus={() => setFocusedField(`activity-${activity.id}`)}
+                              onBlur={() => setFocusedField(null)}
                               style={styles.activityNoteInput}
                             />
+                            {renderEditingHint(`activity-${activity.id}`)}
                             <button
                               style={styles.activityDeleteButton}
                               onClick={() => deleteActivity(activity.id)}
@@ -1957,13 +2062,18 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               <div>
                 <h2 style={styles.pageTitle}>Your Projects</h2>
                 <p style={styles.pageSubtitle}>
-                  {projects.filter(p => p.status === 'active').length} active · {projects.length} total
+                  {visibleProjects.filter(p => p.status === 'active').length} active · {visibleProjects.length} total
                 </p>
               </div>
             </header>
 
             <div style={styles.projectsGrid}>
-              {projects.map((project, index) => (
+              {visibleProjects.length === 0 ? (
+                <div style={styles.emptyState}>
+                  No projects assigned to {loggedInUser}. Select another person to see their work.
+                </div>
+              ) : (
+                visibleProjects.map((project, index) => (
                 <div
                   key={project.id}
                   style={{
@@ -2071,7 +2181,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                     </button>
                   </div>
                 </div>
-              ))}
+              ))
+            )}
             </div>
           </>
         )}
@@ -2206,6 +2317,92 @@ const styles = {
     color: 'var(--stone)',
     transition: 'all 0.2s ease',
     alignSelf: 'flex-start',
+  },
+
+  topBar: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '24px',
+  },
+
+  topBarRight: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+  },
+
+  userIndicator: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '8px 12px',
+    border: '1px solid var(--cloud)',
+    borderRadius: '12px',
+    backgroundColor: '#fff',
+    boxShadow: '0 4px 10px rgba(0,0,0,0.05)',
+  },
+
+  userAvatar: {
+    width: '32px',
+    height: '32px',
+    borderRadius: '50%',
+    backgroundColor: 'var(--earth)',
+    color: '#fff',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontWeight: 700,
+    fontFamily: "'Inter', sans-serif",
+    letterSpacing: '0.2px',
+  },
+
+  userDetails: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+
+  userLabel: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  userSelect: {
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    padding: '6px 8px',
+    fontFamily: "'Inter', sans-serif",
+    fontSize: '14px',
+    color: 'var(--charcoal)',
+    backgroundColor: '#fff',
+    minWidth: '180px',
+  },
+
+  editingAsHint: {
+    marginTop: '6px',
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  editingAsName: {
+    fontWeight: 600,
+    color: 'var(--charcoal)',
+  },
+
+  emptyState: {
+    gridColumn: '1 / -1',
+    padding: '24px',
+    border: '1px dashed var(--cloud)',
+    borderRadius: '12px',
+    textAlign: 'center',
+    backgroundColor: '#fff',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
   },
 
   main: {
