@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw } from 'lucide-react';
+import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, ChevronLeft } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
 
@@ -57,6 +57,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   ];
   const [loggedInUser, setLoggedInUser] = useState('');
   const [focusedField, setFocusedField] = useState(null);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
 
   const triggerImport = () => {
     if (importInputRef.current) {
@@ -1641,8 +1642,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
       )}
 
       {/* Main Interface */}
-      <div style={styles.sidebar}>
-        <div style={styles.sidebarContent}>
+      <div style={{ ...styles.sidebar, ...(sidebarCollapsed ? styles.sidebarCollapsed : {}) }}>
+        <div style={{ ...styles.sidebarContent, ...(sidebarCollapsed ? styles.sidebarContentCollapsed : {}) }}>
           <div style={styles.logo}>
             <div style={styles.logoIcon}>
               <TrendingUp size={24} style={{ color: 'var(--earth)' }} />
@@ -1713,7 +1714,19 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
       </div>
 
-      <main style={styles.main}>
+      <button
+        onClick={() => setSidebarCollapsed(prev => !prev)}
+        style={{
+          ...styles.sidebarCollapseHandle,
+          ...(sidebarCollapsed ? styles.sidebarCollapseHandleCollapsed : {})
+        }}
+        aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        type="button"
+      >
+        {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+      </button>
+
+      <main style={{ ...styles.main, ...(sidebarCollapsed ? styles.mainExpanded : {}) }}>
         <div style={styles.topBar}>
           <div />
           <div style={styles.topBarRight}>
@@ -2166,6 +2179,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                           onChange={(e) => setSubtaskComment(e.target.value)}
                                           onFocus={() => setFocusedField('subtask-comment')}
                                           onBlur={() => setFocusedField(null)}
+                                          onKeyDown={(e) => {
+                                            if (e.ctrlKey && e.key === 'Enter') {
+                                              e.preventDefault();
+                                              handleSubtaskComment(task.id, subtask.id, task.title, subtask.title);
+                                            }
+                                          }}
                                           placeholder="Add a comment..."
                                           style={styles.commentInput}
                                           autoFocus
@@ -2350,6 +2369,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                       onChange={handleProjectUpdateChange}
                       onFocus={() => setFocusedField('project-update')}
                       onBlur={() => setFocusedField(null)}
+                      onKeyDown={(e) => {
+                        if (e.ctrlKey && e.key === 'Enter') {
+                          e.preventDefault();
+                          handleAddUpdate();
+                        }
+                      }}
                       placeholder="Add an update... Use @ to tag"
                       style={styles.projectUpdateInput}
                     />
@@ -2505,6 +2530,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     onChange={handleTimelineUpdateChange}
                     onFocus={() => setFocusedField('timeline-update')}
                     onBlur={() => setFocusedField(null)}
+                    onKeyDown={(e) => {
+                      if (e.ctrlKey && e.key === 'Enter') {
+                        e.preventDefault();
+                        handleAddTimelineUpdate();
+                      }
+                    }}
                     placeholder="What's new? Use @ to tag people, projects, or tasks..."
                     style={styles.timelineInput}
                   />
@@ -2761,6 +2792,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     onChange={(e) => setThrustDraft(e.target.value)}
                     onFocus={() => setFocusedField('thrust-draft')}
                     onBlur={() => setFocusedField(null)}
+                    onKeyDown={(e) => {
+                      if (e.ctrlKey && e.key === 'Enter') {
+                        e.preventDefault();
+                        handleSendThrustMessage();
+                      }
+                    }}
                     placeholder="Share a Momentum update..."
                     style={{ ...styles.timelineInput, minHeight: '96px' }}
                   />
@@ -2820,7 +2857,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                               style={styles.momentumProjectToggle}
                               onClick={() => setExpandedMomentumProjects(prev => ({
                                 ...prev,
-                                [project.id]: !isExpanded
+                                [project.id]: !prev[project.id]
                               }))}
                               type="button"
                               aria-expanded={isExpanded}
@@ -2993,6 +3030,7 @@ const styles = {
     width: '100%',
     backgroundColor: 'var(--cream)',
     fontFamily: "'Crimson Pro', Georgia, serif",
+    position: 'relative',
     '--earth': '#8B6F47',
     '--sage': '#7A9B76',
     '--coral': '#D67C5C',
@@ -3014,6 +3052,14 @@ const styles = {
     padding: '32px clamp(16px, 3vw, 24px)',
     boxSizing: 'border-box',
     flexShrink: 0,
+    transition: 'width 0.2s ease, padding 0.2s ease, transform 0.2s ease',
+  },
+
+  sidebarCollapsed: {
+    width: '0px',
+    padding: '32px 0',
+    overflow: 'hidden',
+    borderRight: 'none',
   },
 
   sidebarContent: {
@@ -3021,6 +3067,12 @@ const styles = {
     flexDirection: 'column',
     gap: '32px',
     flex: 1,
+    transition: 'opacity 0.2s ease',
+  },
+
+  sidebarContentCollapsed: {
+    opacity: 0,
+    pointerEvents: 'none',
   },
 
   logo: {
@@ -3078,6 +3130,28 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '12px',
+  },
+
+  sidebarCollapseHandle: {
+    position: 'absolute',
+    top: '20px',
+    left: '292px',
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '50%',
+    width: '36px',
+    height: '36px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    boxShadow: '0 6px 20px rgba(58, 54, 49, 0.08)',
+    transition: 'left 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
+    zIndex: 5,
+  },
+
+  sidebarCollapseHandleCollapsed: {
+    left: '16px',
   },
 
   newProjectButton: {
@@ -3233,6 +3307,11 @@ const styles = {
     padding: '48px clamp(24px, 4vw, 64px)',
     overflowY: 'auto',
     minWidth: 0,
+    transition: 'padding 0.2s ease',
+  },
+
+  mainExpanded: {
+    paddingLeft: '64px',
   },
 
   header: {
@@ -5121,7 +5200,7 @@ const styles = {
   // Thrust View
   thrustLayout: {
     display: 'grid',
-    gridTemplateColumns: '2fr 1fr',
+    gridTemplateColumns: '1fr 1fr',
     gap: '16px',
     alignItems: 'start',
   },

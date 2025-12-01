@@ -1,4 +1,4 @@
-export async function callOpenAIChat({ apiKey, messages, model = "gpt-5.1-mini" }) {
+export async function callOpenAIChat({ apiKey, messages, model = "gpt-5-mini" }) {
   if (!apiKey) {
     throw new Error("Missing API key");
   }
