@@ -968,62 +968,65 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
       {/* Main Interface */}
       <div style={styles.sidebar}>
-        <div style={styles.logo}>
-          <div style={styles.logoIcon}>
-            <TrendingUp size={24} style={{ color: 'var(--earth)' }} />
+        <div style={styles.sidebarContent}>
+          <div style={styles.logo}>
+            <div style={styles.logoIcon}>
+              <TrendingUp size={24} style={{ color: 'var(--earth)' }} />
+            </div>
+            <h1 style={styles.logoText}>Momentum</h1>
           </div>
-          <h1 style={styles.logoText}>Manity</h1>
+
+          <nav style={styles.nav}>
+            <button
+              onClick={() => {
+                setActiveView('overview');
+                setViewingProjectId(null);
+              }}
+              style={{
+                ...styles.navItem,
+                ...(activeView === 'overview' && !viewingProjectId ? styles.navItemActive : {})
+              }}
+            >
+              Overview
+            </button>
+            <button
+              onClick={() => {
+                setActiveView('timeline');
+                setViewingProjectId(null);
+              }}
+              style={{
+                ...styles.navItem,
+                ...(activeView === 'timeline' && !viewingProjectId ? styles.navItemActive : {})
+              }}
+            >
+              Timeline
+            </button>
+            <button
+              onClick={() => setShowDailyCheckin(true)}
+              style={styles.navItem}
+            >
+              Daily Check-in
+            </button>
+          </nav>
+
+          <div style={styles.sidebarActions}>
+            <button
+              onClick={() => setShowNewProject(true)}
+              style={styles.newProjectButton}
+            >
+              <Plus size={18} />
+              New Project
+            </button>
+          </div>
         </div>
 
-        <nav style={styles.nav}>
-          <button
-            onClick={() => {
-              setActiveView('overview');
-              setViewingProjectId(null);
-            }}
-            style={{
-              ...styles.navItem,
-              ...(activeView === 'overview' && !viewingProjectId ? styles.navItemActive : {})
-            }}
-          >
-            Overview
-          </button>
-          <button
-            onClick={() => {
-              setActiveView('timeline');
-              setViewingProjectId(null);
-            }}
-            style={{
-              ...styles.navItem,
-              ...(activeView === 'timeline' && !viewingProjectId ? styles.navItemActive : {})
-            }}
-          >
-            Timeline
-          </button>
-          <button
-            onClick={() => setShowDailyCheckin(true)}
-            style={styles.navItem}
-          >
-            Daily Check-in
-          </button>
-        </nav>
-
-        <div style={styles.sidebarFooter}>
-          <button
-            onClick={() => setShowNewProject(true)}
-            style={styles.newProjectButton}
-          >
-            <Plus size={18} />
-            New Project
-          </button>
-          <button
-            onClick={onOpenSettings}
-            style={styles.settingsButton}
-          >
-            <Settings size={18} />
-            Settings
-          </button>
-        </div>
+        <button
+          onClick={onOpenSettings}
+          style={styles.settingsIconButton}
+          aria-label="Open settings"
+        >
+          <Settings size={18} />
+        </button>
       </div>
 
       <main style={styles.main}>
@@ -1965,9 +1968,18 @@ const styles = {
     borderRight: '1px solid var(--cloud)',
     display: 'flex',
     flexDirection: 'column',
+    justifyContent: 'space-between',
+    gap: '24px',
     padding: '32px clamp(16px, 3vw, 24px)',
     boxSizing: 'border-box',
     flexShrink: 0,
+  },
+
+  sidebarContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '32px',
+    flex: 1,
   },
 
   logo: {
@@ -2021,9 +2033,7 @@ const styles = {
     color: 'var(--earth)',
   },
 
-  sidebarFooter: {
-    marginTop: 'auto',
-    paddingTop: '24px',
+  sidebarActions: {
     display: 'flex',
     flexDirection: 'column',
     gap: '12px',
@@ -2047,23 +2057,19 @@ const styles = {
     fontWeight: '500',
   },
 
-  settingsButton: {
-    width: '100%',
-    padding: '12px 16px',
+  settingsIconButton: {
+    width: '44px',
+    height: '44px',
+    borderRadius: '12px',
     border: '1px solid var(--cloud)',
-    backgroundColor: 'transparent',
-    color: 'var(--stone)',
-    fontSize: '15px',
-    fontFamily: "'Inter', sans-serif",
-    textAlign: 'left',
-    cursor: 'pointer',
-    borderRadius: '8px',
+    backgroundColor: '#fff',
     display: 'flex',
     alignItems: 'center',
-    justifyContent: 'flex-start',
-    gap: '10px',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    color: 'var(--stone)',
     transition: 'all 0.2s ease',
-    fontWeight: '500',
+    alignSelf: 'flex-start',
   },
 
   main: {
