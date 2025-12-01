@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, ChevronLeft } from 'lucide-react';
+import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
 
@@ -47,7 +47,6 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [thrustMessages, setThrustMessages] = useState([]);
   const [thrustDraft, setThrustDraft] = useState('');
-  const [thrustInfoExpanded, setThrustInfoExpanded] = useState(false);
   const [thrustError, setThrustError] = useState('');
   const [thrustPendingActions, setThrustPendingActions] = useState([]);
   const [thrustIsRequesting, setThrustIsRequesting] = useState(false);
@@ -57,7 +56,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   ];
   const [loggedInUser, setLoggedInUser] = useState('');
   const [focusedField, setFocusedField] = useState(null);
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const supportedMomentumActions = ['comment', 'add_task', 'update_task', 'add_subtask', 'update_subtask', 'update_project'];
 
   const triggerImport = () => {
     if (importInputRef.current) {
@@ -654,6 +653,59 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     }
   };
 
+  const resolveMomentumProjectRef = (target) => {
+    if (!target) return null;
+    const lowerTarget = `${target}`.toLowerCase();
+    return projects.find(project => `${project.id}` === `${target}` || project.name.toLowerCase() === lowerTarget) || null;
+  };
+
+  const validateThrustActions = (actions = []) => {
+    const errors = [];
+
+    if (!Array.isArray(actions)) {
+      return { validActions: [], errors: ['Momentum returned an invalid actions payload (not an array).'] };
+    }
+
+    const validActions = [];
+
+    actions.forEach((action, idx) => {
+      if (!action || typeof action !== 'object') {
+        errors.push(`Action ${idx + 1} was not an object.`);
+        return;
+      }
+
+      if (!action.type) {
+        errors.push(`Action ${idx + 1} is missing a type.`);
+        return;
+      }
+
+      if (!supportedMomentumActions.includes(action.type)) {
+        errors.push(`Action ${idx + 1} uses unsupported type "${action.type}".`);
+        return;
+      }
+
+      const projectRef = action.projectId ?? action.projectName;
+      if (!projectRef) {
+        errors.push(`Action ${idx + 1} (${action.type}) is missing a projectId or projectName.`);
+        return;
+      }
+
+      const resolvedProject = resolveMomentumProjectRef(projectRef);
+      if (!resolvedProject) {
+        errors.push(`Action ${idx + 1} (${action.type}) references unknown project "${projectRef}".`);
+        return;
+      }
+
+      validActions.push({
+        ...action,
+        projectId: resolvedProject.id,
+        projectName: resolvedProject.name
+      });
+    });
+
+    return { validActions, errors };
+  };
+
   const rollbackDeltas = (deltas) => {
     if (!deltas || deltas.length === 0) return;
 
@@ -1031,6 +1083,32 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     return allActivities.sort((a, b) => new Date(b.date) - new Date(a.date));
   };
 
+  const requestMomentumActions = async (messages, attempt = 1) => {
+    const maxAttempts = 3;
+    const { content } = await callOpenAIChat({ apiKey, messages });
+    const parsed = parseAssistantResponse(content);
+    const { validActions, errors } = validateThrustActions(parsed.actions);
+
+    if (errors.length === 0) {
+      return { parsed: { ...parsed, actions: validActions }, content, attempt };
+    }
+
+    if (attempt >= maxAttempts) {
+      throw new Error(`Momentum response was invalid after ${maxAttempts} attempts: ${errors.join(' ')}`);
+    }
+
+    const retryMessages = [
+      ...messages,
+      { role: 'assistant', content },
+      {
+        role: 'system',
+        content: `Your previous response could not be applied because ${errors.join('; ')}. Use only these action types: ${supportedMomentumActions.join(', ')}. Each action must include a valid projectId or projectName that exists in the provided portfolio. Respond only with JSON containing "response" and "actions".`
+      }
+    ];
+
+    return requestMomentumActions(retryMessages, attempt + 1);
+  };
+
   const handleSendThrustMessage = async () => {
     if (!thrustDraft.trim() || thrustIsRequesting) return;
 
@@ -1078,8 +1156,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
     const responseId = generateActivityId();
 
     try {
-      const { content } = await callOpenAIChat({ apiKey, messages });
-      const parsed = parseAssistantResponse(content);
+      const { parsed, content } = await requestMomentumActions(messages);
       setThrustPendingActions(parsed.actions || []);
       const { deltas, summary, details } = applyThrustActions(parsed.actions || []);
 
@@ -1642,8 +1719,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
       )}
 
       {/* Main Interface */}
-      <div style={{ ...styles.sidebar, ...(sidebarCollapsed ? styles.sidebarCollapsed : {}) }}>
-        <div style={{ ...styles.sidebarContent, ...(sidebarCollapsed ? styles.sidebarContentCollapsed : {}) }}>
+      <div style={styles.sidebar}>
+        <div style={styles.sidebarContent}>
           <div style={styles.logo}>
             <div style={styles.logoIcon}>
               <TrendingUp size={24} style={{ color: 'var(--earth)' }} />
@@ -1714,19 +1791,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
       </div>
 
-      <button
-        onClick={() => setSidebarCollapsed(prev => !prev)}
-        style={{
-          ...styles.sidebarCollapseHandle,
-          ...(sidebarCollapsed ? styles.sidebarCollapseHandleCollapsed : {})
-        }}
-        aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
-        type="button"
-      >
-        {sidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
-      </button>
-
-      <main style={{ ...styles.main, ...(sidebarCollapsed ? styles.mainExpanded : {}) }}>
+      <main style={styles.main}>
         <div style={styles.topBar}>
           <div />
           <div style={styles.topBarRight}>
@@ -2816,10 +2881,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 </div>
               </div>
 
-              <div style={{
-                ...styles.thrustInfoPanel,
-                ...(thrustInfoExpanded ? styles.thrustInfoPanelExpanded : styles.thrustInfoPanelCollapsed)
-              }}>
+              <div style={styles.thrustInfoPanel}>
                 <div style={styles.thrustInfoHeader}>
                   <div style={styles.thrustInfoTitle}>
                     <Sparkles size={16} style={{ color: 'var(--earth)' }} />
@@ -2828,119 +2890,104 @@ Keep tool calls granular (one discrete change per action), explain each action c
                       <div style={styles.thrustInfoSubtle}>Expand a project for a daily update snapshot</div>
                     </div>
                   </div>
-                  <button
-                    onClick={() => setThrustInfoExpanded(prev => !prev)}
-                    style={styles.thrustToggle}
-                  >
-                    {thrustInfoExpanded ? 'Collapse' : 'Expand'}
-                    <ChevronDown
-                      size={16}
-                      style={{
-                        transition: 'transform 0.2s ease',
-                        transform: thrustInfoExpanded ? 'rotate(180deg)' : 'rotate(0deg)'
-                      }}
-                    />
-                  </button>
                 </div>
 
-                {thrustInfoExpanded && (
-                  visibleProjects.length > 0 ? (
-                    <div style={styles.thrustInfoContent}>
-                      {visibleProjects.map(project => {
-                        const isExpanded = expandedMomentumProjects[project.id];
-                        const dueSoonTasks = getProjectDueSoonTasks(project);
-                        const recentUpdates = project.recentActivity.slice(0, 3);
+                {visibleProjects.length > 0 ? (
+                  <div style={styles.thrustInfoContent}>
+                    {visibleProjects.map(project => {
+                      const isExpanded = expandedMomentumProjects[project.id];
+                      const dueSoonTasks = getProjectDueSoonTasks(project);
+                      const recentUpdates = project.recentActivity.slice(0, 3);
 
-                        return (
-                          <div key={project.id} style={styles.momentumProjectCard}>
-                            <button
-                              style={styles.momentumProjectToggle}
-                              onClick={() => setExpandedMomentumProjects(prev => ({
-                                ...prev,
-                                [project.id]: !prev[project.id]
-                              }))}
-                              type="button"
-                              aria-expanded={isExpanded}
-                            >
-                              <div style={styles.momentumProjectHeader}>
-                                <div>
-                                  <div style={styles.momentumProjectName}>{project.name}</div>
-                                  <div style={styles.momentumProjectMeta}>
-                                    <Calendar size={14} style={{ color: 'var(--stone)' }} />
-                                    Target {new Date(project.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                  </div>
-                                </div>
-                                <div style={styles.momentumProjectMetaRight}>
-                                  <div style={{
-                                    ...styles.priorityBadgeLarge,
-                                    backgroundColor: getPriorityColor(project.priority) + '20',
-                                    color: getPriorityColor(project.priority)
-                                  }}>
-                                    {project.priority} priority
-                                  </div>
-                                  <div style={styles.statusBadgeSmall}>{project.status}</div>
+                      return (
+                        <div key={project.id} style={styles.momentumProjectCard}>
+                          <button
+                            style={styles.momentumProjectToggle}
+                            onClick={() => setExpandedMomentumProjects(prev => ({
+                              ...prev,
+                              [project.id]: !prev[project.id]
+                            }))}
+                            type="button"
+                            aria-expanded={isExpanded}
+                          >
+                            <div style={styles.momentumProjectHeader}>
+                              <div>
+                                <div style={styles.momentumProjectName}>{project.name}</div>
+                                <div style={styles.momentumProjectMeta}>
+                                  <Calendar size={14} style={{ color: 'var(--stone)' }} />
+                                  Target {new Date(project.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                                 </div>
                               </div>
-                              <ChevronDown
-                                size={16}
-                                style={{
-                                  transition: 'transform 0.2s ease',
-                                  transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                                  color: 'var(--stone)'
-                                }}
-                              />
-                            </button>
-
-                            {isExpanded && (
-                              <div style={styles.momentumProjectBody}>
-                                <div style={styles.momentumSummarySection}>
-                                  <div style={styles.momentumSummaryTitle}>Recent updates</div>
-                                  {recentUpdates.length > 0 ? (
-                                    <ul style={styles.momentumList}>
-                                      {recentUpdates.map((activity, idx) => (
-                                        <li key={activity.id || idx} style={styles.momentumListItem}>
-                                          <div style={styles.momentumListRow}>
-                                            <span style={styles.momentumListStrong}>{activity.author}</span>
-                                            <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
-                                          </div>
-                                          <div style={styles.momentumListText}>{activity.note}</div>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  ) : (
-                                    <div style={styles.momentumEmptyText}>No updates yet.</div>
-                                  )}
+                              <div style={styles.momentumProjectMetaRight}>
+                                <div style={{
+                                  ...styles.priorityBadgeLarge,
+                                  backgroundColor: getPriorityColor(project.priority) + '20',
+                                  color: getPriorityColor(project.priority)
+                                }}>
+                                  {project.priority} priority
                                 </div>
-
-                                <div style={styles.momentumSummarySection}>
-                                  <div style={styles.momentumSummaryTitle}>Due soon or overdue</div>
-                                  {dueSoonTasks.length > 0 ? (
-                                    <ul style={styles.momentumList}>
-                                      {dueSoonTasks.map((task, idx) => (
-                                        <li key={`${task.taskTitle}-${task.title}-${idx}`} style={styles.momentumListItem}>
-                                          <div style={styles.momentumListRow}>
-                                            <span style={styles.momentumListStrong}>{task.taskTitle} → {task.title}</span>
-                                            <span style={{ ...styles.actionDueText, color: task.dueDateInfo.color }}>
-                                              {task.dueDateInfo.text}
-                                            </span>
-                                          </div>
-                                          <div style={styles.momentumListText}>Due {task.dueDateInfo.formattedDate}</div>
-                                        </li>
-                                      ))}
-                                    </ul>
-                                  ) : (
-                                    <div style={styles.momentumEmptyText}>No near-term work flagged.</div>
-                                  )}
-                                </div>
+                                <div style={styles.statusBadgeSmall}>{project.status}</div>
                               </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  ) : (
-                    <div style={styles.emptyState}>No visible projects to summarize.</div>
-                  )
+                            </div>
+                            <ChevronDown
+                              size={16}
+                              style={{
+                                transition: 'transform 0.2s ease',
+                                transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                color: 'var(--stone)'
+                              }}
+                            />
+                          </button>
+
+                          {isExpanded && (
+                            <div style={styles.momentumProjectBody}>
+                              <div style={styles.momentumSummarySection}>
+                                <div style={styles.momentumSummaryTitle}>Recent updates</div>
+                                {recentUpdates.length > 0 ? (
+                                  <ul style={styles.momentumList}>
+                                    {recentUpdates.map((activity, idx) => (
+                                      <li key={activity.id || idx} style={styles.momentumListItem}>
+                                        <div style={styles.momentumListRow}>
+                                          <span style={styles.momentumListStrong}>{activity.author}</span>
+                                          <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
+                                        </div>
+                                        <div style={styles.momentumListText}>{activity.note}</div>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <div style={styles.momentumEmptyText}>No updates yet.</div>
+                                )}
+                              </div>
+
+                              <div style={styles.momentumSummarySection}>
+                                <div style={styles.momentumSummaryTitle}>Due soon or overdue</div>
+                                {dueSoonTasks.length > 0 ? (
+                                  <ul style={styles.momentumList}>
+                                    {dueSoonTasks.map((task, idx) => (
+                                      <li key={`${task.taskTitle}-${task.title}-${idx}`} style={styles.momentumListItem}>
+                                        <div style={styles.momentumListRow}>
+                                          <span style={styles.momentumListStrong}>{task.taskTitle} → {task.title}</span>
+                                          <span style={{ ...styles.actionDueText, color: task.dueDateInfo.color }}>
+                                            {task.dueDateInfo.text}
+                                          </span>
+                                        </div>
+                                        <div style={styles.momentumListText}>Due {task.dueDateInfo.formattedDate}</div>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <div style={styles.momentumEmptyText}>No near-term work flagged.</div>
+                                )}
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div style={styles.emptyState}>No visible projects to summarize.</div>
                 )}
               </div>
             </div>
@@ -3055,24 +3102,12 @@ const styles = {
     transition: 'width 0.2s ease, padding 0.2s ease, transform 0.2s ease',
   },
 
-  sidebarCollapsed: {
-    width: '0px',
-    padding: '32px 0',
-    overflow: 'hidden',
-    borderRight: 'none',
-  },
-
   sidebarContent: {
     display: 'flex',
     flexDirection: 'column',
     gap: '32px',
     flex: 1,
     transition: 'opacity 0.2s ease',
-  },
-
-  sidebarContentCollapsed: {
-    opacity: 0,
-    pointerEvents: 'none',
   },
 
   logo: {
@@ -3130,28 +3165,6 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '12px',
-  },
-
-  sidebarCollapseHandle: {
-    position: 'absolute',
-    top: '20px',
-    left: '292px',
-    backgroundColor: '#FFFFFF',
-    border: '1px solid var(--cloud)',
-    borderRadius: '50%',
-    width: '36px',
-    height: '36px',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    boxShadow: '0 6px 20px rgba(58, 54, 49, 0.08)',
-    transition: 'left 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease',
-    zIndex: 5,
-  },
-
-  sidebarCollapseHandleCollapsed: {
-    left: '16px',
   },
 
   newProjectButton: {
@@ -3308,10 +3321,6 @@ const styles = {
     overflowY: 'auto',
     minWidth: 0,
     transition: 'padding 0.2s ease',
-  },
-
-  mainExpanded: {
-    paddingLeft: '64px',
   },
 
   header: {
@@ -5376,14 +5385,6 @@ const styles = {
     transition: 'all 0.2s ease',
   },
 
-  thrustInfoPanelCollapsed: {
-    maxHeight: '150px',
-  },
-
-  thrustInfoPanelExpanded: {
-    maxHeight: 'none',
-  },
-
   thrustInfoHeader: {
     display: 'flex',
     alignItems: 'center',
@@ -5410,20 +5411,6 @@ const styles = {
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
     marginTop: '2px',
-  },
-
-  thrustToggle: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 10px',
-    borderRadius: '10px',
-    border: '1px solid var(--cloud)',
-    backgroundColor: '#FFFFFF',
-    color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '600',
-    cursor: 'pointer',
   },
 
   thrustInfoContent: {
