@@ -972,7 +972,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
           <div style={styles.logoIcon}>
             <TrendingUp size={24} style={{ color: 'var(--earth)' }} />
           </div>
-          <h1 style={styles.logoText}>Momentum</h1>
+          <h1 style={styles.logoText}>Manity</h1>
         </div>
 
         <nav style={styles.nav}>
@@ -1018,10 +1018,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
           </button>
           <button
             onClick={onOpenSettings}
-            style={{ ...styles.navItem, ...styles.settingsButton }}
+            style={styles.settingsButton}
           >
             <Settings size={18} />
-            API Settings
+            Settings
           </button>
         </div>
       </div>
@@ -2024,6 +2024,9 @@ const styles = {
   sidebarFooter: {
     marginTop: 'auto',
     paddingTop: '24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
   },
 
   newProjectButton: {
@@ -2045,11 +2048,22 @@ const styles = {
   },
 
   settingsButton: {
-    marginTop: '12px',
+    width: '100%',
+    padding: '12px 16px',
+    border: '1px solid var(--cloud)',
+    backgroundColor: 'transparent',
+    color: 'var(--stone)',
+    fontSize: '15px',
+    fontFamily: "'Inter', sans-serif",
+    textAlign: 'left',
+    cursor: 'pointer',
+    borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
+    justifyContent: 'flex-start',
     gap: '10px',
-    border: '1px solid var(--cloud)',
+    transition: 'all 0.2s ease',
+    fontWeight: '500',
   },
 
   main: {
