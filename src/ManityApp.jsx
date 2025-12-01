@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare } from 'lucide-react';
 
-export default function ProjectManager() {
+export default function ManityApp() {
   const timelineInputRef = useRef(null);
   const projectUpdateInputRef = useRef(null);
   
