@@ -180,7 +180,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }
   ]);
 
-  const [showDailyCheckin, setShowDailyCheckin] = useState(true);
+  const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
   const [checkinNote, setCheckinNote] = useState('');
   const [activeView, setActiveView] = useState('overview');
