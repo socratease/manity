@@ -26,7 +26,13 @@ export default function App() {
   };
 
   return (
-    <div style={{ maxWidth: 960, margin: "0 auto", padding: "1.5rem" }}>
+    <div
+      style={{
+        width: "100%",
+        margin: "0 auto",
+        padding: "1.5rem",
+      }}
+    >
       <header style={{ marginBottom: "1.5rem", display: "flex", justifyContent: "space-between" }}>
         <h1 style={{ margin: 0 }}>Manity</h1>
         <button onClick={() => setShowSettings((v) => !v)}>
