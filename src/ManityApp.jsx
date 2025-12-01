@@ -488,14 +488,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     // If completed, show completion date with green checkmark
     if (status === 'completed' && completedDate) {
       const date = new Date(completedDate);
-      return { 
-        text: `Done ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`, 
-        color: 'var(--sage)', 
+      return {
+        text: `Done ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
+        color: 'var(--sage)',
         isOverdue: false,
-        isCompleted: true
+        isCompleted: true,
+        formattedDate: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }),
+        isDueSoon: false
       };
     }
-    
+
     const date = new Date(dateString);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -503,17 +505,26 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     dueDate.setHours(0, 0, 0, 0);
     const diffTime = dueDate - today;
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const isDueSoon = diffDays >= 0 && diffDays <= 7;
 
     if (diffDays < 0) {
-      return { text: `${Math.abs(diffDays)}d overdue`, color: 'var(--coral)', isOverdue: true, isCompleted: false };
+      return {
+        text: `${Math.abs(diffDays)}d overdue`,
+        color: 'var(--coral)',
+        isOverdue: true,
+        isCompleted: false,
+        formattedDate,
+        isDueSoon
+      };
     } else if (diffDays === 0) {
-      return { text: 'Due today', color: 'var(--amber)', isOverdue: false, isCompleted: false };
+      return { text: 'Due today', color: 'var(--amber)', isOverdue: false, isCompleted: false, formattedDate, isDueSoon };
     } else if (diffDays === 1) {
-      return { text: 'Due tomorrow', color: 'var(--amber)', isOverdue: false, isCompleted: false };
+      return { text: 'Due tomorrow', color: 'var(--amber)', isOverdue: false, isCompleted: false, formattedDate, isDueSoon };
     } else if (diffDays <= 7) {
-      return { text: `Due in ${diffDays}d`, color: 'var(--stone)', isOverdue: false, isCompleted: false };
+      return { text: `Due in ${diffDays}d`, color: 'var(--stone)', isOverdue: false, isCompleted: false, formattedDate, isDueSoon };
     } else {
-      return { text: date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' }), color: 'var(--stone)', isOverdue: false, isCompleted: false };
+      return { text: formattedDate, color: 'var(--stone)', isOverdue: false, isCompleted: false, formattedDate, isDueSoon };
     }
   };
 
@@ -840,7 +851,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                   task.subtasks.forEach(subtask => {
                     if (subtask.status !== 'completed') {
                       const dueDateInfo = formatDueDate(subtask.dueDate, subtask.status, subtask.completedDate);
-                      if (dueDateInfo.isOverdue || dueDateInfo.text.includes('today') || dueDateInfo.text.includes('tomorrow') || dueDateInfo.text.includes('Due in')) {
+                      if (dueDateInfo.isOverdue || dueDateInfo.isDueSoon) {
                         allTasks.push({
                           title: subtask.title,
                           taskTitle: task.title,
@@ -867,6 +878,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                           <div style={styles.taskNeedingAttentionContent}>
                             <span style={styles.taskNeedingAttentionTitle}>{task.title}</span>
                             <span style={styles.taskNeedingAttentionTask}>in {task.taskTitle}</span>
+                            <span style={styles.taskNeedingAttentionDate}>Due {task.dueDateInfo.formattedDate}</span>
                           </div>
                           <span style={{
                             ...styles.taskNeedingAttentionDue,
@@ -1183,7 +1195,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                     task.subtasks.forEach(subtask => {
                       if (subtask.status !== 'completed') {
                         const dueDateInfo = formatDueDate(subtask.dueDate, subtask.status, subtask.completedDate);
-                        if (dueDateInfo.isOverdue || dueDateInfo.text.includes('today') || dueDateInfo.text.includes('tomorrow') || dueDateInfo.text.includes('Due in')) {
+                        if (dueDateInfo.isOverdue || dueDateInfo.isDueSoon) {
                           tasksNeedingAttention.push({
                             title: subtask.title,
                             taskTitle: task.title,
@@ -1203,12 +1215,15 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                       {tasksNeedingAttention.slice(0, 3).map((task, idx) => (
                         <div key={idx} style={styles.nextActionCompactItem}>
                           <Circle size={6} style={{ color: task.dueDateInfo.color, marginTop: '4px' }} />
-                          <span style={{
-                            ...styles.nextActionTextSmall,
-                            color: task.dueDateInfo.isOverdue ? 'var(--coral)' : 'var(--charcoal)'
-                          }}>
-                            {task.title}
-                          </span>
+                          <div style={styles.nextActionCompactContent}>
+                            <span style={{
+                              ...styles.nextActionTextSmall,
+                              color: task.dueDateInfo.isOverdue ? 'var(--coral)' : 'var(--charcoal)'
+                            }}>
+                              {task.title}
+                            </span>
+                            <span style={styles.nextActionDueText}>Due {task.dueDateInfo.formattedDate} • {task.dueDateInfo.text}</span>
+                          </div>
                         </div>
                       ))}
                       {tasksNeedingAttention.length > 3 && (
@@ -1891,7 +1906,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                       task.subtasks.forEach(subtask => {
                         if (subtask.status !== 'completed') {
                           const dueDateInfo = formatDueDate(subtask.dueDate, subtask.status, subtask.completedDate);
-                          if (dueDateInfo.isOverdue || dueDateInfo.text.includes('today') || dueDateInfo.text.includes('tomorrow') || dueDateInfo.text.includes('Due in')) {
+                          if (dueDateInfo.isOverdue || dueDateInfo.isDueSoon) {
                             tasksNeedingAttention.push({
                               title: subtask.title,
                               dueDateInfo: dueDateInfo
@@ -1908,12 +1923,15 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                           {tasksNeedingAttention.slice(0, 3).map((task, idx) => (
                             <div key={idx} style={styles.actionItemSmall}>
                               <Circle size={8} style={{ color: task.dueDateInfo.color, marginTop: '6px' }} />
-                              <span style={{
-                                ...styles.actionTextSmall,
-                                color: task.dueDateInfo.isOverdue ? 'var(--coral)' : 'var(--charcoal)'
-                              }}>
-                                {task.title}
-                              </span>
+                              <div style={styles.actionTextContent}>
+                                <span style={{
+                                  ...styles.actionTextSmall,
+                                  color: task.dueDateInfo.isOverdue ? 'var(--coral)' : 'var(--charcoal)'
+                                }}>
+                                  {task.title}
+                                </span>
+                                <span style={styles.actionDueText}>Due {task.dueDateInfo.formattedDate} • {task.dueDateInfo.text}</span>
+                              </div>
                             </div>
                           ))}
                         </div>
@@ -2262,11 +2280,24 @@ const styles = {
     alignItems: 'flex-start',
   },
 
+  actionTextContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+
   actionTextSmall: {
     fontSize: '14px',
     color: 'var(--charcoal)',
     fontFamily: "'Inter', sans-serif",
     lineHeight: '1.5',
+  },
+
+  actionDueText: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
   },
 
   cardFooter: {
@@ -2454,6 +2485,13 @@ const styles = {
     fontFamily: "'Inter', sans-serif",
     color: 'var(--stone)',
     fontStyle: 'italic',
+  },
+
+  taskNeedingAttentionDate: {
+    fontSize: '11px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    fontWeight: '600',
   },
 
   taskNeedingAttentionDue: {
@@ -2826,11 +2864,24 @@ const styles = {
     alignItems: 'flex-start',
   },
 
+  nextActionCompactContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+
   nextActionTextSmall: {
     fontSize: '13px',
     color: 'var(--charcoal)',
     fontFamily: "'Inter', sans-serif",
     lineHeight: '1.5',
+  },
+
+  nextActionDueText: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
   },
 
   moreActionsText: {
