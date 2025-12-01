@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw } from 'lucide-react';
+import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
 
@@ -53,6 +53,14 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   const [thrustRequestStart, setThrustRequestStart] = useState(null);
   const [thrustElapsedMs, setThrustElapsedMs] = useState(0);
   const [expandedMomentumProjects, setExpandedMomentumProjects] = useState({});
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [newProjectName, setNewProjectName] = useState('');
+  const [newProjectDescription, setNewProjectDescription] = useState('');
+  const [newProjectPriority, setNewProjectPriority] = useState('medium');
+  const [newProjectStatus, setNewProjectStatus] = useState('planning');
+  const [newProjectTargetDate, setNewProjectTargetDate] = useState('');
+  const [newProjectStakeholders, setNewProjectStakeholders] = useState('');
   const adminUsers = [
     { name: 'Chris Graves', team: 'Admin' }
   ];
@@ -614,6 +622,52 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     })),
     recentActivity: [...project.recentActivity]
   });
+
+  const resetNewProjectForm = () => {
+    setNewProjectName('');
+    setNewProjectDescription('');
+    setNewProjectPriority('medium');
+    setNewProjectStatus('planning');
+    setNewProjectTargetDate('');
+    setNewProjectStakeholders('');
+  };
+
+  const handleCreateProject = () => {
+    if (!newProjectName.trim()) return;
+
+    const stakeholderEntries = newProjectStakeholders
+      .split(',')
+      .map(name => name.trim())
+      .filter(Boolean)
+      .map(name => ({ name, team: 'Contributor' }));
+
+    const createdAt = new Date().toISOString();
+    const newId = `proj-${Date.now()}`;
+    const newProject = {
+      id: newId,
+      name: newProjectName.trim(),
+      stakeholders: stakeholderEntries.length > 0
+        ? stakeholderEntries
+        : [{ name: loggedInUser || 'You', team: 'Owner' }],
+      status: newProjectStatus,
+      priority: newProjectPriority,
+      progress: 0,
+      lastUpdate: newProjectDescription ? newProjectDescription.slice(0, 120) : 'New project created',
+      description: newProjectDescription,
+      startDate: createdAt.split('T')[0],
+      targetDate: newProjectTargetDate,
+      plan: [],
+      recentActivity: newProjectDescription
+        ? [{ id: generateActivityId(), date: createdAt, note: newProjectDescription, author: loggedInUser || 'You' }]
+        : []
+    };
+
+    setProjects(prev => [...prev, newProject]);
+    setShowNewProject(false);
+    resetNewProjectForm();
+    setViewingProjectId(newProject.id);
+    setActiveView('overview');
+  };
 
   const buildThrustContext = () => {
     return projects.map(project => ({
@@ -1346,6 +1400,21 @@ Keep tool calls granular (one discrete change per action), explain each action c
   }, [visibleProjects]);
 
   useEffect(() => {
+    if (visibleProjects.length === 0) {
+      setCurrentSlideIndex(0);
+      return;
+    }
+
+    setCurrentSlideIndex(prev => Math.min(prev, visibleProjects.length - 1));
+  }, [visibleProjects]);
+
+  useEffect(() => {
+    if (activeView === 'slides' && visibleProjects.length > 0) {
+      setCurrentSlideIndex(0);
+    }
+  }, [activeView, visibleProjects.length]);
+
+  useEffect(() => {
     if (thrustIsRequesting && thrustRequestStart) {
       const timer = setInterval(() => {
         setThrustElapsedMs(Date.now() - thrustRequestStart);
@@ -1385,12 +1454,142 @@ Keep tool calls granular (one discrete change per action), explain each action c
     return colors[priority] || 'var(--stone)';
   };
 
+  const handleSlideAdvance = (direction) => {
+    if (visibleProjects.length === 0) return;
+
+    setCurrentSlideIndex(prev => {
+      const nextIndex = (prev + direction + visibleProjects.length) % visibleProjects.length;
+      return nextIndex;
+    });
+  };
+
+  const slideProject = visibleProjects[currentSlideIndex] || null;
+
   const renderEditingHint = (field) =>
     focusedField === field ? (
       <div style={styles.editingAsHint}>
         editing as <span style={styles.editingAsName}>{loggedInUser}</span>
       </div>
     ) : null;
+
+  const renderCtrlEnterHint = (action = 'submit') => (
+    <div style={styles.shortcutHint}>Ctrl + Enter to {action}</div>
+  );
+
+  const renderInlineFormatting = (text, keyPrefix = 'inline') => {
+    const parts = [];
+    const regex = /(\*\*[^*]+\*\*|\*[^*]+\*|`[^`]+`)/g;
+    let lastIndex = 0;
+    let match;
+    let idx = 0;
+
+    while ((match = regex.exec(text)) !== null) {
+      if (match.index > lastIndex) {
+        parts.push(<span key={`${keyPrefix}-text-${idx++}`}>{text.substring(lastIndex, match.index)}</span>);
+      }
+
+      const token = match[0];
+      if (token.startsWith('**')) {
+        parts.push(
+          <strong key={`${keyPrefix}-bold-${idx++}`} style={styles.strongText}>
+            {token.slice(2, -2)}
+          </strong>
+        );
+      } else if (token.startsWith('*')) {
+        parts.push(
+          <em key={`${keyPrefix}-italic-${idx++}`} style={styles.emText}>
+            {token.slice(1, -1)}
+          </em>
+        );
+      } else if (token.startsWith('`')) {
+        parts.push(
+          <code key={`${keyPrefix}-code-${idx++}`} style={styles.inlineCode}>
+            {token.slice(1, -1)}
+          </code>
+        );
+      }
+
+      lastIndex = match.index + token.length;
+    }
+
+    if (lastIndex < text.length) {
+      parts.push(<span key={`${keyPrefix}-text-${idx++}`}>{text.substring(lastIndex)}</span>);
+    }
+
+    return parts;
+  };
+
+  const renderRichTextWithTags = (text) => {
+    const lines = (text || '').split(/\r?\n/);
+    const elements = [];
+    let listItems = [];
+
+    const renderParts = (parts, keyPrefix) =>
+      parts.map((part, idx) =>
+        part.type === 'tag' ? (
+          <span key={`${keyPrefix}-tag-${idx}`} style={styles.tagInlineCompact}>
+            {part.display}
+          </span>
+        ) : (
+          renderInlineFormatting(part.content, `${keyPrefix}-text-${idx}`)
+        )
+      );
+
+    const flushList = () => {
+      if (listItems.length > 0) {
+        elements.push(
+          <ul key={`list-${elements.length}`} style={styles.richList}>
+            {listItems}
+          </ul>
+        );
+        listItems = [];
+      }
+    };
+
+    lines.forEach((line, lineIdx) => {
+      const trimmed = line.trim();
+
+      if (/^[-*]\s+/.test(trimmed)) {
+        const content = line.replace(/^\s*[-*]\s+/, '');
+        listItems.push(
+          <li key={`li-${lineIdx}`} style={styles.richListItem}>
+            {renderParts(parseTaggedText(content), `list-${lineIdx}`)}
+          </li>
+        );
+        return;
+      }
+
+      flushList();
+
+      if (!trimmed) {
+        elements.push(<div key={`spacer-${lineIdx}`} style={{ height: 6 }} />);
+        return;
+      }
+
+      const headingMatch = trimmed.match(/^(#{1,3})\s+(.*)$/);
+      if (headingMatch) {
+        const level = headingMatch[1].length;
+        const content = headingMatch[2];
+        const HeadingTag = level === 1 ? 'h3' : level === 2 ? 'h4' : 'h5';
+
+        elements.push(
+          <HeadingTag key={`heading-${lineIdx}`} style={styles.richHeading}>
+            {renderParts(parseTaggedText(content), `heading-${lineIdx}`)}
+          </HeadingTag>
+        );
+        return;
+      }
+
+      elements.push(
+        <p key={`p-${lineIdx}`} style={styles.richParagraph}>
+          {renderParts(parseTaggedText(line), `p-${lineIdx}`)}
+        </p>
+      );
+    });
+
+    flushList();
+    return elements;
+  };
 
   const renderProjectCard = (project, index) => (
     <div
@@ -1651,6 +1850,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 onChange={(e) => setCheckinNote(e.target.value)}
                 onKeyDown={(e) => {
                   if (e.ctrlKey && e.key === 'Enter') {
+                    e.preventDefault();
                     handleDailyCheckin(selectedProject.id);
                   }
                 }}
@@ -1662,6 +1862,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
               />
 
               {renderEditingHint('daily-checkin')}
+              {renderCtrlEnterHint('submit update')}
 
               <div style={styles.modalActions}>
                 <button
@@ -1794,75 +1995,82 @@ Keep tool calls granular (one discrete change per action), explain each action c
       )}
 
       {/* Main Interface */}
-      <div style={styles.sidebar}>
-        <div style={styles.sidebarContent}>
-          <div style={styles.logo}>
+      <div style={{ ...styles.sidebar, ...(isSidebarCollapsed ? styles.sidebarCollapsed : {}) }}>
+        <button
+          style={styles.sidebarCollapseToggle}
+          onClick={() => setIsSidebarCollapsed(prev => !prev)}
+          aria-label={isSidebarCollapsed ? 'Expand navigation' : 'Collapse navigation'}
+        >
+          {isSidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
+        </button>
+
+        {isSidebarCollapsed ? (
+          <div style={styles.sidebarCollapsedContent}>
             <div style={styles.logoIcon}>
-              <TrendingUp size={24} style={{ color: 'var(--earth)' }} />
+              <TrendingUp size={20} style={{ color: '#FFFFFF' }} />
             </div>
-            <h1 style={styles.logoText}>Momentum</h1>
           </div>
+        ) : (
+          <div style={styles.sidebarContent}>
+            <div style={styles.logo}>
+              <div style={styles.logoIcon}>
+                <TrendingUp size={24} style={{ color: 'var(--earth)' }} />
+              </div>
+              <h1 style={styles.logoText}>Momentum</h1>
+            </div>
 
-          <nav style={styles.nav}>
-            <button
-              onClick={() => {
-                setActiveView('overview');
-                setViewingProjectId(null);
-              }}
-              style={{
-                ...styles.navItem,
-                ...(activeView === 'overview' && !viewingProjectId ? styles.navItemActive : {})
-              }}
-            >
-              Overview
-            </button>
-            <button
-              onClick={() => {
-                setActiveView('timeline');
-                setViewingProjectId(null);
-              }}
-              style={{
-                ...styles.navItem,
-                ...(activeView === 'timeline' && !viewingProjectId ? styles.navItemActive : {})
-              }}
-            >
-              Timeline
-            </button>
-            <button
-              onClick={() => {
-                setActiveView('thrust');
-                setViewingProjectId(null);
-              }}
-              style={{
-                ...styles.navItem,
-                ...(activeView === 'thrust' && !viewingProjectId ? styles.navItemActive : {})
-              }}
-            >
-              Momentum
-            </button>
-            <button
-              onClick={() => {
-                if (visibleProjects.length > 0) {
-                  setSelectedProject(visibleProjects[0]);
-                  setShowDailyCheckin(true);
-                }
-              }}
-              style={styles.navItem}
-            >
-              Daily Check-in
-            </button>
-          </nav>
-
-          <div style={styles.sidebarActions}>
-            <button
-              onClick={() => setShowNewProject(true)}
-              style={styles.newProjectButton}
-            >
-              <Plus size={18} />
-              New Project
-            </button>
+            <nav style={styles.nav}>
+              <button
+                onClick={() => {
+                  setActiveView('overview');
+                  setViewingProjectId(null);
+                }}
+                style={{
+                  ...styles.navItem,
+                  ...(activeView === 'overview' && !viewingProjectId ? styles.navItemActive : {})
+                }}
+              >
+                Overview
+              </button>
+              <button
+                onClick={() => {
+                  setActiveView('thrust');
+                  setViewingProjectId(null);
+                }}
+                style={{
+                  ...styles.navItem,
+                  ...(activeView === 'thrust' && !viewingProjectId ? styles.navItemActive : {})
+                }}
+              >
+                Momentum
+              </button>
+              <button
+                onClick={() => {
+                  setActiveView('slides');
+                  setViewingProjectId(null);
+                }}
+                style={{
+                  ...styles.navItem,
+                  ...(activeView === 'slides' && !viewingProjectId ? styles.navItemActive : {})
+                }}
+              >
+                Slides
+              </button>
+              <button
+                onClick={() => {
+                  setActiveView('timeline');
+                  setViewingProjectId(null);
+                }}
+                style={{
+                  ...styles.navItem,
+                  ...(activeView === 'timeline' && !viewingProjectId ? styles.navItemActive : {})
+                }}
+              >
+                Timeline
+              </button>
+            </nav>
           </div>
-        </div>
+        )}
 
       </div>
 
@@ -2330,6 +2538,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                           autoFocus
                                         />
                                         {renderEditingHint('subtask-comment')}
+                                        {renderCtrlEnterHint('send comment')}
                                         <div style={styles.commentActions}>
                                           <button
                                             onClick={() => handleSubtaskComment(task.id, subtask.id, task.title, subtask.title)}
@@ -2363,6 +2572,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                     type="text"
                                     value={newSubtaskTitle}
                                     onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.ctrlKey && e.key === 'Enter' && newSubtaskTitle.trim()) {
+                                        e.preventDefault();
+                                        handleAddSubtask(task.id);
+                                      }
+                                    }}
                                     placeholder="New subtask title..."
                                     style={styles.addSubtaskInput}
                                     autoFocus
@@ -2371,9 +2586,16 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                     type="date"
                                     value={newSubtaskDueDate}
                                     onChange={(e) => setNewSubtaskDueDate(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.ctrlKey && e.key === 'Enter' && newSubtaskTitle.trim()) {
+                                        e.preventDefault();
+                                        handleAddSubtask(task.id);
+                                      }
+                                    }}
                                     style={styles.addSubtaskInput}
                                     placeholder="Due date"
                                   />
+                                  {renderCtrlEnterHint('add subtask')}
                                   <div style={styles.addSubtaskActions}>
                                     <button
                                       onClick={() => handleAddSubtask(task.id)}
@@ -2430,6 +2652,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           type="text"
                           value={newTaskTitle}
                           onChange={(e) => setNewTaskTitle(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.ctrlKey && e.key === 'Enter' && newTaskTitle.trim()) {
+                              e.preventDefault();
+                              handleAddTask();
+                            }
+                          }}
                           placeholder="New task title..."
                           style={styles.addTaskInput}
                           autoFocus
@@ -2438,9 +2666,16 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           type="date"
                           value={newTaskDueDate}
                           onChange={(e) => setNewTaskDueDate(e.target.value)}
+                          onKeyDown={(e) => {
+                            if (e.ctrlKey && e.key === 'Enter' && newTaskTitle.trim()) {
+                              e.preventDefault();
+                              handleAddTask();
+                            }
+                          }}
                           style={styles.addTaskInput}
                           placeholder="Due date"
                         />
+                        {renderCtrlEnterHint('add task')}
                         <div style={styles.addTaskActions}>
                           <button
                             onClick={handleAddTask}
@@ -2515,13 +2750,14 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           handleAddUpdate();
                         }
                       }}
-                      placeholder="Add an update... Use @ to tag"
-                      style={styles.projectUpdateInput}
-                    />
-                    {renderEditingHint('project-update')}
-                    
-                    {/* Tag Suggestions Dropdown */}
-                    {showProjectTagSuggestions && (
+                    placeholder="Add an update... Use @ to tag"
+                    style={styles.projectUpdateInput}
+                  />
+                  {renderEditingHint('project-update')}
+                  {renderCtrlEnterHint('post update')}
+
+                  {/* Tag Suggestions Dropdown */}
+                  {showProjectTagSuggestions && (
                       <div style={styles.tagSuggestions}>
                         {getAllTags()
                           .filter(tag => 
@@ -2680,7 +2916,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     style={styles.timelineInput}
                   />
                   {renderEditingHint('timeline-update')}
-                  
+                  {renderCtrlEnterHint('post update')}
+
                   {/* Tag Suggestions Dropdown */}
                   {showTagSuggestions && (
                     <div style={styles.tagSuggestions}>
@@ -2813,6 +3050,21 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   dialectic project planning
                 </p>
               </div>
+              <div style={styles.headerActions}>
+                <button
+                  onClick={() => {
+                    if (visibleProjects.length > 0) {
+                      setSelectedProject(visibleProjects[0]);
+                      setShowDailyCheckin(true);
+                    }
+                  }}
+                  style={styles.secondaryButton}
+                  disabled={visibleProjects.length === 0}
+                  title={visibleProjects.length === 0 ? 'No projects available for check-in' : 'Start a daily check-in'}
+                >
+                  Daily check-in
+                </button>
+              </div>
             </header>
 
             <div style={styles.thrustLayout}>
@@ -2872,17 +3124,9 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                 </div>
                               </div>
                             </div>
-                            <p style={styles.thrustMessageBody}>
-                              {parseTaggedText(message.note || message.content).map((part, index) => (
-                                part.type === 'tag' ? (
-                                  <span key={index} style={styles.tagInlineCompact}>
-                                    {part.display}
-                                  </span>
-                                ) : (
-                                  <span key={index}>{part.content}</span>
-                                )
-                              ))}
-                            </p>
+                            <div style={styles.thrustMessageBody}>
+                              {renderRichTextWithTags(message.note || message.content)}
+                            </div>
                             {message.actionResults && message.actionResults.length > 0 && (
                               <div style={styles.thrustActionStack}>
                                 {message.actionResults.map((action, actionIdx) => (
@@ -2952,6 +3196,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     style={{ ...styles.timelineInput, minHeight: '96px' }}
                   />
                   {renderEditingHint('thrust-draft')}
+                  {renderCtrlEnterHint('send to Momentum')}
                   <button
                     onClick={handleSendThrustMessage}
                     disabled={!thrustDraft.trim() || thrustIsRequesting}
@@ -2980,7 +3225,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 {visibleProjects.length > 0 ? (
                   <div style={styles.thrustInfoContent}>
                     {visibleProjects.map(project => {
-                      const isExpanded = expandedMomentumProjects[project.id];
+                      const isExpanded = expandedMomentumProjects[project.id] ?? true;
                       const dueSoonTasks = getProjectDueSoonTasks(project);
                       const recentUpdates = project.recentActivity.slice(0, 3);
 
@@ -3077,6 +3322,130 @@ Keep tool calls granular (one discrete change per action), explain each action c
               </div>
             </div>
           </>
+        ) : activeView === 'slides' ? (
+          <>
+            <header style={styles.header}>
+              <div>
+                <h2 style={styles.pageTitle}>Slides</h2>
+                <p style={styles.pageSubtitle}>
+                  Cycle through {visibleProjects.length} projects in a 16:9 frame, ready for screenshots.
+                </p>
+              </div>
+              <div style={styles.headerActions}>
+                <div style={styles.slidesCounter}>
+                  Slide {visibleProjects.length > 0 ? currentSlideIndex + 1 : 0} / {visibleProjects.length}
+                </div>
+                <div style={styles.slidesControls}>
+                  <button
+                    onClick={() => handleSlideAdvance(-1)}
+                    style={styles.dataButton}
+                    disabled={visibleProjects.length === 0}
+                    aria-label="Previous slide"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+                  <button
+                    onClick={() => handleSlideAdvance(1)}
+                    style={styles.dataButton}
+                    disabled={visibleProjects.length === 0}
+                    aria-label="Next slide"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              </div>
+            </header>
+
+            {visibleProjects.length === 0 ? (
+              <div style={styles.emptyState}>No visible projects to show.</div>
+            ) : (
+              (() => {
+                const slideDueSoon = getProjectDueSoonTasks(slideProject).slice(0, 4);
+                const slideRecent = slideProject.recentActivity.slice(0, 4);
+                return (
+                  <div style={styles.slideStage}>
+                    <div style={styles.slideSurface}>
+                      <div style={styles.slideSurfaceInner}>
+                        <div style={styles.slideHeaderRow}>
+                          <div>
+                            <h3 style={styles.slideTitle}>{slideProject.name}</h3>
+                            <p style={styles.slideDescription}>{slideProject.description || 'No description added yet.'}</p>
+                          </div>
+                          <div style={styles.slideBadges}>
+                            <span style={styles.slideBadge}>{slideProject.status}</span>
+                            <span style={styles.slideBadgeMuted}>
+                              Target {slideProject.targetDate ? new Date(slideProject.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'TBD'}
+                            </span>
+                          </div>
+                        </div>
+
+                        <div style={styles.slideGrid}>
+                          <div style={styles.slidePanel}>
+                            <div style={styles.slidePanelTitle}>Recent updates</div>
+                            {slideRecent.length > 0 ? (
+                              <ul style={styles.momentumList}>
+                                {slideRecent.map((activity, idx) => (
+                                  <li key={activity.id || idx} style={styles.momentumListItem}>
+                                    <div style={styles.momentumListRow}>
+                                      <span style={styles.momentumListStrong}>{activity.author}</span>
+                                      <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
+                                    </div>
+                                    <div style={styles.momentumListText}>{activity.note}</div>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <div style={styles.momentumEmptyText}>No updates yet.</div>
+                            )}
+                          </div>
+
+                          <div style={styles.slidePanel}>
+                            <div style={styles.slidePanelTitle}>Due soon</div>
+                            {slideDueSoon.length > 0 ? (
+                              <ul style={styles.momentumList}>
+                                {slideDueSoon.map((task, idx) => (
+                                  <li key={`${task.taskTitle}-${task.title}-${idx}`} style={styles.momentumListItem}>
+                                    <div style={styles.momentumListRow}>
+                                      <span style={styles.momentumListStrong}>{task.taskTitle} → {task.title}</span>
+                                      <span style={{ ...styles.actionDueText, color: task.dueDateInfo.color }}>
+                                        {task.dueDateInfo.text}
+                                      </span>
+                                    </div>
+                                    <div style={styles.momentumListText}>Due {task.dueDateInfo.formattedDate}</div>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <div style={styles.momentumEmptyText}>No flagged deadlines.</div>
+                            )}
+                          </div>
+
+                          <div style={styles.slidePanel}>
+                            <div style={styles.slidePanelTitle}>Stakeholders</div>
+                            {slideProject.stakeholders.length > 0 ? (
+                              <ul style={styles.slideStakeholderList}>
+                                {slideProject.stakeholders.map(person => (
+                                  <li key={person.name} style={styles.slideStakeholder}>
+                                    <div style={styles.activityAvatarSmall}>{person.name.split(' ').map(n => n[0]).join('')}</div>
+                                    <div>
+                                      <div style={styles.momentumListStrong}>{person.name}</div>
+                                      <div style={styles.momentumListMeta}>{person.team}</div>
+                                    </div>
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <div style={styles.momentumEmptyText}>No stakeholders listed.</div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })()
+            )}
+          </>
         ) : (
           // Projects Overview
           <>
@@ -3088,6 +3457,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 </p>
               </div>
               <div style={styles.headerActions}>
+                <button
+                  onClick={() => setShowNewProject(prev => !prev)}
+                  style={styles.newProjectButton}
+                >
+                  <Plus size={18} />
+                  New Project
+                </button>
                 <div style={styles.lockHint}>
                   <span style={styles.lockHintTitle}>Delete projects</span>
                   <span style={styles.lockHintSubtitle}>Unlock to enable deletion</span>
@@ -3106,6 +3482,117 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 </button>
               </div>
             </header>
+
+            {showNewProject && (
+              <div style={styles.newProjectPanel}>
+                <div style={styles.sectionHeaderRow}>
+                  <div>
+                    <h3 style={styles.sectionTitle}>New project</h3>
+                    <p style={styles.sectionSubtitle}>Capture the basics and start planning.</p>
+                  </div>
+                </div>
+                <div style={styles.newProjectFormGrid}>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Name</label>
+                    <input
+                      type="text"
+                      value={newProjectName}
+                      onChange={(e) => setNewProjectName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.ctrlKey && e.key === 'Enter') {
+                          e.preventDefault();
+                          handleCreateProject();
+                        }
+                      }}
+                      placeholder="What are we shipping?"
+                      style={styles.input}
+                      autoFocus
+                    />
+                  </div>
+                  <div style={{ ...styles.formField, gridColumn: 'span 2' }}>
+                    <label style={styles.formLabel}>Description</label>
+                    <textarea
+                      value={newProjectDescription}
+                      onChange={(e) => setNewProjectDescription(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.ctrlKey && e.key === 'Enter') {
+                          e.preventDefault();
+                          handleCreateProject();
+                        }
+                      }}
+                      placeholder="Objectives, scope, or the decision driving this work"
+                      style={styles.projectUpdateInput}
+                    />
+                  </div>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Priority</label>
+                    <select
+                      value={newProjectPriority}
+                      onChange={(e) => setNewProjectPriority(e.target.value)}
+                      style={styles.select}
+                    >
+                      <option value="high">High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </div>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Status</label>
+                    <select
+                      value={newProjectStatus}
+                      onChange={(e) => setNewProjectStatus(e.target.value)}
+                      style={styles.select}
+                    >
+                      <option value="planning">Planning</option>
+                      <option value="active">Active</option>
+                      <option value="completed">Completed</option>
+                    </select>
+                  </div>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Target date</label>
+                    <input
+                      type="date"
+                      value={newProjectTargetDate}
+                      onChange={(e) => setNewProjectTargetDate(e.target.value)}
+                      style={styles.input}
+                    />
+                  </div>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Stakeholders</label>
+                    <input
+                      type="text"
+                      value={newProjectStakeholders}
+                      onChange={(e) => setNewProjectStakeholders(e.target.value)}
+                      placeholder="Comma-separated names"
+                      style={styles.input}
+                    />
+                  </div>
+                </div>
+                {renderCtrlEnterHint('create project')}
+                <div style={styles.newProjectActions}>
+                  <button
+                    onClick={handleCreateProject}
+                    disabled={!newProjectName.trim()}
+                    style={{
+                      ...styles.primaryButton,
+                      opacity: newProjectName.trim() ? 1 : 0.5,
+                      cursor: newProjectName.trim() ? 'pointer' : 'not-allowed'
+                    }}
+                  >
+                    Create project
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowNewProject(false);
+                      resetNewProjectForm();
+                    }}
+                    style={styles.skipButton}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div style={styles.projectsSection}>
               {visibleProjects.length === 0 ? (
@@ -3185,6 +3672,12 @@ const styles = {
     boxSizing: 'border-box',
     flexShrink: 0,
     transition: 'width 0.2s ease, padding 0.2s ease, transform 0.2s ease',
+    position: 'relative',
+  },
+
+  sidebarCollapsed: {
+    width: '68px',
+    padding: '32px 12px',
   },
 
   sidebarContent: {
@@ -3193,6 +3686,31 @@ const styles = {
     gap: '32px',
     flex: 1,
     transition: 'opacity 0.2s ease',
+  },
+
+  sidebarCollapseToggle: {
+    position: 'absolute',
+    top: '16px',
+    right: '-12px',
+    width: '24px',
+    height: '24px',
+    borderRadius: '50%',
+    border: '1px solid var(--cloud)',
+    backgroundColor: '#FFFFFF',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    boxShadow: '0 6px 18px rgba(0,0,0,0.08)',
+    zIndex: 2,
+  },
+
+  sidebarCollapsedContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flex: 1,
   },
 
   logo: {
@@ -3387,6 +3905,55 @@ const styles = {
   editingAsName: {
     fontWeight: 600,
     color: 'var(--charcoal)',
+  },
+
+  shortcutHint: {
+    marginTop: '4px',
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  strongText: {
+    color: 'var(--charcoal)',
+  },
+
+  emText: {
+    color: 'var(--charcoal)',
+    fontStyle: 'italic',
+  },
+
+  inlineCode: {
+    backgroundColor: '#F4F1EB',
+    borderRadius: '6px',
+    padding: '2px 6px',
+    fontSize: '13px',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+  },
+
+  richList: {
+    margin: '8px 0 12px 0',
+    paddingLeft: '20px',
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  richListItem: {
+    marginBottom: '6px',
+    lineHeight: 1.5,
+  },
+
+  richHeading: {
+    margin: '10px 0 6px 0',
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  richParagraph: {
+    margin: '4px 0 10px 0',
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+    lineHeight: 1.6,
   },
 
   emptyState: {
@@ -3989,6 +4556,19 @@ const styles = {
     boxShadow: '0 4px 12px rgba(139, 111, 71, 0.3)',
   },
 
+  secondaryButton: {
+    padding: '12px 16px',
+    borderRadius: '10px',
+    border: '1px solid var(--cloud)',
+    backgroundColor: '#FFFFFF',
+    color: 'var(--charcoal)',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+
   dangerButton: {
     padding: '12px 18px',
     border: 'none',
@@ -4041,19 +4621,6 @@ const styles = {
     margin: '0 0 16px 0',
     textAlign: 'center',
     fontStyle: 'italic',
-  },
-
-  secondaryButton: {
-    padding: '14px 24px',
-    border: '2px solid var(--cloud)',
-    borderRadius: '10px',
-    backgroundColor: 'transparent',
-    color: 'var(--stone)',
-    fontSize: '15px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '600',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
   },
 
   progressIndicator: {
@@ -5672,6 +6239,140 @@ const styles = {
     fontSize: '13px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
+  },
+
+  slidesCounter: {
+    fontSize: '13px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    marginRight: '12px',
+  },
+
+  slidesControls: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+
+  slideStage: {
+    display: 'flex',
+    justifyContent: 'center',
+    padding: '12px 0',
+  },
+
+  slideSurface: {
+    width: '100%',
+    maxWidth: '1100px',
+    aspectRatio: '16 / 9',
+    borderRadius: '18px',
+    border: '1px solid var(--cloud)',
+    background: 'linear-gradient(135deg, #FFFFFF 0%, #F7F2EA 100%)',
+    boxShadow: '0 18px 50px rgba(0,0,0,0.08)',
+    overflow: 'hidden',
+    position: 'relative',
+  },
+
+  slideSurfaceInner: {
+    position: 'absolute',
+    inset: '0',
+    padding: '28px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+    boxSizing: 'border-box',
+  },
+
+  slideHeaderRow: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '16px',
+  },
+
+  slideTitle: {
+    margin: 0,
+    fontSize: '26px',
+    color: 'var(--charcoal)',
+    letterSpacing: '-0.5px',
+  },
+
+  slideDescription: {
+    margin: '6px 0 0 0',
+    fontSize: '14px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    lineHeight: 1.6,
+    maxWidth: '720px',
+  },
+
+  slideBadges: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+
+  slideBadge: {
+    padding: '8px 10px',
+    borderRadius: '999px',
+    backgroundColor: 'var(--earth)' + '12',
+    color: 'var(--earth)',
+    fontSize: '12px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: 700,
+    textTransform: 'capitalize',
+  },
+
+  slideBadgeMuted: {
+    padding: '8px 10px',
+    borderRadius: '999px',
+    backgroundColor: 'var(--cloud)',
+    color: 'var(--stone)',
+    fontSize: '12px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: 600,
+  },
+
+  slideGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+    gap: '14px',
+    marginTop: '8px',
+  },
+
+  slidePanel: {
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '12px',
+    padding: '12px 14px',
+    boxShadow: '0 8px 20px rgba(0,0,0,0.04)',
+  },
+
+  slidePanelTitle: {
+    fontSize: '14px',
+    fontWeight: 700,
+    color: 'var(--charcoal)',
+    margin: '0 0 8px 0',
+    fontFamily: "'Inter', sans-serif",
+    letterSpacing: '0.2px',
+  },
+
+  slideStakeholderList: {
+    listStyle: 'none',
+    padding: 0,
+    margin: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+
+  slideStakeholder: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '8px',
+    borderRadius: '10px',
+    backgroundColor: 'var(--cloud)' + '30',
   },
 
   thrustProjectHeader: {
