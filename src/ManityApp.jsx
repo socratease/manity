@@ -209,6 +209,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [projectUpdateCursorPosition, setProjectUpdateCursorPosition] = useState(0);
   const [activityEditEnabled, setActivityEditEnabled] = useState(false);
   const [activityEdits, setActivityEdits] = useState({});
+  const adminUsers = [
+    { name: 'Chris Graves', team: 'Admin' }
+  ];
   const [loggedInUser, setLoggedInUser] = useState(() =>
     (projects[0]?.stakeholders?.[0]?.name) || ''
   );
@@ -720,6 +723,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const getAllStakeholders = () => {
     const stakeholderMap = new Map();
+    adminUsers.forEach(admin => {
+      stakeholderMap.set(admin.name, admin);
+    });
     projects.forEach(project => {
       project.stakeholders.forEach(stakeholder => {
         if (!stakeholderMap.has(stakeholder.name)) {
@@ -730,8 +736,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     return Array.from(stakeholderMap.values());
   };
 
+  const isAdminUser = (name) => adminUsers.some(admin => admin.name === name);
+
   const visibleProjects = projects.filter(project =>
-    project.stakeholders.some(stakeholder => stakeholder.name === loggedInUser)
+    isAdminUser(loggedInUser) || project.stakeholders.some(stakeholder => stakeholder.name === loggedInUser)
   );
 
   const handleAddTimelineUpdate = () => {
