@@ -1,15 +1,20 @@
 import React, { useState, useEffect } from "react";
 import ManityApp from "./ManityApp";
+import SettingsModal from "./components/SettingsModal";
 import { useApiKey } from "./hooks/useApiKey";
 
 export default function App() {
   const { apiKey, setApiKey, clearApiKey, hasStoredKey } = useApiKey();
   const [tempKey, setTempKey] = useState("");
-  const [showSettings, setShowSettings] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const openSettings = () => {
-    setShowSettings(true);
+    setIsSettingsOpen(true);
     setTempKey(apiKey ? "********" : "");
+  };
+
+  const closeSettings = () => {
+    setIsSettingsOpen(false);
   };
 
   useEffect(() => {
@@ -22,7 +27,7 @@ export default function App() {
     if (tempKey && tempKey !== "********") {
       setApiKey(tempKey.trim());
     }
-    setShowSettings(false);
+    setIsSettingsOpen(false);
   };
 
   const handleClear = () => {
@@ -31,51 +36,17 @@ export default function App() {
   };
 
   return (
-    <div style={{ maxWidth: 960, margin: "0 auto", padding: "1.5rem" }}>
-      {showSettings && (
-        <section
-          style={{
-            border: "1px solid #ddd",
-            borderRadius: 8,
-            padding: "1rem",
-            marginBottom: "1.5rem",
-            background: "#fafafa",
-            position: "relative",
-          }}
-        >
-          <button
-            onClick={() => setShowSettings(false)}
-            style={{ position: "absolute", top: 12, right: 12 }}
-            aria-label="Close settings"
-          >
-            Close
-          </button>
-          <h2>API key</h2>
-          <p style={{ fontSize: "0.9rem" }}>
-            Your API key is stored only in this browser (localStorage) and is sent only to the model provider when you explicitly make a
-            request. It is never sent to GitHub or any other server.
-          </p>
-          <input
-            type="password"
-            value={tempKey}
-            onChange={(e) => setTempKey(e.target.value)}
-            placeholder="Paste your OpenAI API key"
-            style={{ width: "100%", marginBottom: 8, padding: 6 }}
-          />
-          <div style={{ display: "flex", gap: 8 }}>
-            <button onClick={handleSave}>Save</button>
-            {hasStoredKey && (
-              <button onClick={handleClear} type="button">
-                Clear stored key
-              </button>
-            )}
-          </div>
-        </section>
-      )}
-
-      <main>
-        <ManityApp onOpenSettings={openSettings} />
-      </main>
-    </div>
+    <>
+      <ManityApp onOpenSettings={openSettings} />
+      <SettingsModal
+        isOpen={isSettingsOpen}
+        tempKey={tempKey}
+        hasStoredKey={hasStoredKey}
+        onTempKeyChange={setTempKey}
+        onSave={handleSave}
+        onClear={handleClear}
+        onClose={closeSettings}
+      />
+    </>
   );
 }
