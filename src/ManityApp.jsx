@@ -44,6 +44,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [projectDeletionEnabled, setProjectDeletionEnabled] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
+  const [thrustMessages, setThrustMessages] = useState([]);
+  const [thrustDraft, setThrustDraft] = useState('');
+  const [thrustInfoExpanded, setThrustInfoExpanded] = useState(false);
   const adminUsers = [
     { name: 'Chris Graves', team: 'Admin' }
   ];
@@ -665,6 +668,34 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     return allActivities.sort((a, b) => new Date(b.date) - new Date(a.date));
   };
 
+  const handleSendThrustMessage = () => {
+    if (!thrustDraft.trim()) return;
+
+    const newMessage = {
+      id: generateActivityId(),
+      author: loggedInUser || 'You',
+      note: thrustDraft,
+      date: new Date().toISOString(),
+    };
+
+    setThrustMessages(prev => [newMessage, ...prev]);
+    setThrustDraft('');
+  };
+
+  const getThrustConversation = () => {
+    const activityItems = getAllActivities()
+      .slice(0, 6)
+      .map(activity => ({
+        id: activity.id,
+        author: activity.author,
+        note: activity.note,
+        date: activity.date,
+        projectName: activity.projectName
+      }));
+
+    return [...thrustMessages, ...activityItems].sort((a, b) => new Date(b.date) - new Date(a.date));
+  };
+
   const formatDateTime = (dateString) => {
     const date = new Date(dateString);
     const now = new Date();
@@ -747,6 +778,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       setEditValues({});
     }
   }, [viewingProjectId]);
+
+  const thrustConversation = getThrustConversation();
 
   const getPriorityColor = (priority) => {
     const colors = {
@@ -1199,6 +1232,18 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               }}
             >
               Timeline
+            </button>
+            <button
+              onClick={() => {
+                setActiveView('thrust');
+                setViewingProjectId(null);
+              }}
+              style={{
+                ...styles.navItem,
+                ...(activeView === 'thrust' && !viewingProjectId ? styles.navItemActive : {})
+              }}
+            >
+              Thrust
             </button>
             <button
               onClick={() => {
@@ -2143,6 +2188,185 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                     )}
                   </div>
                 ))}
+              </div>
+            </div>
+          </>
+        ) : activeView === 'thrust' ? (
+          <>
+            <header style={styles.header}>
+              <div>
+                <h2 style={styles.pageTitle}>Thrust</h2>
+                <p style={styles.pageSubtitle}>
+                  Chat with stakeholders and surface a quick project snapshot
+                </p>
+              </div>
+            </header>
+
+            <div style={styles.thrustLayout}>
+              <div style={styles.thrustChatPanel}>
+                <div style={styles.sectionHeaderRow}>
+                  <div>
+                    <h3 style={styles.sectionTitle}>Chat</h3>
+                    <p style={styles.sectionSubtitle}>Threaded updates stay aligned with project momentum</p>
+                  </div>
+                  <div style={styles.thrustPill}>Live</div>
+                </div>
+
+                <div style={styles.thrustChatFeed}>
+                  {thrustConversation.length === 0 ? (
+                    <div style={styles.emptyState}>
+                      Start the conversation with a quick update.
+                    </div>
+                  ) : (
+                    thrustConversation.map((message, idx) => (
+                      <div
+                        key={message.id || idx}
+                        style={{
+                          ...styles.thrustMessageCard,
+                          animationDelay: `${idx * 30}ms`
+                        }}
+                      >
+                        <div style={styles.thrustMessageHeader}>
+                          <div style={styles.activityAuthorCompact}>
+                            <div style={styles.activityAvatarSmall}>
+                              {message.author.split(' ').map(n => n[0]).join('')}
+                            </div>
+                            <div>
+                              <span style={styles.activityAuthorNameCompact}>{message.author}</span>
+                              <div style={styles.thrustMetaRow}>
+                                <span style={styles.activityTimeCompact}>{formatDateTime(message.date)}</span>
+                                {message.projectName && (
+                                  <span style={styles.projectBadgeSmall}>{message.projectName}</span>
+                                )}
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                        <p style={styles.thrustMessageBody}>
+                          {parseTaggedText(message.note).map((part, index) => (
+                            part.type === 'tag' ? (
+                              <span key={index} style={styles.tagInlineCompact}>
+                                {part.display}
+                              </span>
+                            ) : (
+                              <span key={index}>{part.content}</span>
+                            )
+                          ))}
+                        </p>
+                      </div>
+                    ))
+                  )}
+                </div>
+
+                <div style={styles.timelineInputWrapper}>
+                  <textarea
+                    value={thrustDraft}
+                    onChange={(e) => setThrustDraft(e.target.value)}
+                    onFocus={() => setFocusedField('thrust-draft')}
+                    onBlur={() => setFocusedField(null)}
+                    placeholder="Share a thrust update..."
+                    style={{ ...styles.timelineInput, minHeight: '96px' }}
+                  />
+                  {renderEditingHint('thrust-draft')}
+                  <button
+                    onClick={handleSendThrustMessage}
+                    disabled={!thrustDraft.trim()}
+                    style={{
+                      ...styles.timelineSubmitButtonCompact,
+                      opacity: thrustDraft.trim() ? 1 : 0.4
+                    }}
+                    title="Send update"
+                  >
+                    <Send size={18} />
+                  </button>
+                </div>
+              </div>
+
+              <div style={{
+                ...styles.thrustInfoPanel,
+                ...(thrustInfoExpanded ? styles.thrustInfoPanelExpanded : styles.thrustInfoPanelCollapsed)
+              }}>
+                <div style={styles.thrustInfoHeader}>
+                  <div style={styles.thrustInfoTitle}>
+                    <Sparkles size={16} style={{ color: 'var(--earth)' }} />
+                    <div>
+                      <div style={styles.thrustInfoLabel}>Project info</div>
+                      <div style={styles.thrustInfoSubtle}>Primary initiative snapshot</div>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setThrustInfoExpanded(prev => !prev)}
+                    style={styles.thrustToggle}
+                  >
+                    {thrustInfoExpanded ? 'Collapse' : 'Expand'}
+                    <ChevronDown
+                      size={16}
+                      style={{
+                        transition: 'transform 0.2s ease',
+                        transform: thrustInfoExpanded ? 'rotate(180deg)' : 'rotate(0deg)'
+                      }}
+                    />
+                  </button>
+                </div>
+
+                {thrustInfoExpanded && (
+                  visibleProjects.length > 0 ? (
+                    <div style={styles.thrustInfoContent}>
+                      <div style={styles.thrustProjectHeader}>
+                        <div>
+                          <div style={styles.thrustProjectName}>{visibleProjects[0].name}</div>
+                          <div style={styles.thrustProjectMeta}>
+                            <Calendar size={14} style={{ color: 'var(--stone)' }} />
+                            Target {new Date(visibleProjects[0].targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </div>
+                        </div>
+                        <div style={{
+                          ...styles.priorityBadgeLarge,
+                          backgroundColor: getPriorityColor(visibleProjects[0].priority) + '20',
+                          color: getPriorityColor(visibleProjects[0].priority)
+                        }}>
+                          {visibleProjects[0].priority} priority
+                        </div>
+                      </div>
+
+                      <div style={styles.thrustStatGrid}>
+                        <div style={styles.thrustStatCard}>
+                          <div style={styles.thrustStatLabel}>Status</div>
+                          <div style={styles.statusBadgeSmall}>{visibleProjects[0].status}</div>
+                        </div>
+                        <div style={styles.thrustStatCard}>
+                          <div style={styles.thrustStatLabel}>Stakeholders</div>
+                          <div style={styles.thrustStakeholders}>
+                            {visibleProjects[0].stakeholders.slice(0, 3).map((stakeholder, idx) => (
+                              <span key={idx} style={styles.avatarCircle}>
+                                {stakeholder.name.split(' ').map(n => n[0]).join('')}
+                              </span>
+                            ))}
+                            {visibleProjects[0].stakeholders.length > 3 && (
+                              <span style={styles.thrustOverflow}>+{visibleProjects[0].stakeholders.length - 3}</span>
+                            )}
+                          </div>
+                        </div>
+                        <div style={styles.thrustStatCard}>
+                          <div style={styles.thrustStatLabel}>Progress</div>
+                          <div style={styles.thrustProgressBar}>
+                            <div
+                              style={{
+                                ...styles.thrustProgressFill,
+                                width: `${calculateTaskProgress(visibleProjects[0].plan?.[0] || { subtasks: [] })}%`
+                              }}
+                            />
+                          </div>
+                          <div style={styles.thrustProgressHint}>
+                            Based on first milestone
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={styles.emptyState}>No visible projects to summarize.</div>
+                  )
+                )}
               </div>
             </div>
           </>
@@ -4354,5 +4578,233 @@ const styles = {
     fontSize: '13px',
     fontFamily: "'Inter', sans-serif",
     fontWeight: '600',
+  },
+
+  // Thrust View
+  thrustLayout: {
+    display: 'grid',
+    gridTemplateColumns: '2fr 1fr',
+    gap: '16px',
+    alignItems: 'start',
+  },
+
+  thrustChatPanel: {
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '16px',
+    padding: '20px',
+    boxShadow: '0 10px 30px rgba(139, 111, 71, 0.08)',
+  },
+
+  thrustPill: {
+    padding: '6px 12px',
+    borderRadius: '999px',
+    backgroundColor: 'var(--sage)' + '20',
+    color: 'var(--earth)',
+    fontSize: '12px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '700',
+    letterSpacing: '0.3px',
+  },
+
+  thrustChatFeed: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+    margin: '16px 0 12px',
+    maxHeight: '520px',
+    overflowY: 'auto',
+    paddingRight: '4px',
+  },
+
+  thrustMessageCard: {
+    padding: '12px',
+    borderRadius: '10px',
+    border: '1px solid var(--cloud)',
+    backgroundColor: 'var(--cream)',
+    animation: 'fadeIn 0.25s ease backwards',
+  },
+
+  thrustMessageHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    marginBottom: '6px',
+  },
+
+  thrustMessageBody: {
+    margin: 0,
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    lineHeight: '1.6',
+  },
+
+  thrustMetaRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginTop: '4px',
+  },
+
+  thrustInfoPanel: {
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '16px',
+    boxShadow: '0 10px 30px rgba(58, 54, 49, 0.06)',
+    overflow: 'hidden',
+    transition: 'all 0.2s ease',
+  },
+
+  thrustInfoPanelCollapsed: {
+    maxHeight: '150px',
+  },
+
+  thrustInfoPanelExpanded: {
+    maxHeight: 'none',
+  },
+
+  thrustInfoHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '16px 18px',
+    borderBottom: '1px solid var(--cloud)',
+  },
+
+  thrustInfoTitle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+
+  thrustInfoLabel: {
+    fontSize: '14px',
+    color: 'var(--charcoal)',
+    fontWeight: '700',
+    margin: 0,
+  },
+
+  thrustInfoSubtle: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    marginTop: '2px',
+  },
+
+  thrustToggle: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '8px 10px',
+    borderRadius: '10px',
+    border: '1px solid var(--cloud)',
+    backgroundColor: '#FFFFFF',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
+    cursor: 'pointer',
+  },
+
+  thrustInfoContent: {
+    padding: '16px 18px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+
+  thrustProjectHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+  },
+
+  thrustProjectName: {
+    margin: 0,
+    fontSize: '18px',
+    fontWeight: '700',
+    color: 'var(--charcoal)',
+  },
+
+  thrustProjectMeta: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    color: 'var(--stone)',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    marginTop: '6px',
+  },
+
+  thrustStatGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
+    gap: '12px',
+  },
+
+  thrustStatCard: {
+    padding: '12px',
+    borderRadius: '12px',
+    border: '1px solid var(--cloud)',
+    backgroundColor: 'var(--cream)',
+  },
+
+  thrustStatLabel: {
+    fontSize: '12px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--stone)',
+    fontWeight: '700',
+    letterSpacing: '0.3px',
+    textTransform: 'uppercase',
+    marginBottom: '6px',
+  },
+
+  thrustStakeholders: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    flexWrap: 'wrap',
+  },
+
+  avatarCircle: {
+    width: '30px',
+    height: '30px',
+    borderRadius: '50%',
+    backgroundColor: 'var(--earth)' + '15',
+    color: 'var(--earth)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    fontSize: '12px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '700',
+  },
+
+  thrustOverflow: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '700',
+  },
+
+  thrustProgressBar: {
+    width: '100%',
+    height: '8px',
+    backgroundColor: 'var(--cloud)',
+    borderRadius: '999px',
+    overflow: 'hidden',
+  },
+
+  thrustProgressFill: {
+    height: '100%',
+    background: 'linear-gradient(135deg, var(--earth) 0%, var(--sage) 100%)',
+  },
+
+  thrustProgressHint: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    marginTop: '6px',
   },
 };
