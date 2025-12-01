@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2 } from 'lucide-react';
+import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
+import { callOpenAIChat } from './lib/llmClient';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
-export default function ManityApp({ onOpenSettings = () => {} }) {
+export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   const timelineInputRef = useRef(null);
   const projectUpdateInputRef = useRef(null);
   
@@ -47,6 +48,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [thrustMessages, setThrustMessages] = useState([]);
   const [thrustDraft, setThrustDraft] = useState('');
   const [thrustInfoExpanded, setThrustInfoExpanded] = useState(false);
+  const [thrustError, setThrustError] = useState('');
+  const [thrustPendingActions, setThrustPendingActions] = useState([]);
+  const [thrustIsRequesting, setThrustIsRequesting] = useState(false);
   const adminUsers = [
     { name: 'Chris Graves', team: 'Admin' }
   ];
@@ -577,6 +581,255 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     return parts.length > 0 ? parts : [{ type: 'text', content: text }];
   };
 
+  const cloneProjectDeep = (project) => ({
+    ...project,
+    plan: project.plan.map(task => ({
+      ...task,
+      subtasks: (task.subtasks || []).map(subtask => ({ ...subtask }))
+    })),
+    recentActivity: [...project.recentActivity]
+  });
+
+  const buildThrustContext = () => {
+    return projects.map(project => ({
+      id: project.id,
+      name: project.name,
+      status: project.status,
+      progress: project.progress,
+      priority: project.priority,
+      lastUpdate: project.lastUpdate,
+      targetDate: project.targetDate,
+      plan: project.plan.map(task => ({
+        id: task.id,
+        title: task.title,
+        status: task.status,
+        dueDate: task.dueDate,
+        subtasks: (task.subtasks || []).map(subtask => ({
+          id: subtask.id,
+          title: subtask.title,
+          status: subtask.status,
+          dueDate: subtask.dueDate
+        }))
+      })),
+      recentActivity: project.recentActivity.slice(0, 3)
+    }));
+  };
+
+  const parseAssistantResponse = (content) => {
+    const match = content.match(/```json\s*([\s\S]*?)```/);
+    const maybeJson = match ? match[1] : content;
+
+    try {
+      const parsed = JSON.parse(maybeJson);
+      return {
+        display: parsed.response || parsed.message || parsed.summary || content,
+        actions: Array.isArray(parsed.actions) ? parsed.actions : []
+      };
+    } catch (error) {
+      return { display: content, actions: [] };
+    }
+  };
+
+  const rollbackDeltas = (deltas) => {
+    if (!deltas || deltas.length === 0) return;
+
+    setProjects(prevProjects => {
+      const working = prevProjects.map(cloneProjectDeep);
+
+      deltas.slice().reverse().forEach(delta => {
+        const project = working.find(p => `${p.id}` === `${delta.projectId}`);
+        if (!project) return;
+
+        switch (delta.type) {
+          case 'remove_activity':
+            project.recentActivity = project.recentActivity.filter(activity => activity.id !== delta.activityId);
+            break;
+          case 'remove_task':
+            project.plan = project.plan.filter(task => task.id !== delta.taskId);
+            break;
+          case 'restore_task':
+            project.plan = project.plan.map(task => task.id === delta.taskId ? { ...task, ...delta.previous } : task);
+            break;
+          case 'remove_subtask':
+            project.plan = project.plan.map(task =>
+              task.id === delta.taskId
+                ? { ...task, subtasks: task.subtasks.filter(st => st.id !== delta.subtaskId) }
+                : task
+            );
+            break;
+          case 'restore_subtask':
+            project.plan = project.plan.map(task =>
+              task.id === delta.taskId
+                ? {
+                    ...task,
+                    subtasks: task.subtasks.map(subtask =>
+                      subtask.id === delta.subtaskId ? { ...subtask, ...delta.previous } : subtask
+                    )
+                  }
+                : task
+            );
+            break;
+          case 'restore_project':
+            project.status = delta.previous.status;
+            project.progress = delta.previous.progress;
+            project.targetDate = delta.previous.targetDate;
+            project.lastUpdate = delta.previous.lastUpdate;
+            break;
+          default:
+            break;
+        }
+      });
+
+      return working;
+    });
+  };
+
+  const applyThrustActions = (actions = []) => {
+    if (!actions.length) {
+      return { deltas: [], summary: 'No actions executed' };
+    }
+
+    let workingProjects = projects.map(cloneProjectDeep);
+    const deltas = [];
+    const summaries = [];
+
+    const resolveProject = (target) => {
+      if (!target) return null;
+      const lowerTarget = `${target}`.toLowerCase();
+      return workingProjects.find(p => `${p.id}` === `${target}` || p.name.toLowerCase() === lowerTarget);
+    };
+
+    const resolveTask = (project, target) => {
+      if (!project || !target) return null;
+      const lowerTarget = `${target}`.toLowerCase();
+      return project.plan.find(task => `${task.id}` === `${target}` || task.title.toLowerCase() === lowerTarget);
+    };
+
+    actions.forEach(action => {
+      const project = resolveProject(action.projectId || action.projectName);
+
+      if (!project) {
+        summaries.push('Skipped action: unknown project');
+        return;
+      }
+
+      switch (action.type) {
+        case 'comment': {
+          const activityId = generateActivityId();
+          const newActivity = {
+            id: activityId,
+            date: new Date().toISOString(),
+            note: action.note || action.content || 'Update logged by Thrust AI',
+            author: action.author || 'Thrust AI'
+          };
+          project.recentActivity = [newActivity, ...project.recentActivity];
+          deltas.push({ type: 'remove_activity', projectId: project.id, activityId });
+          summaries.push(`Commented on ${project.name}`);
+          break;
+        }
+        case 'add_task': {
+          const taskId = action.taskId || `ai-task-${Math.random().toString(36).slice(2, 7)}`;
+          const newTask = {
+            id: taskId,
+            title: action.title || 'New task',
+            status: action.status || 'todo',
+            dueDate: action.dueDate,
+            completedDate: action.completedDate,
+            subtasks: (action.subtasks || []).map(subtask => ({
+              id: subtask.id || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`,
+              title: subtask.title || 'New subtask',
+              status: subtask.status || 'todo',
+              dueDate: subtask.dueDate
+            }))
+          };
+          project.plan = [...project.plan, newTask];
+          deltas.push({ type: 'remove_task', projectId: project.id, taskId });
+          summaries.push(`Added task "${newTask.title}" to ${project.name}`);
+          break;
+        }
+        case 'update_task': {
+          const task = resolveTask(project, action.taskId || action.taskTitle);
+          if (!task) {
+            summaries.push(`Skipped action: missing task in ${project.name}`);
+            break;
+          }
+
+          const previous = { ...task };
+          if (action.title) task.title = action.title;
+          if (action.status) task.status = action.status;
+          if (action.dueDate) task.dueDate = action.dueDate;
+          if (action.completedDate) task.completedDate = action.completedDate;
+
+          deltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
+          summaries.push(`Updated task "${task.title}" in ${project.name}`);
+          break;
+        }
+        case 'add_subtask': {
+          const task = resolveTask(project, action.taskId || action.taskTitle);
+          if (!task) {
+            summaries.push(`Skipped action: missing parent task in ${project.name}`);
+            break;
+          }
+
+          const subtaskId = action.subtaskId || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`;
+          const newSubtask = {
+            id: subtaskId,
+            title: action.title || action.subtaskTitle || 'New subtask',
+            status: action.status || 'todo',
+            dueDate: action.dueDate
+          };
+          task.subtasks = [...task.subtasks, newSubtask];
+          deltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
+          summaries.push(`Added subtask "${newSubtask.title}" to ${task.title}`);
+          break;
+        }
+        case 'update_subtask': {
+          const task = resolveTask(project, action.taskId || action.taskTitle);
+          if (!task) {
+            summaries.push(`Skipped action: missing parent task in ${project.name}`);
+            break;
+          }
+          const subtask = task.subtasks.find(st => `${st.id}` === `${action.subtaskId}` || st.title.toLowerCase() === `${action.subtaskTitle || action.title || ''}`.toLowerCase());
+          if (!subtask) {
+            summaries.push(`Skipped action: missing subtask in ${task.title}`);
+            break;
+          }
+
+          const previous = { ...subtask };
+          if (action.title || action.subtaskTitle) subtask.title = action.title || action.subtaskTitle;
+          if (action.status) subtask.status = action.status;
+          if (action.dueDate) subtask.dueDate = action.dueDate;
+          if (action.completedDate) subtask.completedDate = action.completedDate;
+
+          deltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
+          summaries.push(`Updated subtask "${subtask.title}" in ${task.title}`);
+          break;
+        }
+        case 'update_project': {
+          const previous = {
+            status: project.status,
+            progress: project.progress,
+            targetDate: project.targetDate,
+            lastUpdate: project.lastUpdate
+          };
+          if (action.status) project.status = action.status;
+          if (typeof action.progress === 'number') project.progress = action.progress;
+          if (action.targetDate) project.targetDate = action.targetDate;
+          if (action.lastUpdate) project.lastUpdate = action.lastUpdate;
+
+          deltas.push({ type: 'restore_project', projectId: project.id, previous });
+          summaries.push(`Updated ${project.name}`);
+          break;
+        }
+        default:
+          summaries.push('Skipped action: unsupported type');
+      }
+    });
+
+    setProjects(workingProjects);
+    return { deltas, summary: summaries.join('; ') || 'No actions executed' };
+  };
+
   const getAllStakeholders = () => {
     const stakeholderMap = new Map();
     adminUsers.forEach(admin => {
@@ -668,32 +921,81 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     return allActivities.sort((a, b) => new Date(b.date) - new Date(a.date));
   };
 
-  const handleSendThrustMessage = () => {
-    if (!thrustDraft.trim()) return;
+  const handleSendThrustMessage = async () => {
+    if (!thrustDraft.trim() || thrustIsRequesting) return;
 
-    const newMessage = {
+    const userMessage = {
       id: generateActivityId(),
+      role: 'user',
       author: loggedInUser || 'You',
       note: thrustDraft,
       date: new Date().toISOString(),
     };
 
-    setThrustMessages(prev => [newMessage, ...prev]);
+    const nextMessages = [...thrustMessages, userMessage];
+    setThrustMessages(nextMessages);
     setThrustDraft('');
+    setThrustError('');
+    setThrustPendingActions([]);
+
+    if (!apiKey) {
+      setThrustError('Add an API key in Settings to chat with Thrust AI.');
+      return;
+    }
+
+    const systemPrompt = `You are Thrust AI autopilot. Keep replies short, explain what you changed, and always return a JSON object with a 'response' string and an 'actions' array. Each action must include a projectId and one of the supported types: comment, add_task, update_task, add_subtask, update_subtask, update_project.`;
+    const context = buildThrustContext();
+    const orderedMessages = [...nextMessages].sort((a, b) => new Date(a.date) - new Date(b.date));
+    const messages = [
+      { role: 'system', content: `${systemPrompt}\n\nCurrent portfolio context: ${JSON.stringify(context)}` },
+      ...orderedMessages.map(message => ({
+        role: message.role === 'user' ? 'user' : 'assistant',
+        content: message.note || message.content || ''
+      }))
+    ];
+
+    setThrustIsRequesting(true);
+    const responseId = generateActivityId();
+
+    try {
+      const { content } = await callOpenAIChat({ apiKey, messages });
+      const parsed = parseAssistantResponse(content);
+      setThrustPendingActions(parsed.actions || []);
+      const { deltas, summary } = applyThrustActions(parsed.actions || []);
+
+      const assistantMessage = {
+        id: responseId,
+        role: 'assistant',
+        author: 'Thrust AI',
+        note: parsed.display || content,
+        date: new Date().toISOString(),
+        actionSummary: summary,
+        deltas
+      };
+
+      setThrustMessages(prev => [...prev, assistantMessage]);
+    } catch (error) {
+      setThrustError(error?.message || 'Failed to send Thrust request.');
+    } finally {
+      setThrustPendingActions([]);
+      setThrustIsRequesting(false);
+    }
   };
 
   const getThrustConversation = () => {
-    const activityItems = getAllActivities()
-      .slice(0, 6)
-      .map(activity => ({
-        id: activity.id,
-        author: activity.author,
-        note: activity.note,
-        date: activity.date,
-        projectName: activity.projectName
-      }));
+    return [...thrustMessages].sort((a, b) => new Date(b.date) - new Date(a.date));
+  };
 
-    return [...thrustMessages, ...activityItems].sort((a, b) => new Date(b.date) - new Date(a.date));
+  const undoThrustActions = (messageId) => {
+    const target = thrustMessages.find(message => message.id === messageId);
+    if (!target || !target.deltas || target.deltas.length === 0) return;
+
+    rollbackDeltas(target.deltas);
+    setThrustMessages(prev => prev.map(message =>
+      message.id === messageId
+        ? { ...message, undone: true, actionSummary: `${message.actionSummary || 'Actions'} (undone)` }
+        : message
+    ));
   };
 
   const formatDateTime = (dateString) => {
@@ -2203,58 +2505,97 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
             </header>
 
             <div style={styles.thrustLayout}>
-              <div style={styles.thrustChatPanel}>
-                <div style={styles.sectionHeaderRow}>
-                  <div>
-                    <h3 style={styles.sectionTitle}>Chat</h3>
-                    <p style={styles.sectionSubtitle}>Threaded updates stay aligned with project momentum</p>
-                  </div>
-                  <div style={styles.thrustPill}>Live</div>
-                </div>
-
-                <div style={styles.thrustChatFeed}>
-                  {thrustConversation.length === 0 ? (
-                    <div style={styles.emptyState}>
-                      Start the conversation with a quick update.
+                <div style={styles.thrustChatPanel}>
+                  <div style={styles.sectionHeaderRow}>
+                    <div>
+                      <h3 style={styles.sectionTitle}>Chat</h3>
+                      <p style={styles.sectionSubtitle}>Threaded updates stay aligned with project momentum</p>
                     </div>
+                    <div style={styles.thrustPill}>Live</div>
+                  </div>
+
+                  {thrustError && (
+                    <div style={styles.thrustAlert}>
+                      <AlertCircle size={16} style={{ marginRight: 8 }} />
+                      <span>{thrustError}</span>
+                    </div>
+                  )}
+
+                  {thrustIsRequesting && (
+                    <div style={styles.thrustStatusRow}>Gathering plan from Thrust AI…</div>
+                  )}
+
+                  {thrustPendingActions.length > 0 && (
+                    <div style={styles.thrustStatusRow}>
+                      Applying actions: {thrustPendingActions.map(action => action.type).join(', ')}
+                    </div>
+                  )}
+
+                  <div style={styles.thrustChatFeed}>
+                    {thrustConversation.length === 0 ? (
+                      <div style={styles.emptyState}>
+                        Start the conversation with a quick update.
+                      </div>
                   ) : (
-                    thrustConversation.map((message, idx) => (
-                      <div
-                        key={message.id || idx}
-                        style={{
-                          ...styles.thrustMessageCard,
-                          animationDelay: `${idx * 30}ms`
-                        }}
-                      >
-                        <div style={styles.thrustMessageHeader}>
-                          <div style={styles.activityAuthorCompact}>
-                            <div style={styles.activityAvatarSmall}>
-                              {message.author.split(' ').map(n => n[0]).join('')}
-                            </div>
-                            <div>
-                              <span style={styles.activityAuthorNameCompact}>{message.author}</span>
-                              <div style={styles.thrustMetaRow}>
-                                <span style={styles.activityTimeCompact}>{formatDateTime(message.date)}</span>
-                                {message.projectName && (
-                                  <span style={styles.projectBadgeSmall}>{message.projectName}</span>
-                                )}
+                    thrustConversation.map((message, idx) => {
+                      const authorName = message.author || (message.role === 'assistant' ? 'Thrust AI' : 'You');
+
+                      return (
+                        <div
+                          key={message.id || idx}
+                          style={{
+                            ...styles.thrustMessageCard,
+                            animationDelay: `${idx * 30}ms`
+                          }}
+                        >
+                          <div style={styles.thrustMessageHeader}>
+                            <div style={styles.activityAuthorCompact}>
+                              <div style={styles.activityAvatarSmall}>
+                                {authorName.split(' ').map(n => n[0]).join('')}
+                              </div>
+                              <div>
+                                <span style={styles.activityAuthorNameCompact}>{authorName}</span>
+                                <div style={styles.thrustMetaRow}>
+                                  <span style={styles.activityTimeCompact}>{formatDateTime(message.date)}</span>
+                                  {message.projectName && (
+                                    <span style={styles.projectBadgeSmall}>{message.projectName}</span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </div>
+                          <p style={styles.thrustMessageBody}>
+                            {parseTaggedText(message.note || message.content).map((part, index) => (
+                              part.type === 'tag' ? (
+                                <span key={index} style={styles.tagInlineCompact}>
+                                  {part.display}
+                                </span>
+                              ) : (
+                                <span key={index}>{part.content}</span>
+                              )
+                            ))}
+                          </p>
+                          {message.actionSummary && (
+                            <div style={styles.thrustActionRow}>
+                              <span style={styles.thrustActionLabel}>{message.actionSummary}</span>
+                              {message.deltas && message.deltas.length > 0 && !message.undone && (
+                                <button
+                                  style={styles.thrustActionUndo}
+                                  onClick={() => undoThrustActions(message.id)}
+                                  aria-label="Undo AI changes"
+                                >
+                                  <RotateCcw size={14} />
+                                  <span style={{ marginLeft: 6 }}>Undo</span>
+                                </button>
+                              )}
+                              {message.undone && (
+                                <span style={styles.thrustUndoTag}>Undone</span>
+                              )}
+                            </div>
+                          )}
                         </div>
-                        <p style={styles.thrustMessageBody}>
-                          {parseTaggedText(message.note).map((part, index) => (
-                            part.type === 'tag' ? (
-                              <span key={index} style={styles.tagInlineCompact}>
-                                {part.display}
-                              </span>
-                            ) : (
-                              <span key={index}>{part.content}</span>
-                            )
-                          ))}
-                        </p>
-                      </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
 
@@ -2270,10 +2611,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                   {renderEditingHint('thrust-draft')}
                   <button
                     onClick={handleSendThrustMessage}
-                    disabled={!thrustDraft.trim()}
+                    disabled={!thrustDraft.trim() || thrustIsRequesting}
                     style={{
                       ...styles.timelineSubmitButtonCompact,
-                      opacity: thrustDraft.trim() ? 1 : 0.4
+                      opacity: thrustDraft.trim() && !thrustIsRequesting ? 1 : 0.4
                     }}
                     title="Send update"
                   >
@@ -4617,6 +4958,30 @@ const styles = {
     paddingRight: '4px',
   },
 
+  thrustAlert: {
+    display: 'flex',
+    alignItems: 'center',
+    backgroundColor: 'var(--coral)' + '15',
+    color: 'var(--earth)',
+    border: '1px solid var(--coral)' + '40',
+    borderRadius: '10px',
+    padding: '10px 12px',
+    marginTop: '12px',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  thrustStatusRow: {
+    padding: '8px 10px',
+    backgroundColor: 'var(--cloud)' + '30',
+    color: 'var(--stone)',
+    borderRadius: '8px',
+    fontSize: '12px',
+    fontWeight: 600,
+    fontFamily: "'Inter', sans-serif",
+    marginTop: '10px',
+  },
+
   thrustMessageCard: {
     padding: '12px',
     borderRadius: '10px',
@@ -4638,6 +5003,49 @@ const styles = {
     fontFamily: "'Inter', sans-serif",
     color: 'var(--charcoal)',
     lineHeight: '1.6',
+  },
+
+  thrustActionRow: {
+    marginTop: '10px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+  },
+
+  thrustActionLabel: {
+    backgroundColor: 'var(--sage)' + '20',
+    color: 'var(--earth)',
+    borderRadius: '6px',
+    padding: '6px 10px',
+    fontSize: '12px',
+    fontWeight: 700,
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  thrustActionUndo: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '6px 10px',
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '6px',
+    color: 'var(--charcoal)',
+    cursor: 'pointer',
+    fontSize: '12px',
+    fontWeight: 600,
+    fontFamily: "'Inter', sans-serif",
+    gap: '4px',
+  },
+
+  thrustUndoTag: {
+    backgroundColor: 'var(--cloud)' + '40',
+    color: 'var(--stone)',
+    borderRadius: '6px',
+    padding: '4px 8px',
+    fontSize: '12px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: 600,
   },
 
   thrustMetaRow: {
