@@ -1,5 +1,13 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings } from 'lucide-react';
+import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2 } from 'lucide-react';
+
+const addIdsToActivities = (activities, prefix) =>
+  activities.map((activity, idx) => ({
+    id: activity.id || `${prefix}-activity-${idx + 1}`,
+    ...activity
+  }));
+
+const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
 export default function ManityApp({ onOpenSettings = () => {} }) {
   const timelineInputRef = useRef(null);
@@ -59,14 +67,14 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
           ]
         }
       ],
-      recentActivity: [
+      recentActivity: addIdsToActivities([
         { date: '2025-11-29T14:30:00', note: 'Received positive feedback from CEO on homepage design direction', author: 'You' },
         { date: '2025-11-28T16:15:00', note: 'Completed homepage mockups and shared with stakeholder group', author: 'You' },
         { date: '2025-11-28T09:00:00', note: 'Sarah suggested we explore darker color palette for contrast', author: 'Sarah Chen' },
         { date: '2025-11-25T11:30:00', note: 'User testing session with 12 participants - 85% positive feedback on navigation', author: 'You' },
         { date: '2025-11-22T15:45:00', note: 'Marcus raised concerns about mobile responsiveness in current mockups', author: 'Marcus Rodriguez' },
         { date: '2025-11-20T10:00:00', note: 'Completed first round of wireframes for all main pages', author: 'You' }
-      ]
+      ], 'p1')
     },
     {
       id: 2,
@@ -118,12 +126,12 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
           ]
         }
       ],
-      recentActivity: [
+      recentActivity: addIdsToActivities([
         { date: '2025-11-29T13:00:00', note: 'Submitted content calendar for review by Jennifer and Alex', author: 'You' },
         { date: '2025-11-27T16:30:00', note: 'Met with marketing team to discuss strategy and timeline alignment', author: 'You' },
         { date: '2025-11-26T10:15:00', note: 'Jennifer approved the social media creative concepts', author: 'Jennifer Liu' },
         { date: '2025-11-24T14:00:00', note: 'Received initial budget estimates from finance team', author: 'You' }
-      ]
+      ], 'p2')
     },
     {
       id: 3,
@@ -164,11 +172,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
           ]
         }
       ],
-      recentActivity: [
+      recentActivity: addIdsToActivities([
         { date: '2025-11-29T11:00:00', note: 'Interviewed 5 key customers about pain points with current portal', author: 'You' },
         { date: '2025-11-27T15:00:00', note: 'Product Lead suggested prioritizing mobile experience in v2', author: 'Product Lead' },
         { date: '2025-11-26T09:30:00', note: 'Initial wireframes shared with Customer Success team for feedback', author: 'You' }
-      ]
+      ], 'p3')
     }
   ]);
 
@@ -199,6 +207,26 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [showProjectTagSuggestions, setShowProjectTagSuggestions] = useState(false);
   const [projectTagSearchTerm, setProjectTagSearchTerm] = useState('');
   const [projectUpdateCursorPosition, setProjectUpdateCursorPosition] = useState(0);
+  const [activityEditEnabled, setActivityEditEnabled] = useState(false);
+  const [activityEdits, setActivityEdits] = useState({});
+
+  useEffect(() => {
+    if (activityEditEnabled) {
+      setActivityEdits(prev => {
+        const updated = { ...prev };
+        projects.forEach(project => {
+          project.recentActivity.forEach(activity => {
+            if (!updated[activity.id]) {
+              updated[activity.id] = activity.note;
+            }
+          });
+        });
+        return updated;
+      });
+    } else {
+      setActivityEdits({});
+    }
+  }, [activityEditEnabled, projects]);
 
   const handleDailyCheckin = (projectId) => {
     if (checkinNote.trim()) {
@@ -207,7 +235,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
           ? {
               ...p,
               recentActivity: [
-                { date: new Date().toISOString(), note: checkinNote, author: 'You' },
+                { id: generateActivityId(), date: new Date().toISOString(), note: checkinNote, author: 'You' },
                 ...p.recentActivity
               ]
             }
@@ -233,7 +261,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
           ? {
               ...p,
               recentActivity: [
-                { date: new Date().toISOString(), note: newUpdate, author: 'You' },
+                { id: generateActivityId(), date: new Date().toISOString(), note: newUpdate, author: 'You' },
                 ...p.recentActivity
               ]
             }
@@ -285,6 +313,40 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     if (projectUpdateInputRef && projectUpdateInputRef.current) {
       projectUpdateInputRef.current.focus();
     }
+  };
+
+  const toggleActivityEditing = () => {
+    setActivityEditEnabled(prev => !prev);
+  };
+
+  const updateActivityNote = (activityId, newNote) => {
+    setActivityEdits(prev => ({
+      ...prev,
+      [activityId]: newNote
+    }));
+
+    setProjects(prevProjects =>
+      prevProjects.map(project => ({
+        ...project,
+        recentActivity: project.recentActivity.map(activity =>
+          activity.id === activityId ? { ...activity, note: newNote } : activity
+        )
+      }))
+    );
+  };
+
+  const deleteActivity = (activityId) => {
+    setProjects(prevProjects =>
+      prevProjects.map(project => ({
+        ...project,
+        recentActivity: project.recentActivity.filter(activity => activity.id !== activityId)
+      }))
+    );
+
+    setActivityEdits(prev => {
+      const { [activityId]: _, ...rest } = prev;
+      return rest;
+    });
   };
 
   const toggleTask = (taskId) => {
@@ -357,7 +419,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
             stakeholders: stakeholdersArray,
             description: editValues.description,
             recentActivity: [
-              { date: new Date().toISOString(), note: 'Updated project details', author: 'You' },
+              { id: generateActivityId(), date: new Date().toISOString(), note: 'Updated project details', author: 'You' },
               ...p.recentActivity
             ]
           }
@@ -468,11 +530,12 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
           ? {
               ...p,
               recentActivity: [
-                { 
-                  date: new Date().toISOString(), 
+                {
+                  id: generateActivityId(),
+                  date: new Date().toISOString(),
                   note: subtaskComment, // Just the comment text, not the prefix
-                  author: 'You', 
-                  taskContext: { taskId, subtaskId, taskTitle, subtaskTitle } 
+                  author: 'You',
+                  taskContext: { taskId, subtaskId, taskTitle, subtaskTitle }
                 },
                 ...p.recentActivity
               ]
@@ -652,7 +715,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
             ? {
                 ...p,
                 recentActivity: [
-                  { date: new Date().toISOString(), note: timelineUpdate, author: 'You' },
+                  { id: generateActivityId(), date: new Date().toISOString(), note: timelineUpdate, author: 'You' },
                   ...p.recentActivity
                 ]
               }
@@ -1583,6 +1646,13 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               <div style={styles.activitySection}>
                 <div style={styles.sectionHeaderCompact}>
                   <h3 style={styles.sectionTitle}>Activity</h3>
+                  <button
+                    onClick={toggleActivityEditing}
+                    style={styles.activityLockButton}
+                    title={activityEditEnabled ? 'Unlock to stop editing' : 'Unlock to edit activity feed'}
+                  >
+                    {activityEditEnabled ? <Unlock size={18} /> : <Lock size={18} />}
+                  </button>
                 </div>
 
                 {/* Add Update Section */}
@@ -1649,8 +1719,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
                 <div style={styles.activityListCompact}>
                   {viewingProject.recentActivity.map((activity, idx) => (
-                    <div key={idx}>
-                      <div 
+                    <div key={activity.id || idx}>
+                      <div
                         style={{
                           ...styles.activityItemCompact,
                           animationDelay: `${idx * 30}ms`
@@ -1671,17 +1741,36 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                             {activity.taskContext.taskTitle} → {activity.taskContext.subtaskTitle}
                           </div>
                         )}
-                        <p style={styles.activityNoteCompact}>
-                          {parseTaggedText(activity.note).map((part, idx) => (
-                            part.type === 'tag' ? (
-                              <span key={idx} style={styles.tagInlineCompact}>
-                                {part.display}
-                              </span>
-                            ) : (
-                              <span key={idx}>{part.content}</span>
-                            )
-                          ))}
-                        </p>
+                        <div style={styles.activityNoteRow}>
+                          {activityEditEnabled ? (
+                            <div style={styles.activityEditRow}>
+                              <textarea
+                                value={activityEdits[activity.id] ?? activity.note}
+                                onChange={(e) => updateActivityNote(activity.id, e.target.value)}
+                                style={styles.activityNoteInput}
+                              />
+                              <button
+                                style={styles.activityDeleteButton}
+                                onClick={() => deleteActivity(activity.id)}
+                                aria-label="Delete activity"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                          ) : (
+                            <p style={styles.activityNoteCompact}>
+                              {parseTaggedText(activity.note).map((part, idx) => (
+                                part.type === 'tag' ? (
+                                  <span key={idx} style={styles.tagInlineCompact}>
+                                    {part.display}
+                                  </span>
+                                ) : (
+                                  <span key={idx}>{part.content}</span>
+                                )
+                              ))}
+                            </p>
+                          )}
+                        </div>
                       </div>
                       {idx < viewingProject.recentActivity.length - 1 && (
                         <div style={styles.activitySeparator} />
@@ -1705,6 +1794,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
             </header>
 
             <div style={styles.timelineContainer}>
+              <div style={styles.activityControlsRow}>
+                <button
+                  onClick={toggleActivityEditing}
+                  style={styles.activityLockButton}
+                  title={activityEditEnabled ? 'Unlock to stop editing' : 'Unlock to edit activity feed'}
+                >
+                  {activityEditEnabled ? <Unlock size={18} /> : <Lock size={18} />}
+                </button>
+              </div>
+
               {/* Add Update Section with Tagging */}
               <div style={styles.timelineUpdateSection}>
                 <div style={styles.timelineInputWrapper}>
@@ -1770,8 +1869,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               {/* All Activities Feed */}
               <div style={styles.timelineFeed}>
                 {getAllActivities().map((activity, idx) => (
-                  <div key={idx}>
-                    <div 
+                  <div key={activity.id || idx}>
+                    <div
                       style={{
                         ...styles.timelineActivityItemCompact,
                         animationDelay: `${idx * 30}ms`
@@ -1797,17 +1896,36 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                         </div>
                       )}
                       
-                      <p style={styles.activityNoteCompact}>
-                        {parseTaggedText(activity.note).map((part, idx) => (
-                          part.type === 'tag' ? (
-                            <span key={idx} style={styles.tagInlineCompact}>
-                              {part.display}
-                            </span>
-                          ) : (
-                            <span key={idx}>{part.content}</span>
-                          )
-                        ))}
-                      </p>
+                      <div style={styles.activityNoteRow}>
+                        {activityEditEnabled ? (
+                          <div style={styles.activityEditRow}>
+                            <textarea
+                              value={activityEdits[activity.id] ?? activity.note}
+                              onChange={(e) => updateActivityNote(activity.id, e.target.value)}
+                              style={styles.activityNoteInput}
+                            />
+                            <button
+                              style={styles.activityDeleteButton}
+                              onClick={() => deleteActivity(activity.id)}
+                              aria-label="Delete activity"
+                            >
+                              <Trash2 size={18} />
+                            </button>
+                          </div>
+                        ) : (
+                          <p style={styles.activityNoteCompact}>
+                            {parseTaggedText(activity.note).map((part, idx) => (
+                              part.type === 'tag' ? (
+                                <span key={idx} style={styles.tagInlineCompact}>
+                                  {part.display}
+                                </span>
+                              ) : (
+                                <span key={idx}>{part.content}</span>
+                              )
+                            ))}
+                          </p>
+                        )}
+                      </div>
                     </div>
                     {idx < getAllActivities().length - 1 && (
                       <div style={styles.timelineSeparator} />
@@ -2874,6 +2992,9 @@ const styles = {
 
   sectionHeaderCompact: {
     marginBottom: '16px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between'
   },
 
   sectionTitle: {
@@ -2888,6 +3009,25 @@ const styles = {
     fontSize: '13px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
+  },
+
+  activityControlsRow: {
+    display: 'flex',
+    justifyContent: 'flex-end',
+    marginBottom: '12px'
+  },
+
+  activityLockButton: {
+    border: '1px solid var(--cloud)',
+    backgroundColor: '#FFFFFF',
+    borderRadius: '10px',
+    padding: '6px',
+    cursor: 'pointer',
+    color: 'var(--charcoal)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.2s ease'
   },
 
   projectUpdateWrapper: {
@@ -2916,6 +3056,41 @@ const styles = {
   activityItemCompact: {
     padding: '12px 0',
     animation: 'fadeIn 0.3s ease backwards',
+  },
+
+  activityNoteRow: {
+    marginTop: '8px',
+  },
+
+  activityEditRow: {
+    display: 'flex',
+    gap: '8px',
+    alignItems: 'flex-start',
+  },
+
+  activityNoteInput: {
+    flex: 1,
+    minHeight: '64px',
+    border: '1px solid var(--cloud)',
+    borderRadius: '10px',
+    padding: '10px',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    resize: 'vertical',
+    backgroundColor: '#FFFFFF',
+  },
+
+  activityDeleteButton: {
+    border: 'none',
+    background: '#FFECEC',
+    color: 'var(--coral)',
+    borderRadius: '10px',
+    cursor: 'pointer',
+    padding: '8px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
   activityHeaderCompact: {
