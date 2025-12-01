@@ -1302,18 +1302,43 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
   useEffect(() => {
     if (visibleProjects.length === 0) {
-      setExpandedMomentumProjects({});
+      setExpandedMomentumProjects(prev => {
+        if (Object.keys(prev).length === 0) {
+          return prev;
+        }
+        return {};
+      });
       return;
     }
 
     setExpandedMomentumProjects(prev => {
       const visibleIds = new Set(visibleProjects.map(p => p.id));
-      const next = Object.fromEntries(
+      const filteredPrev = Object.fromEntries(
         Object.entries(prev).filter(([id]) => visibleIds.has(id))
       );
 
-      if (Object.keys(prev).length === 0 && visibleProjects[0]) {
-        next[visibleProjects[0].id] = true;
+      const next = { ...filteredPrev };
+
+      if (Object.keys(prev).length === 0) {
+        visibleProjects.forEach(project => {
+          next[project.id] = true;
+        });
+      } else {
+        visibleProjects.forEach(project => {
+          if (!(project.id in next)) {
+            next[project.id] = true;
+          }
+        });
+      }
+
+      const nextKeys = Object.keys(next);
+
+      const isSame =
+        Object.keys(prev).length === nextKeys.length &&
+        nextKeys.every(key => prev[key] === next[key]);
+
+      if (isSame) {
+        return prev;
       }
 
       return next;
