@@ -1946,6 +1946,7 @@ const styles = {
   container: {
     display: 'flex',
     minHeight: '100vh',
+    width: '100%',
     backgroundColor: 'var(--cream)',
     fontFamily: "'Crimson Pro', Georgia, serif",
     '--earth': '#8B6F47',
@@ -1964,7 +1965,9 @@ const styles = {
     borderRight: '1px solid var(--cloud)',
     display: 'flex',
     flexDirection: 'column',
-    padding: '32px 24px',
+    padding: '32px clamp(16px, 3vw, 24px)',
+    boxSizing: 'border-box',
+    flexShrink: 0,
   },
 
   logo: {
@@ -2051,8 +2054,9 @@ const styles = {
 
   main: {
     flex: 1,
-    padding: '48px 64px',
+    padding: '48px clamp(24px, 4vw, 64px)',
     overflowY: 'auto',
+    minWidth: 0,
   },
 
   header: {
