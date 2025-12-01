@@ -50,6 +50,8 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   const [thrustError, setThrustError] = useState('');
   const [thrustPendingActions, setThrustPendingActions] = useState([]);
   const [thrustIsRequesting, setThrustIsRequesting] = useState(false);
+  const [thrustRequestStart, setThrustRequestStart] = useState(null);
+  const [thrustElapsedMs, setThrustElapsedMs] = useState(0);
   const [expandedMomentumProjects, setExpandedMomentumProjects] = useState({});
   const adminUsers = [
     { name: 'Chris Graves', team: 'Admin' }
@@ -762,13 +764,22 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
 
   const applyThrustActions = (actions = []) => {
     if (!actions.length) {
-      return { deltas: [], summary: 'No actions executed', details: [] };
+      return { deltas: [], actionResults: [] };
     }
 
-    const result = { deltas: [], summaries: [], details: [] };
+    const result = { deltas: [], actionResults: [] };
 
     setProjects(prevProjects => {
       const workingProjects = prevProjects.map(cloneProjectDeep);
+
+      const appendActionResult = (label, detail, deltas = []) => {
+        result.actionResults.push({
+          label: label || 'Action processed',
+          detail: detail || 'No additional details provided.',
+          deltas
+        });
+        result.deltas.push(...deltas);
+      };
 
       const resolveProject = (target) => {
         if (!target) return null;
@@ -786,10 +797,12 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
 
       actions.forEach(action => {
         const project = resolveProject(action.projectId || action.projectName);
+        const actionDeltas = [];
+        let label = '';
+        let detail = '';
 
         if (!project) {
-          result.summaries.push('Skipped action: unknown project');
-          result.details.push('Skipped action because the project was not found.');
+          appendActionResult('Skipped action: unknown project', 'Skipped action because the project was not found.', actionDeltas);
           return;
         }
 
@@ -803,9 +816,9 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
               author: action.author || 'Momentum'
             };
             project.recentActivity = [newActivity, ...project.recentActivity];
-            result.deltas.push({ type: 'remove_activity', projectId: project.id, activityId });
-            result.summaries.push(`Commented on ${project.name}`);
-            result.details.push(`Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author}`);
+            actionDeltas.push({ type: 'remove_activity', projectId: project.id, activityId });
+            label = `Commented on ${project.name}`;
+            detail = `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author}`;
             break;
           }
           case 'add_task': {
@@ -824,16 +837,16 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
               }))
             };
             project.plan = [...project.plan, newTask];
-            result.deltas.push({ type: 'remove_task', projectId: project.id, taskId });
-            result.summaries.push(`Added task "${newTask.title}" to ${project.name}`);
-            result.details.push(`Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)}) to ${project.name}`);
+            actionDeltas.push({ type: 'remove_task', projectId: project.id, taskId });
+            label = `Added task "${newTask.title}" to ${project.name}`;
+            detail = `Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)}) to ${project.name}`;
             break;
           }
           case 'update_task': {
             const task = resolveTask(project, action.taskId || action.taskTitle);
             if (!task) {
-              result.summaries.push(`Skipped action: missing task in ${project.name}`);
-              result.details.push(`Skipped task update in ${project.name} because the task was not found.`);
+              label = `Skipped action: missing task in ${project.name}`;
+              detail = `Skipped task update in ${project.name} because the task was not found.`;
               break;
             }
 
@@ -857,16 +870,16 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
               task.completedDate = action.completedDate;
             }
 
-            result.deltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
-            result.summaries.push(`Updated task "${task.title}" in ${project.name}`);
-            result.details.push(`Updated task "${task.title}" in ${project.name}: ${changes.join('; ') || 'no tracked changes'}`);
+            actionDeltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
+            label = `Updated task "${task.title}" in ${project.name}`;
+            detail = `Updated task "${task.title}" in ${project.name}: ${changes.join('; ') || 'no tracked changes'}`;
             break;
           }
           case 'add_subtask': {
             const task = resolveTask(project, action.taskId || action.taskTitle);
             if (!task) {
-              result.summaries.push(`Skipped action: missing parent task in ${project.name}`);
-              result.details.push(`Skipped subtask add in ${project.name} because the parent task was not found.`);
+              label = `Skipped action: missing parent task in ${project.name}`;
+              detail = `Skipped subtask add in ${project.name} because the parent task was not found.`;
               break;
             }
 
@@ -878,22 +891,22 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
               dueDate: action.dueDate
             };
             task.subtasks = [...task.subtasks, newSubtask];
-            result.deltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
-            result.summaries.push(`Added subtask "${newSubtask.title}" to ${task.title}`);
-            result.details.push(`Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)}) under ${task.title}`);
+            actionDeltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
+            label = `Added subtask "${newSubtask.title}" to ${task.title}`;
+            detail = `Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)}) under ${task.title}`;
             break;
           }
           case 'update_subtask': {
             const task = resolveTask(project, action.taskId || action.taskTitle);
             if (!task) {
-              result.summaries.push(`Skipped action: missing parent task in ${project.name}`);
-              result.details.push(`Skipped subtask update in ${project.name} because the parent task was not found.`);
+              label = `Skipped action: missing parent task in ${project.name}`;
+              detail = `Skipped subtask update in ${project.name} because the parent task was not found.`;
               break;
             }
             const subtask = task.subtasks.find(st => `${st.id}` === `${action.subtaskId}` || st.title.toLowerCase() === `${action.subtaskTitle || action.title || ''}`.toLowerCase());
             if (!subtask) {
-              result.summaries.push(`Skipped action: missing subtask in ${task.title}`);
-              result.details.push(`Skipped subtask update because no subtask matched in ${task.title}.`);
+              label = `Skipped action: missing subtask in ${task.title}`;
+              detail = `Skipped subtask update because no subtask matched in ${task.title}.`;
               break;
             }
 
@@ -917,9 +930,9 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
               subtask.completedDate = action.completedDate;
             }
 
-            result.deltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
-            result.summaries.push(`Updated subtask "${subtask.title}" in ${task.title}`);
-            result.details.push(`Updated subtask "${subtask.title}" in ${task.title}: ${changes.join('; ') || 'no tracked changes'}`);
+            actionDeltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
+            label = `Updated subtask "${subtask.title}" in ${task.title}`;
+            detail = `Updated subtask "${subtask.title}" in ${task.title}: ${changes.join('; ') || 'no tracked changes'}`;
             break;
           }
           case 'update_project': {
@@ -948,15 +961,17 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
               project.lastUpdate = action.lastUpdate;
             }
 
-            result.deltas.push({ type: 'restore_project', projectId: project.id, previous });
-            result.summaries.push(`Updated ${project.name}`);
-            result.details.push(`Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`);
+            actionDeltas.push({ type: 'restore_project', projectId: project.id, previous });
+            label = `Updated ${project.name}`;
+            detail = `Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`;
             break;
           }
           default:
-            result.summaries.push('Skipped action: unsupported type');
-            result.details.push(`Skipped unsupported action type: ${action.type}`);
+            label = 'Skipped action: unsupported type';
+            detail = `Skipped unsupported action type: ${action.type}`;
         }
+
+        appendActionResult(label, detail, actionDeltas);
       });
 
       return workingProjects;
@@ -964,8 +979,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
 
     return {
       deltas: result.deltas,
-      summary: result.summaries.join('; ') || 'No actions executed',
-      details: result.details
+      actionResults: result.actionResults
     };
   };
 
@@ -1153,12 +1167,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
     ];
 
     setThrustIsRequesting(true);
+    setThrustRequestStart(Date.now());
     const responseId = generateActivityId();
 
     try {
       const { parsed, content } = await requestMomentumActions(messages);
       setThrustPendingActions(parsed.actions || []);
-      const { deltas, summary, details } = applyThrustActions(parsed.actions || []);
+      const { deltas, actionResults } = applyThrustActions(parsed.actions || []);
 
       const assistantMessage = {
         id: responseId,
@@ -1166,8 +1181,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
         author: 'Momentum',
         note: parsed.display || content,
         date: new Date().toISOString(),
-        actionSummary: summary,
-        actionDetails: details,
+        actionResults,
         deltas
       };
 
@@ -1175,6 +1189,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
     } catch (error) {
       setThrustError(error?.message || 'Failed to send Momentum request.');
     } finally {
+      setThrustRequestStart(null);
       setThrustPendingActions([]);
       setThrustIsRequesting(false);
     }
@@ -1184,16 +1199,31 @@ Keep tool calls granular (one discrete change per action), explain each action c
     return [...thrustMessages].sort((a, b) => new Date(a.date) - new Date(b.date));
   };
 
-  const undoThrustActions = (messageId) => {
-    const target = thrustMessages.find(message => message.id === messageId);
-    if (!target || !target.deltas || target.deltas.length === 0) return;
+  const undoThrustAction = (messageId, actionIndex) => {
+    setThrustMessages(prev => prev.map(message => {
+      if (message.id !== messageId || !message.actionResults || !message.actionResults[actionIndex]) {
+        return message;
+      }
 
-    rollbackDeltas(target.deltas);
-    setThrustMessages(prev => prev.map(message =>
-      message.id === messageId
-        ? { ...message, undone: true, actionSummary: `${message.actionSummary || 'Actions'} (undone)` }
-        : message
-    ));
+      const targetAction = message.actionResults[actionIndex];
+      if (targetAction.undone || !targetAction.deltas || targetAction.deltas.length === 0) {
+        return message;
+      }
+
+      rollbackDeltas(targetAction.deltas);
+
+      const updatedActions = message.actionResults.map((action, idx) =>
+        idx === actionIndex ? { ...action, undone: true } : action
+      );
+
+      const remainingDeltas = (message.deltas || []).filter(delta => !targetAction.deltas.includes(delta));
+
+      return {
+        ...message,
+        actionResults: updatedActions,
+        deltas: remainingDeltas
+      };
+    }));
   };
 
   const formatDateTime = (dateString) => {
@@ -1211,9 +1241,17 @@ Keep tool calls granular (one discrete change per action), explain each action c
     } else if (diffDays < 7) {
       return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
     } else {
-      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) + 
+      return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) +
              ' at ' + date.toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
     }
+  };
+
+  const formatElapsedTime = (ms) => {
+    const safeMs = Math.max(0, ms || 0);
+    const totalSeconds = Math.floor(safeMs / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = String(totalSeconds % 60).padStart(2, '0');
+    return `${minutes}:${seconds}`;
   };
 
   const getStatusIcon = (status) => {
@@ -1274,13 +1312,25 @@ Keep tool calls granular (one discrete change per action), explain each action c
         Object.entries(prev).filter(([id]) => visibleIds.has(id))
       );
 
-      if (!Object.keys(next).some(id => next[id])) {
+      if (Object.keys(prev).length === 0 && visibleProjects[0]) {
         next[visibleProjects[0].id] = true;
       }
 
       return next;
     });
   }, [visibleProjects]);
+
+  useEffect(() => {
+    if (thrustIsRequesting && thrustRequestStart) {
+      const timer = setInterval(() => {
+        setThrustElapsedMs(Date.now() - thrustRequestStart);
+      }, 250);
+
+      return () => clearInterval(timer);
+    }
+
+    setThrustElapsedMs(0);
+  }, [thrustIsRequesting, thrustRequestStart]);
 
   useEffect(() => {
     // Auto-expand all tasks when viewing a project
@@ -2750,17 +2800,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     <div style={styles.thrustPill}>Live</div>
                   </div>
 
-                  {thrustError && (
-                    <div style={styles.thrustAlert}>
-                      <AlertCircle size={16} style={{ marginRight: 8 }} />
-                      <span>{thrustError}</span>
-                    </div>
-                  )}
-
-                  {thrustIsRequesting && (
-                    <div style={styles.thrustStatusRow}>Gathering plan from Momentum…</div>
-                  )}
-
                   {thrustPendingActions.length > 0 && (
                     <div style={styles.thrustStatusRow}>
                       <div style={styles.thrustStatusHeading}>Applying actions:</div>
@@ -2780,74 +2819,95 @@ Keep tool calls granular (one discrete change per action), explain each action c
                         Start the conversation with a quick update.
                       </div>
                   ) : (
-                    thrustConversation.map((message, idx) => {
-                      const authorName = message.author || (message.role === 'assistant' ? 'Momentum' : 'You');
+                    <>
+                      {thrustConversation.map((message, idx) => {
+                        const authorName = message.author || (message.role === 'assistant' ? 'Momentum' : 'You');
 
-                      return (
-                        <div
-                          key={message.id || idx}
-                          style={{
-                            ...styles.thrustMessageCard,
-                            animationDelay: `${idx * 30}ms`
-                          }}
-                        >
-                          <div style={styles.thrustMessageHeader}>
-                            <div style={styles.activityAuthorCompact}>
-                              <div style={styles.activityAvatarSmall}>
-                                {authorName.split(' ').map(n => n[0]).join('')}
-                              </div>
-                              <div>
-                                <span style={styles.activityAuthorNameCompact}>{authorName}</span>
-                                <div style={styles.thrustMetaRow}>
-                                  <span style={styles.activityTimeCompact}>{formatDateTime(message.date)}</span>
-                                  {message.projectName && (
-                                    <span style={styles.projectBadgeSmall}>{message.projectName}</span>
-                                  )}
+                        return (
+                          <div
+                            key={message.id || idx}
+                            style={{
+                              ...styles.thrustMessageCard,
+                              animationDelay: `${idx * 30}ms`
+                            }}
+                          >
+                            <div style={styles.thrustMessageHeader}>
+                              <div style={styles.activityAuthorCompact}>
+                                <div style={styles.activityAvatarSmall}>
+                                  {authorName.split(' ').map(n => n[0]).join('')}
+                                </div>
+                                <div>
+                                  <span style={styles.activityAuthorNameCompact}>{authorName}</span>
+                                  <div style={styles.thrustMetaRow}>
+                                    <span style={styles.activityTimeCompact}>{formatDateTime(message.date)}</span>
+                                    {message.projectName && (
+                                      <span style={styles.projectBadgeSmall}>{message.projectName}</span>
+                                    )}
+                                  </div>
                                 </div>
                               </div>
                             </div>
-                          </div>
-                          <p style={styles.thrustMessageBody}>
-                            {parseTaggedText(message.note || message.content).map((part, index) => (
-                              part.type === 'tag' ? (
-                                <span key={index} style={styles.tagInlineCompact}>
-                                  {part.display}
-                                </span>
-                              ) : (
-                                <span key={index}>{part.content}</span>
-                              )
-                            ))}
-                          </p>
-                          {message.actionSummary && (
-                            <div style={styles.thrustActionRow}>
-                              <span style={styles.thrustActionLabel}>{message.actionSummary}</span>
-                              {message.deltas && message.deltas.length > 0 && !message.undone && (
-                                <button
-                                  style={styles.thrustActionUndo}
-                                  onClick={() => undoThrustActions(message.id)}
-                                  aria-label="Undo AI changes"
-                                >
-                                  <RotateCcw size={14} />
-                                  <span style={{ marginLeft: 6 }}>Undo</span>
-                                </button>
-                              )}
-                              {message.undone && (
-                                <span style={styles.thrustUndoTag}>Undone</span>
-                              )}
-                            </div>
-                          )}
-                          {message.actionDetails && message.actionDetails.length > 0 && (
-                            <ul style={styles.thrustActionDetailList}>
-                              {message.actionDetails.map((detail, detailIdx) => (
-                                <li key={detailIdx} style={styles.thrustActionDetailItem}>
-                                  {detail}
-                                </li>
+                            <p style={styles.thrustMessageBody}>
+                              {parseTaggedText(message.note || message.content).map((part, index) => (
+                                part.type === 'tag' ? (
+                                  <span key={index} style={styles.tagInlineCompact}>
+                                    {part.display}
+                                  </span>
+                                ) : (
+                                  <span key={index}>{part.content}</span>
+                                )
                               ))}
-                            </ul>
-                          )}
+                            </p>
+                            {message.actionResults && message.actionResults.length > 0 && (
+                              <div style={styles.thrustActionStack}>
+                                {message.actionResults.map((action, actionIdx) => (
+                                  <div key={`${message.id}-action-${actionIdx}`} style={styles.thrustActionCard}>
+                                    <div style={styles.thrustActionRow}>
+                                      <span style={styles.thrustActionLabel}>{action.label}</span>
+                                      {action.deltas && action.deltas.length > 0 ? (
+                                        action.undone ? (
+                                          <span style={styles.thrustUndoTag}>Undone</span>
+                                        ) : (
+                                          <button
+                                            style={styles.thrustActionUndo}
+                                            onClick={() => undoThrustAction(message.id, actionIdx)}
+                                            aria-label="Undo AI changes"
+                                          >
+                                            <RotateCcw size={14} />
+                                            <span style={{ marginLeft: 6 }}>Undo</span>
+                                          </button>
+                                        )
+                                      ) : null}
+                                    </div>
+                                    <div style={styles.thrustActionDetailText}>{action.detail}</div>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+
+                      {(thrustIsRequesting || thrustError) && (
+                        <div style={styles.thrustStatusCard}>
+                          <div style={styles.thrustStatusInline}>
+                            {thrustIsRequesting ? (
+                              <>
+                                <Clock size={16} style={{ color: 'var(--earth)' }} />
+                                <span style={styles.thrustStatusText}>
+                                  Momentum is planning… <strong>{formatElapsedTime(thrustElapsedMs)}</strong>
+                                </span>
+                              </>
+                            ) : (
+                              <>
+                                <AlertCircle size={16} style={{ color: 'var(--coral)' }} />
+                                <span style={styles.thrustStatusText}>Momentum couldn't respond: {thrustError}</span>
+                              </>
+                            )}
+                          </div>
                         </div>
-                      );
-                    })
+                      )}
+                    </>
                   )}
                 </div>
 
@@ -5267,6 +5327,32 @@ const styles = {
     marginTop: '10px',
   },
 
+  thrustStatusCard: {
+    border: '1px dashed var(--cloud)',
+    borderRadius: '10px',
+    padding: '12px',
+    backgroundColor: '#FFFFFF',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+  },
+
+  thrustStatusInline: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    fontSize: '13px',
+  },
+
+  thrustStatusText: {
+    fontSize: '13px',
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
   thrustStatusHeading: {
     fontSize: '12px',
     fontFamily: "'Inter', sans-serif",
@@ -5313,6 +5399,20 @@ const styles = {
     lineHeight: '1.6',
   },
 
+  thrustActionStack: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+    marginTop: '12px',
+  },
+
+  thrustActionCard: {
+    border: '1px solid var(--cloud)',
+    borderRadius: '10px',
+    padding: '10px',
+    backgroundColor: '#FFFFFF',
+  },
+
   thrustActionRow: {
     marginTop: '10px',
     display: 'flex',
@@ -5344,6 +5444,14 @@ const styles = {
     fontWeight: 600,
     fontFamily: "'Inter', sans-serif",
     gap: '4px',
+  },
+
+  thrustActionDetailText: {
+    marginTop: '8px',
+    fontSize: '13px',
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+    lineHeight: 1.5,
   },
 
   thrustActionDetailList: {
