@@ -8,7 +8,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const timelineInputRef = useRef(null);
   const projectUpdateInputRef = useRef(null);
   
-  const { projects, setProjects } = usePortfolioData();
+  const { projects, setProjects, handleExport, handleImport } = usePortfolioData();
+  const importInputRef = useRef(null);
+  const [importFeedback, setImportFeedback] = useState('');
 
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
@@ -47,6 +49,26 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   ];
   const [loggedInUser, setLoggedInUser] = useState('');
   const [focusedField, setFocusedField] = useState(null);
+
+  const triggerImport = () => {
+    if (importInputRef.current) {
+      importInputRef.current.click();
+    }
+  };
+
+  const handleImportChange = async (event) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    try {
+      await handleImport(file);
+      setImportFeedback('Portfolio imported successfully.');
+    } catch (error) {
+      setImportFeedback(error?.message || 'Failed to import portfolio.');
+    } finally {
+      event.target.value = '';
+    }
+  };
 
   useEffect(() => {
     if (activityEditEnabled) {
@@ -1208,6 +1230,21 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         <div style={styles.topBar}>
           <div />
           <div style={styles.topBarRight}>
+            <div style={styles.dataActions}>
+              <button onClick={handleExport} style={styles.dataButton} aria-label="Export portfolio">
+                Export
+              </button>
+              <button onClick={triggerImport} style={styles.dataButton} aria-label="Import portfolio">
+                Import
+              </button>
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json"
+                onChange={handleImportChange}
+                style={styles.hiddenFileInput}
+              />
+            </div>
             <div style={styles.userIndicator}>
               <div style={styles.userAvatar}>{(loggedInUser || '?').split(' ').map(n => n[0]).join('')}</div>
               <div style={styles.userDetails}>
@@ -1235,6 +1272,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
             </button>
           </div>
         </div>
+
+        {importFeedback && <p style={styles.importFeedback}>{importFeedback}</p>}
 
         {viewingProject ? (
           // Project Details View
@@ -2323,6 +2362,35 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
+  },
+
+  dataActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+
+  dataButton: {
+    padding: '8px 12px',
+    borderRadius: '10px',
+    border: '1px solid var(--cloud)',
+    backgroundColor: '#fff',
+    color: 'var(--charcoal)',
+    cursor: 'pointer',
+    fontWeight: 600,
+    letterSpacing: '0.2px',
+    transition: 'all 0.2s ease',
+  },
+
+  hiddenFileInput: {
+    display: 'none',
+  },
+
+  importFeedback: {
+    marginTop: '-12px',
+    marginBottom: '12px',
+    color: 'var(--stone)',
+    fontSize: '14px',
   },
 
   userIndicator: {

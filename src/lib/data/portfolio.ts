@@ -44,6 +44,8 @@ export interface Project {
 
 const STORAGE_KEY = 'manity.portfolio';
 
+type ImportInput = File | string | null | undefined;
+
 const addIdsToActivities = (activities: Omit<Activity, 'id'>[] | Activity[], prefix: string): Activity[] =>
   activities.map((activity, idx) => ({
     id: 'id' in activity && activity.id ? activity.id : `${prefix}-activity-${idx + 1}`,
@@ -246,3 +248,101 @@ export const savePortfolio = (projects: Project[]): void => {
 };
 
 export const getInitialPortfolio = (): Project[] => defaultPortfolio;
+
+const normalizeSubtask = (subtask: Partial<Subtask>, idx: number): Subtask => ({
+  id: subtask.id ?? `subtask-${idx + 1}`,
+  title: typeof subtask.title === 'string' ? subtask.title : 'Untitled Subtask',
+  status: subtask.status === 'in-progress' || subtask.status === 'completed' ? subtask.status : 'todo',
+  dueDate: subtask.dueDate,
+  completedDate: subtask.completedDate
+});
+
+const normalizeTask = (task: Partial<Task>, idx: number): Task => ({
+  id: task.id ?? `task-${idx + 1}`,
+  title: typeof task.title === 'string' ? task.title : 'Untitled Task',
+  status: task.status === 'in-progress' || task.status === 'completed' ? task.status : 'todo',
+  dueDate: task.dueDate,
+  completedDate: task.completedDate,
+  subtasks: Array.isArray(task.subtasks) ? task.subtasks.map((subtask, subIdx) => normalizeSubtask(subtask, subIdx)) : []
+});
+
+const normalizeStakeholder = (stakeholder: Partial<User>, idx: number): User => ({
+  name: typeof stakeholder.name === 'string' ? stakeholder.name : `Stakeholder ${idx + 1}`,
+  team: typeof stakeholder.team === 'string' ? stakeholder.team : 'Team'
+});
+
+const normalizeActivity = (activity: Partial<Activity>, idx: number): Activity => ({
+  id: activity.id ?? `activity-${idx + 1}`,
+  date: typeof activity.date === 'string' ? activity.date : new Date().toISOString(),
+  note: typeof activity.note === 'string' ? activity.note : '',
+  author: typeof activity.author === 'string' ? activity.author : 'Unknown'
+});
+
+const clampProgress = (progress: unknown): number => {
+  if (typeof progress !== 'number' || Number.isNaN(progress)) return 0;
+  return Math.min(100, Math.max(0, progress));
+};
+
+const normalizeProject = (project: Partial<Project>, idx: number): Project => ({
+  id: project.id ?? idx + 1,
+  name: typeof project.name === 'string' ? project.name : `Project ${idx + 1}`,
+  stakeholders: Array.isArray(project.stakeholders)
+    ? project.stakeholders.map((stakeholder, stakeholderIdx) => normalizeStakeholder(stakeholder, stakeholderIdx))
+    : [],
+  status: typeof project.status === 'string' ? project.status : 'planning',
+  priority: typeof project.priority === 'string' ? project.priority : 'medium',
+  progress: clampProgress(project.progress),
+  lastUpdate: typeof project.lastUpdate === 'string' ? project.lastUpdate : '',
+  description: typeof project.description === 'string' ? project.description : '',
+  startDate: project.startDate,
+  targetDate: project.targetDate,
+  plan: Array.isArray(project.plan) ? project.plan.map((task, taskIdx) => normalizeTask(task, taskIdx)) : [],
+  recentActivity: Array.isArray(project.recentActivity)
+    ? addIdsToActivities(project.recentActivity.map((activity, actIdx) => normalizeActivity(activity, actIdx)), `p${idx + 1}`)
+    : []
+});
+
+export const exportPortfolio = (projects: Project[]): string => {
+  const normalizedProjects = Array.isArray(projects) ? projects.map((project, idx) => normalizeProject(project, idx)) : [];
+
+  const payload = {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    projects: normalizedProjects
+  };
+
+  return JSON.stringify(payload, null, 2);
+};
+
+export const importPortfolio = async (fileOrText: ImportInput): Promise<Project[]> => {
+  if (!fileOrText) throw new Error('No data provided for import');
+
+  let rawText: string;
+
+  if (typeof File !== 'undefined' && fileOrText instanceof File) {
+    rawText = await fileOrText.text();
+  } else if (typeof fileOrText === 'string') {
+    rawText = fileOrText;
+  } else {
+    throw new Error('Unsupported import type');
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(rawText);
+  } catch (error) {
+    throw new Error('Invalid JSON format');
+  }
+
+  const projects = Array.isArray((parsed as any)?.projects)
+    ? (parsed as any).projects
+    : Array.isArray(parsed)
+      ? parsed
+      : null;
+
+  if (!projects) {
+    throw new Error('No projects found in import data');
+  }
+
+  return projects.map((project, idx) => normalizeProject(project, idx));
+};
