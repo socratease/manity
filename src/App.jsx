@@ -2,6 +2,7 @@ import React, { useState, useEffect } from "react";
 import ManityApp from "./ManityApp";
 import SettingsModal from "./components/SettingsModal";
 import { useApiKey } from "./hooks/useApiKey";
+import { PortfolioProvider } from "./hooks/usePortfolioData";
 
 export default function App() {
   const { apiKey, setApiKey, clearApiKey, hasStoredKey } = useApiKey();
@@ -37,7 +38,9 @@ export default function App() {
 
   return (
     <>
-      <ManityApp onOpenSettings={openSettings} />
+      <PortfolioProvider>
+        <ManityApp onOpenSettings={openSettings} />
+      </PortfolioProvider>
       <SettingsModal
         isOpen={isSettingsOpen}
         tempKey={tempKey}
