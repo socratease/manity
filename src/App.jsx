@@ -39,7 +39,7 @@ export default function App() {
   return (
     <>
       <PortfolioProvider>
-        <ManityApp onOpenSettings={openSettings} />
+        <ManityApp onOpenSettings={openSettings} apiKey={apiKey} />
       </PortfolioProvider>
       <SettingsModal
         isOpen={isSettingsOpen}
