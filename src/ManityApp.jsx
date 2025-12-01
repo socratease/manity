@@ -209,6 +209,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [projectUpdateCursorPosition, setProjectUpdateCursorPosition] = useState(0);
   const [activityEditEnabled, setActivityEditEnabled] = useState(false);
   const [activityEdits, setActivityEdits] = useState({});
+  const [projectDeletionEnabled, setProjectDeletionEnabled] = useState(false);
+  const [projectToDelete, setProjectToDelete] = useState(null);
+  const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const adminUsers = [
     { name: 'Chris Graves', team: 'Admin' }
   ];
@@ -742,6 +745,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     isAdminUser(loggedInUser) || project.stakeholders.some(stakeholder => stakeholder.name === loggedInUser)
   );
 
+  const activeProjects = visibleProjects.filter(project => !['completed', 'closed'].includes(project.status));
+  const completedProjects = visibleProjects.filter(project => ['completed', 'closed'].includes(project.status));
+
   const handleAddTimelineUpdate = () => {
     if (timelineUpdate.trim()) {
       const targetProjectId = viewingProjectId || visibleProjects[0]?.id;
@@ -762,6 +768,34 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       
       setTimelineUpdate('');
     }
+  };
+
+  const openDeleteProject = (project) => {
+    if (!projectDeletionEnabled) return;
+    setProjectToDelete(project);
+    setDeleteConfirmation('');
+  };
+
+  const closeDeleteModal = () => {
+    setProjectToDelete(null);
+    setDeleteConfirmation('');
+  };
+
+  const handleConfirmDeleteProject = () => {
+    if (!projectToDelete || deleteConfirmation.trim() !== projectToDelete.name) return;
+
+    setProjects(prevProjects => prevProjects.filter(p => p.id !== projectToDelete.id));
+
+    if (viewingProjectId === projectToDelete.id) {
+      setViewingProjectId(null);
+    }
+
+    if (selectedProject?.id === projectToDelete.id) {
+      setSelectedProject(null);
+    }
+
+    setProjectToDelete(null);
+    setDeleteConfirmation('');
   };
 
   const getAllActivities = () => {
@@ -879,6 +913,127 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         editing as <span style={styles.editingAsName}>{loggedInUser}</span>
       </div>
     ) : null;
+
+  const renderProjectCard = (project, index) => (
+    <div
+      key={project.id}
+      style={{
+        ...styles.projectCard,
+        animationDelay: `${index * 100}ms`
+      }}
+    >
+      <div style={styles.cardHeader}>
+        <div style={styles.cardTitleRow}>
+          <h3 style={styles.projectTitle}>{project.name}</h3>
+          <div
+            style={{
+              ...styles.priorityBadge,
+              backgroundColor: getPriorityColor(project.priority) + '20',
+              color: getPriorityColor(project.priority)
+            }}
+          >
+            {project.priority}
+          </div>
+        </div>
+        <div style={styles.stakeholders}>
+          <Users size={14} style={{ color: 'var(--stone)' }} />
+          <span style={styles.stakeholderText}>
+            {project.stakeholders.slice(0, 2).map(s => s.name).join(', ')}
+            {project.stakeholders.length > 2 && ` +${project.stakeholders.length - 2}`}
+          </span>
+        </div>
+      </div>
+
+      <div style={styles.progressSection}>
+        <div style={styles.progressHeader}>
+          <span style={styles.progressLabel}>Progress</span>
+          <span style={styles.progressValue}>{project.progress}%</span>
+        </div>
+        <div style={styles.progressBar}>
+          <div
+            style={{
+              ...styles.progressFill,
+              width: `${project.progress}%`,
+              backgroundColor: getPriorityColor(project.priority)
+            }}
+          />
+        </div>
+      </div>
+
+      <div style={styles.updateSection}>
+        <div style={styles.updateLabel}>
+          <MessageCircle size={14} style={{ color: 'var(--stone)' }} />
+          Latest Update
+        </div>
+        <p style={styles.updateText}>{project.lastUpdate}</p>
+      </div>
+
+      {(() => {
+        const tasksNeedingAttention = [];
+        project.plan.forEach(task => {
+          task.subtasks.forEach(subtask => {
+            if (subtask.status !== 'completed') {
+              const dueDateInfo = formatDueDate(subtask.dueDate, subtask.status, subtask.completedDate);
+              if (dueDateInfo.isOverdue || dueDateInfo.isDueSoon) {
+                tasksNeedingAttention.push({
+                  title: subtask.title,
+                  dueDateInfo: dueDateInfo
+                });
+              }
+            }
+          });
+        });
+
+        if (tasksNeedingAttention.length > 0) {
+          return (
+            <div style={styles.actionsSection}>
+              <h4 style={styles.actionsSectionTitle}>Tasks Needing Attention</h4>
+              {tasksNeedingAttention.slice(0, 3).map((task, idx) => (
+                <div key={idx} style={styles.actionItemSmall}>
+                  <Circle size={8} style={{ color: task.dueDateInfo.color, marginTop: '6px' }} />
+                  <div style={styles.actionTextContent}>
+                    <span style={{
+                      ...styles.actionTextSmall,
+                      color: task.dueDateInfo.isOverdue ? 'var(--coral)' : 'var(--charcoal)'
+                    }}>
+                      {task.title}
+                    </span>
+                    <span style={styles.actionDueText}>Due {task.dueDateInfo.formattedDate} • {task.dueDateInfo.text}</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          );
+        }
+        return null;
+      })()}
+
+      <div style={styles.cardFooter}>
+        <span style={styles.lastActivityText}>
+          Last activity: {formatDateTime(project.recentActivity[0]?.date)}
+        </span>
+        <div style={styles.cardFooterActions}>
+          {projectDeletionEnabled && (
+            <button
+              onClick={() => openDeleteProject(project)}
+              style={styles.cardDeleteButton}
+              title="Delete project"
+            >
+              <Trash2 size={14} />
+              Delete
+            </button>
+          )}
+          <button
+            onClick={() => setViewingProjectId(project.id)}
+            style={styles.cardButton}
+          >
+            View Details
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 
   return (
     <>
@@ -1100,6 +1255,66 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         </div>
       )}
 
+      {projectToDelete && (
+        <div style={styles.modalOverlay}>
+          <div style={{ ...styles.modal, maxWidth: '520px' }}>
+            <div style={styles.modalHeader}>
+              <div style={{ ...styles.modalIconWrapper, backgroundColor: 'var(--coral)' + '15' }}>
+                <Trash2 size={24} style={{ color: 'var(--coral)' }} />
+              </div>
+              <h2 style={styles.modalTitle}>Delete this project?</h2>
+              <p style={styles.modalSubtitle}>
+                Deleting "{projectToDelete.name}" is permanent. Type the project name to confirm.
+              </p>
+            </div>
+
+            <div style={styles.modalBody}>
+              <div style={styles.dangerNote}>
+                <AlertCircle size={16} />
+                <span>All tasks, updates, and activity will be removed.</span>
+              </div>
+              <label style={styles.confirmLabel}>
+                Type <strong>{projectToDelete.name}</strong> to confirm deletion.
+              </label>
+              <input
+                type="text"
+                value={deleteConfirmation}
+                onChange={(e) => setDeleteConfirmation(e.target.value)}
+                style={styles.confirmInput}
+                placeholder={projectToDelete.name}
+                autoFocus
+              />
+            </div>
+
+            <div style={styles.modalActions}>
+              <button
+                onClick={handleConfirmDeleteProject}
+                style={{
+                  ...styles.dangerButton,
+                  opacity: deleteConfirmation.trim() === projectToDelete.name ? 1 : 0.5,
+                  cursor: deleteConfirmation.trim() === projectToDelete.name ? 'pointer' : 'not-allowed'
+                }}
+                disabled={deleteConfirmation.trim() !== projectToDelete.name}
+              >
+                Delete Project
+              </button>
+              <button
+                onClick={closeDeleteModal}
+                style={styles.skipButton}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.backgroundColor = 'var(--cream)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.backgroundColor = '#FFFFFF';
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Main Interface */}
       <div style={styles.sidebar}>
         <div style={styles.sidebarContent}>
@@ -1311,6 +1526,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                         <option value="active">Active</option>
                         <option value="on-hold">On Hold</option>
                         <option value="completed">Completed</option>
+                        <option value="closed">Closed</option>
                       </select>
                     ) : (
                       <span style={styles.statusBadgeSmall}>{viewingProject.status}</span>
@@ -2070,127 +2286,68 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               <div>
                 <h2 style={styles.pageTitle}>Your Projects</h2>
                 <p style={styles.pageSubtitle}>
-                  {visibleProjects.filter(p => p.status === 'active').length} active · {visibleProjects.length} total
+                  {activeProjects.length} active · {completedProjects.length} completed/closed · {visibleProjects.length} total
                 </p>
+              </div>
+              <div style={styles.headerActions}>
+                <div style={styles.lockHint}>
+                  <span style={styles.lockHintTitle}>Delete projects</span>
+                  <span style={styles.lockHintSubtitle}>Unlock to enable deletion</span>
+                </div>
+                <button
+                  onClick={() => setProjectDeletionEnabled(prev => !prev)}
+                  style={{
+                    ...styles.activityLockButton,
+                    backgroundColor: projectDeletionEnabled ? 'var(--coral)' + '12' : '#FFFFFF',
+                    borderColor: projectDeletionEnabled ? 'var(--coral)' : 'var(--cloud)',
+                    color: projectDeletionEnabled ? 'var(--coral)' : 'var(--charcoal)'
+                  }}
+                  title={projectDeletionEnabled ? 'Lock to disable project deletion' : 'Unlock to delete projects'}
+                >
+                  {projectDeletionEnabled ? <Unlock size={18} /> : <Lock size={18} />}
+                </button>
               </div>
             </header>
 
-            <div style={styles.projectsGrid}>
+            <div style={styles.projectsSection}>
               {visibleProjects.length === 0 ? (
                 <div style={styles.emptyState}>
                   No projects assigned to {loggedInUser}. Select another person to see their work.
                 </div>
               ) : (
-                visibleProjects.map((project, index) => (
-                <div
-                  key={project.id}
-                  style={{
-                    ...styles.projectCard,
-                    animationDelay: `${index * 100}ms`
-                  }}
-                >
-                  <div style={styles.cardHeader}>
-                    <div style={styles.cardTitleRow}>
-                      <h3 style={styles.projectTitle}>{project.name}</h3>
-                      <div
-                        style={{
-                          ...styles.priorityBadge,
-                          backgroundColor: getPriorityColor(project.priority) + '20',
-                          color: getPriorityColor(project.priority)
-                        }}
-                      >
-                        {project.priority}
+                <>
+                  <div style={styles.sectionHeaderRow}>
+                    <div>
+                      <h3 style={styles.sectionTitle}>Active & Upcoming</h3>
+                      <p style={styles.sectionSubtitle}>{activeProjects.length} in progress</p>
+                    </div>
+                  </div>
+
+                  {activeProjects.length === 0 ? (
+                    <div style={styles.emptyState}>
+                      All projects for {loggedInUser} are finished. Completed and closed work is listed below.
+                    </div>
+                  ) : (
+                    <div style={styles.projectsGrid}>
+                      {activeProjects.map((project, index) => renderProjectCard(project, index))}
+                    </div>
+                  )}
+
+                  {completedProjects.length > 0 && (
+                    <div style={{ marginTop: '32px' }}>
+                      <div style={styles.sectionHeaderRow}>
+                        <div>
+                          <h3 style={styles.sectionTitle}>Completed & Closed</h3>
+                          <p style={styles.sectionSubtitle}>{completedProjects.length} wrapped up</p>
+                        </div>
+                      </div>
+                      <div style={styles.projectsGrid}>
+                        {completedProjects.map((project, index) => renderProjectCard(project, index + activeProjects.length))}
                       </div>
                     </div>
-                    <div style={styles.stakeholders}>
-                      <Users size={14} style={{ color: 'var(--stone)' }} />
-                      <span style={styles.stakeholderText}>
-                        {project.stakeholders.slice(0, 2).map(s => s.name).join(', ')}
-                        {project.stakeholders.length > 2 && ` +${project.stakeholders.length - 2}`}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div style={styles.progressSection}>
-                    <div style={styles.progressHeader}>
-                      <span style={styles.progressLabel}>Progress</span>
-                      <span style={styles.progressValue}>{project.progress}%</span>
-                    </div>
-                    <div style={styles.progressBar}>
-                      <div
-                        style={{
-                          ...styles.progressFill,
-                          width: `${project.progress}%`,
-                          backgroundColor: getPriorityColor(project.priority)
-                        }}
-                      />
-                    </div>
-                  </div>
-
-                  <div style={styles.updateSection}>
-                    <div style={styles.updateLabel}>
-                      <MessageCircle size={14} style={{ color: 'var(--stone)' }} />
-                      Latest Update
-                    </div>
-                    <p style={styles.updateText}>{project.lastUpdate}</p>
-                  </div>
-
-                  {/* Tasks Needing Attention */}
-                  {(() => {
-                    const tasksNeedingAttention = [];
-                    project.plan.forEach(task => {
-                      task.subtasks.forEach(subtask => {
-                        if (subtask.status !== 'completed') {
-                          const dueDateInfo = formatDueDate(subtask.dueDate, subtask.status, subtask.completedDate);
-                          if (dueDateInfo.isOverdue || dueDateInfo.isDueSoon) {
-                            tasksNeedingAttention.push({
-                              title: subtask.title,
-                              dueDateInfo: dueDateInfo
-                            });
-                          }
-                        }
-                      });
-                    });
-
-                    if (tasksNeedingAttention.length > 0) {
-                      return (
-                        <div style={styles.actionsSection}>
-                          <h4 style={styles.actionsSectionTitle}>Tasks Needing Attention</h4>
-                          {tasksNeedingAttention.slice(0, 3).map((task, idx) => (
-                            <div key={idx} style={styles.actionItemSmall}>
-                              <Circle size={8} style={{ color: task.dueDateInfo.color, marginTop: '6px' }} />
-                              <div style={styles.actionTextContent}>
-                                <span style={{
-                                  ...styles.actionTextSmall,
-                                  color: task.dueDateInfo.isOverdue ? 'var(--coral)' : 'var(--charcoal)'
-                                }}>
-                                  {task.title}
-                                </span>
-                                <span style={styles.actionDueText}>Due {task.dueDateInfo.formattedDate} • {task.dueDateInfo.text}</span>
-                              </div>
-                            </div>
-                          ))}
-                        </div>
-                      );
-                    }
-                    return null;
-                  })()}
-
-                  <div style={styles.cardFooter}>
-                    <span style={styles.lastActivityText}>
-                      Last activity: {formatDateTime(project.recentActivity[0]?.date)}
-                    </span>
-                    <button 
-                      onClick={() => setViewingProjectId(project.id)}
-                      style={styles.cardButton}
-                    >
-                      View Details
-                      <ChevronRight size={16} />
-                    </button>
-                  </div>
-                </div>
-              ))
-            )}
+                  )}
+                </>
+              )}
             </div>
           </>
         )}
@@ -2442,10 +2599,43 @@ const styles = {
     fontFamily: "'Inter', sans-serif",
   },
 
+  lockHint: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '2px',
+    alignItems: 'flex-end',
+  },
+
+  lockHintTitle: {
+    fontSize: '13px',
+    fontWeight: '700',
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  lockHintSubtitle: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
   projectsGrid: {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
     gap: '24px',
+  },
+
+  projectsSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+
+  sectionHeaderRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
   },
 
   projectCard: {
@@ -2631,6 +2821,12 @@ const styles = {
     borderTop: '1px solid var(--cloud)',
   },
 
+  cardFooterActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+
   lastActivityText: {
     fontSize: '13px',
     color: 'var(--stone)',
@@ -2649,6 +2845,22 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '4px',
+    transition: 'all 0.2s ease',
+  },
+
+  cardDeleteButton: {
+    padding: '8px 10px',
+    border: '1px solid var(--coral)',
+    backgroundColor: 'var(--coral)' + '12',
+    color: 'var(--coral)',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '700',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
     transition: 'all 0.2s ease',
   },
 
@@ -2713,6 +2925,34 @@ const styles = {
 
   modalBody: {
     padding: '32px 40px 40px',
+  },
+
+  dangerNote: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    backgroundColor: 'var(--coral)' + '12',
+    color: 'var(--coral)',
+    padding: '10px 12px',
+    borderRadius: '10px',
+    fontWeight: '700',
+  },
+
+  confirmLabel: {
+    fontSize: '13px',
+    color: 'var(--stone)',
+    fontWeight: '600',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  confirmInput: {
+    width: '100%',
+    padding: '10px 12px',
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
   },
 
   recentUpdatesSection: {
@@ -2916,6 +3156,23 @@ const styles = {
     gap: '8px',
     transition: 'all 0.2s ease',
     boxShadow: '0 4px 12px rgba(139, 111, 71, 0.3)',
+  },
+
+  dangerButton: {
+    padding: '12px 18px',
+    border: 'none',
+    borderRadius: '10px',
+    backgroundColor: 'var(--coral)',
+    color: '#FFFFFF',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '700',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    boxShadow: '0 8px 16px rgba(214, 124, 92, 0.2)',
+    transition: 'all 0.2s ease',
   },
 
   skipButton: {
