@@ -51,6 +51,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   const [thrustError, setThrustError] = useState('');
   const [thrustPendingActions, setThrustPendingActions] = useState([]);
   const [thrustIsRequesting, setThrustIsRequesting] = useState(false);
+  const [expandedMomentumProjects, setExpandedMomentumProjects] = useState({});
   const adminUsers = [
     { name: 'Chris Graves', team: 'Admin' }
   ];
@@ -458,6 +459,28 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     }
   };
 
+  const getProjectDueSoonTasks = (project) => {
+    const tasks = [];
+
+    project.plan.forEach(task => {
+      task.subtasks.forEach(subtask => {
+        if (subtask.status !== 'completed') {
+          const dueDateInfo = formatDueDate(subtask.dueDate, subtask.status, subtask.completedDate);
+          if (dueDateInfo.isOverdue || dueDateInfo.isDueSoon) {
+            tasks.push({
+              title: subtask.title,
+              taskTitle: task.title,
+              dueDate: subtask.dueDate,
+              dueDateInfo
+            });
+          }
+        }
+      });
+    });
+
+    return tasks.sort((a, b) => new Date(a.dueDate || 0) - new Date(b.dueDate || 0));
+  };
+
   // Get all possible tags for autocomplete
   const getAllTags = () => {
     const tags = [];
@@ -686,148 +709,234 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
 
   const applyThrustActions = (actions = []) => {
     if (!actions.length) {
-      return { deltas: [], summary: 'No actions executed' };
+      return { deltas: [], summary: 'No actions executed', details: [] };
     }
 
-    let workingProjects = projects.map(cloneProjectDeep);
-    const deltas = [];
-    const summaries = [];
+    const result = { deltas: [], summaries: [], details: [] };
 
-    const resolveProject = (target) => {
-      if (!target) return null;
-      const lowerTarget = `${target}`.toLowerCase();
-      return workingProjects.find(p => `${p.id}` === `${target}` || p.name.toLowerCase() === lowerTarget);
-    };
+    setProjects(prevProjects => {
+      const workingProjects = prevProjects.map(cloneProjectDeep);
 
-    const resolveTask = (project, target) => {
-      if (!project || !target) return null;
-      const lowerTarget = `${target}`.toLowerCase();
-      return project.plan.find(task => `${task.id}` === `${target}` || task.title.toLowerCase() === lowerTarget);
-    };
+      const resolveProject = (target) => {
+        if (!target) return null;
+        const lowerTarget = `${target}`.toLowerCase();
+        return workingProjects.find(p => `${p.id}` === `${target}` || p.name.toLowerCase() === lowerTarget);
+      };
 
-    actions.forEach(action => {
-      const project = resolveProject(action.projectId || action.projectName);
+      const resolveTask = (project, target) => {
+        if (!project || !target) return null;
+        const lowerTarget = `${target}`.toLowerCase();
+        return project.plan.find(task => `${task.id}` === `${target}` || task.title.toLowerCase() === lowerTarget);
+      };
 
-      if (!project) {
-        summaries.push('Skipped action: unknown project');
-        return;
-      }
+      const describeDueDate = (date) => date ? `due ${new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'no due date set';
 
-      switch (action.type) {
-        case 'comment': {
-          const activityId = generateActivityId();
-          const newActivity = {
-            id: activityId,
-            date: new Date().toISOString(),
-            note: action.note || action.content || 'Update logged by Thrust AI',
-            author: action.author || 'Thrust AI'
-          };
-          project.recentActivity = [newActivity, ...project.recentActivity];
-          deltas.push({ type: 'remove_activity', projectId: project.id, activityId });
-          summaries.push(`Commented on ${project.name}`);
-          break;
+      actions.forEach(action => {
+        const project = resolveProject(action.projectId || action.projectName);
+
+        if (!project) {
+          result.summaries.push('Skipped action: unknown project');
+          result.details.push('Skipped action because the project was not found.');
+          return;
         }
-        case 'add_task': {
-          const taskId = action.taskId || `ai-task-${Math.random().toString(36).slice(2, 7)}`;
-          const newTask = {
-            id: taskId,
-            title: action.title || 'New task',
-            status: action.status || 'todo',
-            dueDate: action.dueDate,
-            completedDate: action.completedDate,
-            subtasks: (action.subtasks || []).map(subtask => ({
-              id: subtask.id || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`,
-              title: subtask.title || 'New subtask',
-              status: subtask.status || 'todo',
-              dueDate: subtask.dueDate
-            }))
-          };
-          project.plan = [...project.plan, newTask];
-          deltas.push({ type: 'remove_task', projectId: project.id, taskId });
-          summaries.push(`Added task "${newTask.title}" to ${project.name}`);
-          break;
-        }
-        case 'update_task': {
-          const task = resolveTask(project, action.taskId || action.taskTitle);
-          if (!task) {
-            summaries.push(`Skipped action: missing task in ${project.name}`);
+
+        switch (action.type) {
+          case 'comment': {
+            const activityId = generateActivityId();
+            const newActivity = {
+              id: activityId,
+              date: new Date().toISOString(),
+              note: action.note || action.content || 'Update logged by Momentum',
+              author: action.author || 'Momentum'
+            };
+            project.recentActivity = [newActivity, ...project.recentActivity];
+            result.deltas.push({ type: 'remove_activity', projectId: project.id, activityId });
+            result.summaries.push(`Commented on ${project.name}`);
+            result.details.push(`Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author}`);
             break;
           }
-
-          const previous = { ...task };
-          if (action.title) task.title = action.title;
-          if (action.status) task.status = action.status;
-          if (action.dueDate) task.dueDate = action.dueDate;
-          if (action.completedDate) task.completedDate = action.completedDate;
-
-          deltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
-          summaries.push(`Updated task "${task.title}" in ${project.name}`);
-          break;
-        }
-        case 'add_subtask': {
-          const task = resolveTask(project, action.taskId || action.taskTitle);
-          if (!task) {
-            summaries.push(`Skipped action: missing parent task in ${project.name}`);
+          case 'add_task': {
+            const taskId = action.taskId || `ai-task-${Math.random().toString(36).slice(2, 7)}`;
+            const newTask = {
+              id: taskId,
+              title: action.title || 'New task',
+              status: action.status || 'todo',
+              dueDate: action.dueDate,
+              completedDate: action.completedDate,
+              subtasks: (action.subtasks || []).map(subtask => ({
+                id: subtask.id || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`,
+                title: subtask.title || 'New subtask',
+                status: subtask.status || 'todo',
+                dueDate: subtask.dueDate
+              }))
+            };
+            project.plan = [...project.plan, newTask];
+            result.deltas.push({ type: 'remove_task', projectId: project.id, taskId });
+            result.summaries.push(`Added task "${newTask.title}" to ${project.name}`);
+            result.details.push(`Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)}) to ${project.name}`);
             break;
           }
+          case 'update_task': {
+            const task = resolveTask(project, action.taskId || action.taskTitle);
+            if (!task) {
+              result.summaries.push(`Skipped action: missing task in ${project.name}`);
+              result.details.push(`Skipped task update in ${project.name} because the task was not found.`);
+              break;
+            }
 
-          const subtaskId = action.subtaskId || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`;
-          const newSubtask = {
-            id: subtaskId,
-            title: action.title || action.subtaskTitle || 'New subtask',
-            status: action.status || 'todo',
-            dueDate: action.dueDate
-          };
-          task.subtasks = [...task.subtasks, newSubtask];
-          deltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
-          summaries.push(`Added subtask "${newSubtask.title}" to ${task.title}`);
-          break;
-        }
-        case 'update_subtask': {
-          const task = resolveTask(project, action.taskId || action.taskTitle);
-          if (!task) {
-            summaries.push(`Skipped action: missing parent task in ${project.name}`);
+            const previous = { ...task };
+            const changes = [];
+
+            if (action.title && action.title !== task.title) {
+              changes.push(`renamed to "${action.title}"`);
+              task.title = action.title;
+            }
+            if (action.status && action.status !== task.status) {
+              changes.push(`status ${task.status} → ${action.status}`);
+              task.status = action.status;
+            }
+            if (action.dueDate && action.dueDate !== task.dueDate) {
+              changes.push(`due date ${task.dueDate || 'unset'} → ${action.dueDate}`);
+              task.dueDate = action.dueDate;
+            }
+            if (action.completedDate && action.completedDate !== task.completedDate) {
+              changes.push(`completed ${action.completedDate}`);
+              task.completedDate = action.completedDate;
+            }
+
+            result.deltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
+            result.summaries.push(`Updated task "${task.title}" in ${project.name}`);
+            result.details.push(`Updated task "${task.title}" in ${project.name}: ${changes.join('; ') || 'no tracked changes'}`);
             break;
           }
-          const subtask = task.subtasks.find(st => `${st.id}` === `${action.subtaskId}` || st.title.toLowerCase() === `${action.subtaskTitle || action.title || ''}`.toLowerCase());
-          if (!subtask) {
-            summaries.push(`Skipped action: missing subtask in ${task.title}`);
+          case 'add_subtask': {
+            const task = resolveTask(project, action.taskId || action.taskTitle);
+            if (!task) {
+              result.summaries.push(`Skipped action: missing parent task in ${project.name}`);
+              result.details.push(`Skipped subtask add in ${project.name} because the parent task was not found.`);
+              break;
+            }
+
+            const subtaskId = action.subtaskId || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`;
+            const newSubtask = {
+              id: subtaskId,
+              title: action.title || action.subtaskTitle || 'New subtask',
+              status: action.status || 'todo',
+              dueDate: action.dueDate
+            };
+            task.subtasks = [...task.subtasks, newSubtask];
+            result.deltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
+            result.summaries.push(`Added subtask "${newSubtask.title}" to ${task.title}`);
+            result.details.push(`Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)}) under ${task.title}`);
             break;
           }
+          case 'update_subtask': {
+            const task = resolveTask(project, action.taskId || action.taskTitle);
+            if (!task) {
+              result.summaries.push(`Skipped action: missing parent task in ${project.name}`);
+              result.details.push(`Skipped subtask update in ${project.name} because the parent task was not found.`);
+              break;
+            }
+            const subtask = task.subtasks.find(st => `${st.id}` === `${action.subtaskId}` || st.title.toLowerCase() === `${action.subtaskTitle || action.title || ''}`.toLowerCase());
+            if (!subtask) {
+              result.summaries.push(`Skipped action: missing subtask in ${task.title}`);
+              result.details.push(`Skipped subtask update because no subtask matched in ${task.title}.`);
+              break;
+            }
 
-          const previous = { ...subtask };
-          if (action.title || action.subtaskTitle) subtask.title = action.title || action.subtaskTitle;
-          if (action.status) subtask.status = action.status;
-          if (action.dueDate) subtask.dueDate = action.dueDate;
-          if (action.completedDate) subtask.completedDate = action.completedDate;
+            const previous = { ...subtask };
+            const changes = [];
 
-          deltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
-          summaries.push(`Updated subtask "${subtask.title}" in ${task.title}`);
-          break;
+            if ((action.title || action.subtaskTitle) && (action.title || action.subtaskTitle) !== subtask.title) {
+              changes.push(`renamed to "${action.title || action.subtaskTitle}"`);
+              subtask.title = action.title || action.subtaskTitle;
+            }
+            if (action.status && action.status !== subtask.status) {
+              changes.push(`status ${subtask.status} → ${action.status}`);
+              subtask.status = action.status;
+            }
+            if (action.dueDate && action.dueDate !== subtask.dueDate) {
+              changes.push(`due date ${subtask.dueDate || 'unset'} → ${action.dueDate}`);
+              subtask.dueDate = action.dueDate;
+            }
+            if (action.completedDate && action.completedDate !== subtask.completedDate) {
+              changes.push(`completed ${action.completedDate}`);
+              subtask.completedDate = action.completedDate;
+            }
+
+            result.deltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
+            result.summaries.push(`Updated subtask "${subtask.title}" in ${task.title}`);
+            result.details.push(`Updated subtask "${subtask.title}" in ${task.title}: ${changes.join('; ') || 'no tracked changes'}`);
+            break;
+          }
+          case 'update_project': {
+            const previous = {
+              status: project.status,
+              progress: project.progress,
+              targetDate: project.targetDate,
+              lastUpdate: project.lastUpdate
+            };
+            const changes = [];
+
+            if (action.status && action.status !== project.status) {
+              changes.push(`status ${project.status} → ${action.status}`);
+              project.status = action.status;
+            }
+            if (typeof action.progress === 'number' && action.progress !== project.progress) {
+              changes.push(`progress ${project.progress}% → ${action.progress}%`);
+              project.progress = action.progress;
+            }
+            if (action.targetDate && action.targetDate !== project.targetDate) {
+              changes.push(`target ${project.targetDate || 'unset'} → ${action.targetDate}`);
+              project.targetDate = action.targetDate;
+            }
+            if (action.lastUpdate && action.lastUpdate !== project.lastUpdate) {
+              changes.push(`last update → ${action.lastUpdate}`);
+              project.lastUpdate = action.lastUpdate;
+            }
+
+            result.deltas.push({ type: 'restore_project', projectId: project.id, previous });
+            result.summaries.push(`Updated ${project.name}`);
+            result.details.push(`Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`);
+            break;
+          }
+          default:
+            result.summaries.push('Skipped action: unsupported type');
+            result.details.push(`Skipped unsupported action type: ${action.type}`);
         }
-        case 'update_project': {
-          const previous = {
-            status: project.status,
-            progress: project.progress,
-            targetDate: project.targetDate,
-            lastUpdate: project.lastUpdate
-          };
-          if (action.status) project.status = action.status;
-          if (typeof action.progress === 'number') project.progress = action.progress;
-          if (action.targetDate) project.targetDate = action.targetDate;
-          if (action.lastUpdate) project.lastUpdate = action.lastUpdate;
+      });
 
-          deltas.push({ type: 'restore_project', projectId: project.id, previous });
-          summaries.push(`Updated ${project.name}`);
-          break;
-        }
-        default:
-          summaries.push('Skipped action: unsupported type');
-      }
+      return workingProjects;
     });
 
-    setProjects(workingProjects);
-    return { deltas, summary: summaries.join('; ') || 'No actions executed' };
+    return {
+      deltas: result.deltas,
+      summary: result.summaries.join('; ') || 'No actions executed',
+      details: result.details
+    };
+  };
+
+  const describeActionPreview = (action) => {
+    const project = projects.find(p => `${p.id}` === `${action.projectId}` || p.name.toLowerCase() === `${action.projectName || ''}`.toLowerCase());
+    const projectName = project?.name || action.projectName || `Project ${action.projectId || '?'}`;
+    const dueLabel = action.dueDate ? `due ${new Date(action.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'no due date set';
+
+    switch (action.type) {
+      case 'comment':
+        return `Comment on ${projectName}: "${action.note || action.content || ''}"`;
+      case 'add_task':
+        return `Add task "${action.title || 'New task'}" (${dueLabel}) to ${projectName}`;
+      case 'update_task':
+        return `Update task "${action.title || action.taskTitle || action.taskId || ''}" in ${projectName}`;
+      case 'add_subtask':
+        return `Add subtask "${action.subtaskTitle || action.title || ''}" (${dueLabel}) under ${action.taskTitle || action.taskId || 'task'} in ${projectName}`;
+      case 'update_subtask':
+        return `Update subtask "${action.subtaskTitle || action.title || action.subtaskId || ''}" in ${projectName}`;
+      case 'update_project':
+        return `Update project ${projectName}: status/progress/date tweaks`;
+      default:
+        return `Action queued: ${action.type || 'unknown'} for ${projectName}`;
+    }
   };
 
   const getAllStakeholders = () => {
@@ -939,11 +1048,21 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     setThrustPendingActions([]);
 
     if (!apiKey) {
-      setThrustError('Add an API key in Settings to chat with Thrust AI.');
+      setThrustError('Add an API key in Settings to chat with Momentum.');
       return;
     }
 
-    const systemPrompt = `You are Thrust AI autopilot. Keep replies short, explain what you changed, and always return a JSON object with a 'response' string and an 'actions' array. Each action must include a projectId and one of the supported types: comment, add_task, update_task, add_subtask, update_subtask, update_project.`;
+    const systemPrompt = `You are Momentum, an experienced technical project manager using dialectic project planning. Be concise but explicit about what you are doing, offer guiding prompts such as "have you thought of X yet?", and rely on the provided project data for context. Respond with a JSON object containing a 'response' string and an 'actions' array.
+
+Supported atomic actions (never combine multiple changes into one action):
+- comment: log a project activity. Fields: projectId, note (or content), author (optional).
+- add_task: create a new task in a project. Fields: projectId, title, dueDate (optional), status (todo/in-progress/completed), completedDate (optional).
+- update_task: adjust a task. Fields: projectId, taskId or taskTitle, title (optional), status, dueDate, completedDate.
+- add_subtask: create a subtask. Fields: projectId, taskId or taskTitle, subtaskTitle or title, status, dueDate.
+- update_subtask: adjust a subtask. Fields: projectId, taskId or taskTitle, subtaskId or subtaskTitle, title, status, dueDate, completedDate.
+- update_project: change project status/progress/dates. Fields: projectId, status, progress (0-100), targetDate, lastUpdate.
+
+Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project.`;
     const context = buildThrustContext();
     const orderedMessages = [...nextMessages].sort((a, b) => new Date(a.date) - new Date(b.date));
     const messages = [
@@ -961,21 +1080,22 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
       const { content } = await callOpenAIChat({ apiKey, messages });
       const parsed = parseAssistantResponse(content);
       setThrustPendingActions(parsed.actions || []);
-      const { deltas, summary } = applyThrustActions(parsed.actions || []);
+      const { deltas, summary, details } = applyThrustActions(parsed.actions || []);
 
       const assistantMessage = {
         id: responseId,
         role: 'assistant',
-        author: 'Thrust AI',
+        author: 'Momentum',
         note: parsed.display || content,
         date: new Date().toISOString(),
         actionSummary: summary,
+        actionDetails: details,
         deltas
       };
 
       setThrustMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
-      setThrustError(error?.message || 'Failed to send Thrust request.');
+      setThrustError(error?.message || 'Failed to send Momentum request.');
     } finally {
       setThrustPendingActions([]);
       setThrustIsRequesting(false);
@@ -983,7 +1103,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   };
 
   const getThrustConversation = () => {
-    return [...thrustMessages].sort((a, b) => new Date(b.date) - new Date(a.date));
+    return [...thrustMessages].sort((a, b) => new Date(a.date) - new Date(b.date));
   };
 
   const undoThrustActions = (messageId) => {
@@ -1063,6 +1183,26 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
       setSelectedProject(null);
     }
   }, [showDailyCheckin, visibleProjects, selectedProject]);
+
+  useEffect(() => {
+    if (visibleProjects.length === 0) {
+      setExpandedMomentumProjects({});
+      return;
+    }
+
+    setExpandedMomentumProjects(prev => {
+      const visibleIds = new Set(visibleProjects.map(p => p.id));
+      const next = Object.fromEntries(
+        Object.entries(prev).filter(([id]) => visibleIds.has(id))
+      );
+
+      if (!Object.keys(next).some(id => next[id])) {
+        next[visibleProjects[0].id] = true;
+      }
+
+      return next;
+    });
+  }, [visibleProjects]);
 
   useEffect(() => {
     // Auto-expand all tasks when viewing a project
@@ -1545,7 +1685,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
                 ...(activeView === 'thrust' && !viewingProjectId ? styles.navItemActive : {})
               }}
             >
-              Thrust
+              Momentum
             </button>
             <button
               onClick={() => {
@@ -2497,9 +2637,9 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
           <>
             <header style={styles.header}>
               <div>
-                <h2 style={styles.pageTitle}>Thrust</h2>
+                <h2 style={styles.pageTitle}>Momentum</h2>
                 <p style={styles.pageSubtitle}>
-                  Chat with stakeholders and surface a quick project snapshot
+                  dialectic project planning
                 </p>
               </div>
             </header>
@@ -2522,12 +2662,19 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
                   )}
 
                   {thrustIsRequesting && (
-                    <div style={styles.thrustStatusRow}>Gathering plan from Thrust AI…</div>
+                    <div style={styles.thrustStatusRow}>Gathering plan from Momentum…</div>
                   )}
 
                   {thrustPendingActions.length > 0 && (
                     <div style={styles.thrustStatusRow}>
-                      Applying actions: {thrustPendingActions.map(action => action.type).join(', ')}
+                      <div style={styles.thrustStatusHeading}>Applying actions:</div>
+                      <ul style={styles.thrustActionList}>
+                        {thrustPendingActions.map((action, idx) => (
+                          <li key={idx} style={styles.thrustActionListItem}>
+                            {describeActionPreview(action)}
+                          </li>
+                        ))}
+                      </ul>
                     </div>
                   )}
 
@@ -2538,7 +2685,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
                       </div>
                   ) : (
                     thrustConversation.map((message, idx) => {
-                      const authorName = message.author || (message.role === 'assistant' ? 'Thrust AI' : 'You');
+                      const authorName = message.author || (message.role === 'assistant' ? 'Momentum' : 'You');
 
                       return (
                         <div
@@ -2593,6 +2740,15 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
                               )}
                             </div>
                           )}
+                          {message.actionDetails && message.actionDetails.length > 0 && (
+                            <ul style={styles.thrustActionDetailList}>
+                              {message.actionDetails.map((detail, detailIdx) => (
+                                <li key={detailIdx} style={styles.thrustActionDetailItem}>
+                                  {detail}
+                                </li>
+                              ))}
+                            </ul>
+                          )}
                         </div>
                       );
                     })
@@ -2605,7 +2761,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
                     onChange={(e) => setThrustDraft(e.target.value)}
                     onFocus={() => setFocusedField('thrust-draft')}
                     onBlur={() => setFocusedField(null)}
-                    placeholder="Share a thrust update..."
+                    placeholder="Share a Momentum update..."
                     style={{ ...styles.timelineInput, minHeight: '96px' }}
                   />
                   {renderEditingHint('thrust-draft')}
@@ -2631,8 +2787,8 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
                   <div style={styles.thrustInfoTitle}>
                     <Sparkles size={16} style={{ color: 'var(--earth)' }} />
                     <div>
-                      <div style={styles.thrustInfoLabel}>Project info</div>
-                      <div style={styles.thrustInfoSubtle}>Primary initiative snapshot</div>
+                      <div style={styles.thrustInfoLabel}>Projects</div>
+                      <div style={styles.thrustInfoSubtle}>Expand a project for a daily update snapshot</div>
                     </div>
                   </div>
                   <button
@@ -2653,56 +2809,97 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
                 {thrustInfoExpanded && (
                   visibleProjects.length > 0 ? (
                     <div style={styles.thrustInfoContent}>
-                      <div style={styles.thrustProjectHeader}>
-                        <div>
-                          <div style={styles.thrustProjectName}>{visibleProjects[0].name}</div>
-                          <div style={styles.thrustProjectMeta}>
-                            <Calendar size={14} style={{ color: 'var(--stone)' }} />
-                            Target {new Date(visibleProjects[0].targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          </div>
-                        </div>
-                        <div style={{
-                          ...styles.priorityBadgeLarge,
-                          backgroundColor: getPriorityColor(visibleProjects[0].priority) + '20',
-                          color: getPriorityColor(visibleProjects[0].priority)
-                        }}>
-                          {visibleProjects[0].priority} priority
-                        </div>
-                      </div>
+                      {visibleProjects.map(project => {
+                        const isExpanded = expandedMomentumProjects[project.id];
+                        const dueSoonTasks = getProjectDueSoonTasks(project);
+                        const recentUpdates = project.recentActivity.slice(0, 3);
 
-                      <div style={styles.thrustStatGrid}>
-                        <div style={styles.thrustStatCard}>
-                          <div style={styles.thrustStatLabel}>Status</div>
-                          <div style={styles.statusBadgeSmall}>{visibleProjects[0].status}</div>
-                        </div>
-                        <div style={styles.thrustStatCard}>
-                          <div style={styles.thrustStatLabel}>Stakeholders</div>
-                          <div style={styles.thrustStakeholders}>
-                            {visibleProjects[0].stakeholders.slice(0, 3).map((stakeholder, idx) => (
-                              <span key={idx} style={styles.avatarCircle}>
-                                {stakeholder.name.split(' ').map(n => n[0]).join('')}
-                              </span>
-                            ))}
-                            {visibleProjects[0].stakeholders.length > 3 && (
-                              <span style={styles.thrustOverflow}>+{visibleProjects[0].stakeholders.length - 3}</span>
+                        return (
+                          <div key={project.id} style={styles.momentumProjectCard}>
+                            <button
+                              style={styles.momentumProjectToggle}
+                              onClick={() => setExpandedMomentumProjects(prev => ({
+                                ...prev,
+                                [project.id]: !isExpanded
+                              }))}
+                              type="button"
+                              aria-expanded={isExpanded}
+                            >
+                              <div style={styles.momentumProjectHeader}>
+                                <div>
+                                  <div style={styles.momentumProjectName}>{project.name}</div>
+                                  <div style={styles.momentumProjectMeta}>
+                                    <Calendar size={14} style={{ color: 'var(--stone)' }} />
+                                    Target {new Date(project.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                                  </div>
+                                </div>
+                                <div style={styles.momentumProjectMetaRight}>
+                                  <div style={{
+                                    ...styles.priorityBadgeLarge,
+                                    backgroundColor: getPriorityColor(project.priority) + '20',
+                                    color: getPriorityColor(project.priority)
+                                  }}>
+                                    {project.priority} priority
+                                  </div>
+                                  <div style={styles.statusBadgeSmall}>{project.status}</div>
+                                </div>
+                              </div>
+                              <ChevronDown
+                                size={16}
+                                style={{
+                                  transition: 'transform 0.2s ease',
+                                  transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                  color: 'var(--stone)'
+                                }}
+                              />
+                            </button>
+
+                            {isExpanded && (
+                              <div style={styles.momentumProjectBody}>
+                                <div style={styles.momentumSummarySection}>
+                                  <div style={styles.momentumSummaryTitle}>Recent updates</div>
+                                  {recentUpdates.length > 0 ? (
+                                    <ul style={styles.momentumList}>
+                                      {recentUpdates.map((activity, idx) => (
+                                        <li key={activity.id || idx} style={styles.momentumListItem}>
+                                          <div style={styles.momentumListRow}>
+                                            <span style={styles.momentumListStrong}>{activity.author}</span>
+                                            <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
+                                          </div>
+                                          <div style={styles.momentumListText}>{activity.note}</div>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <div style={styles.momentumEmptyText}>No updates yet.</div>
+                                  )}
+                                </div>
+
+                                <div style={styles.momentumSummarySection}>
+                                  <div style={styles.momentumSummaryTitle}>Due soon or overdue</div>
+                                  {dueSoonTasks.length > 0 ? (
+                                    <ul style={styles.momentumList}>
+                                      {dueSoonTasks.map((task, idx) => (
+                                        <li key={`${task.taskTitle}-${task.title}-${idx}`} style={styles.momentumListItem}>
+                                          <div style={styles.momentumListRow}>
+                                            <span style={styles.momentumListStrong}>{task.taskTitle} → {task.title}</span>
+                                            <span style={{ ...styles.actionDueText, color: task.dueDateInfo.color }}>
+                                              {task.dueDateInfo.text}
+                                            </span>
+                                          </div>
+                                          <div style={styles.momentumListText}>Due {task.dueDateInfo.formattedDate}</div>
+                                        </li>
+                                      ))}
+                                    </ul>
+                                  ) : (
+                                    <div style={styles.momentumEmptyText}>No near-term work flagged.</div>
+                                  )}
+                                </div>
+                              </div>
                             )}
                           </div>
-                        </div>
-                        <div style={styles.thrustStatCard}>
-                          <div style={styles.thrustStatLabel}>Progress</div>
-                          <div style={styles.thrustProgressBar}>
-                            <div
-                              style={{
-                                ...styles.thrustProgressFill,
-                                width: `${calculateTaskProgress(visibleProjects[0].plan?.[0] || { subtasks: [] })}%`
-                              }}
-                            />
-                          </div>
-                          <div style={styles.thrustProgressHint}>
-                            Based on first milestone
-                          </div>
-                        </div>
-                      </div>
+                        );
+                      })}
                     </div>
                   ) : (
                     <div style={styles.emptyState}>No visible projects to summarize.</div>
@@ -4982,6 +5179,29 @@ const styles = {
     marginTop: '10px',
   },
 
+  thrustStatusHeading: {
+    fontSize: '12px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: 700,
+    color: 'var(--stone)',
+    marginBottom: '6px',
+  },
+
+  thrustActionList: {
+    margin: 0,
+    paddingLeft: '18px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+    color: 'var(--charcoal)',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  thrustActionListItem: {
+    lineHeight: 1.5,
+  },
+
   thrustMessageCard: {
     padding: '12px',
     borderRadius: '10px',
@@ -5036,6 +5256,19 @@ const styles = {
     fontWeight: 600,
     fontFamily: "'Inter', sans-serif",
     gap: '4px',
+  },
+
+  thrustActionDetailList: {
+    margin: '8px 0 0',
+    paddingLeft: '18px',
+    color: 'var(--charcoal)',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  thrustActionDetailItem: {
+    marginBottom: '4px',
+    lineHeight: 1.5,
   },
 
   thrustUndoTag: {
@@ -5119,6 +5352,127 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '16px',
+  },
+
+  momentumProjectCard: {
+    border: '1px solid var(--cloud)',
+    borderRadius: '12px',
+    backgroundColor: '#FFFFFF',
+    padding: '12px',
+    boxShadow: '0 4px 16px rgba(0,0,0,0.05)',
+  },
+
+  momentumProjectToggle: {
+    width: '100%',
+    background: 'transparent',
+    border: 'none',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+    cursor: 'pointer',
+    padding: 0,
+  },
+
+  momentumProjectHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+    gap: '12px',
+    flex: 1,
+  },
+
+  momentumProjectName: {
+    margin: 0,
+    fontSize: '17px',
+    fontWeight: '700',
+    color: 'var(--charcoal)',
+    textAlign: 'left',
+  },
+
+  momentumProjectMeta: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    color: 'var(--stone)',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    marginTop: '6px',
+  },
+
+  momentumProjectMetaRight: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+
+  momentumProjectBody: {
+    borderTop: '1px solid var(--cloud)',
+    marginTop: '12px',
+    paddingTop: '12px',
+    display: 'grid',
+    gap: '12px',
+  },
+
+  momentumSummarySection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+
+  momentumSummaryTitle: {
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '700',
+    color: 'var(--stone)',
+    letterSpacing: '0.3px',
+    textTransform: 'uppercase',
+  },
+
+  momentumList: {
+    margin: 0,
+    paddingLeft: '16px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+
+  momentumListItem: {
+    listStyle: 'disc',
+  },
+
+  momentumListRow: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '12px',
+  },
+
+  momentumListStrong: {
+    fontWeight: 700,
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+    fontSize: '14px',
+  },
+
+  momentumListMeta: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumListText: {
+    fontSize: '13px',
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+    lineHeight: 1.5,
+    marginTop: '2px',
+  },
+
+  momentumEmptyText: {
+    fontSize: '13px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
   },
 
   thrustProjectHeader: {
