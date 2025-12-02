@@ -1366,7 +1366,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
     }
 
     setExpandedMomentumProjects(prev => {
-      const visibleIds = new Set(visibleProjects.map(p => p.id));
+      const visibleIds = new Set(visibleProjects.map(p => String(p.id)));
       const filteredPrev = Object.fromEntries(
         Object.entries(prev).filter(([id]) => visibleIds.has(id))
       );
@@ -1375,12 +1375,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
       if (Object.keys(prev).length === 0) {
         visibleProjects.forEach(project => {
-          next[project.id] = true;
+          next[String(project.id)] = true;
         });
       } else {
         visibleProjects.forEach(project => {
-          if (!(project.id in next)) {
-            next[project.id] = true;
+          const projectId = String(project.id);
+          if (!(projectId in next)) {
+            next[projectId] = true;
           }
         });
       }
@@ -3224,7 +3225,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 {visibleProjects.length > 0 ? (
                   <div style={styles.thrustInfoContent}>
                     {visibleProjects.map(project => {
-                      const isExpanded = expandedMomentumProjects[project.id] ?? true;
+                      const projectId = String(project.id);
+                      const isExpanded = expandedMomentumProjects[projectId] ?? true;
                       const dueSoonTasks = getProjectDueSoonTasks(project);
                       const recentUpdates = project.recentActivity.slice(0, 3);
 
@@ -3234,7 +3236,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                             style={styles.momentumProjectToggle}
                             onClick={() => setExpandedMomentumProjects(prev => ({
                               ...prev,
-                              [project.id]: !(prev[project.id] ?? true)
+                              [projectId]: !(prev[projectId] ?? true)
                             }))}
                             onMouseEnter={(e) => {
                               e.currentTarget.style.backgroundColor = 'var(--cream)';
@@ -3370,28 +3372,49 @@ Keep tool calls granular (one discrete change per action), explain each action c
               <div style={styles.emptyState}>No visible projects to show.</div>
             ) : (
               (() => {
-                const slideDueSoon = getProjectDueSoonTasks(slideProject).slice(0, 4);
-                const slideRecent = slideProject.recentActivity.slice(0, 4);
+                const slideDueSoon = getProjectDueSoonTasks(slideProject).slice(0, 5);
+                const slideRecent = slideProject.recentActivity.slice(0, 5);
                 return (
                   <div style={styles.slideStage}>
                     <div style={styles.slideSurface}>
                       <div style={styles.slideSurfaceInner}>
-                        <div style={styles.slideHeaderRow}>
-                          <div>
+                        {/* Compact header with name, badges, and stakeholders */}
+                        <div style={styles.slideCompactHeader}>
+                          <div style={styles.slideHeaderLeft}>
                             <h3 style={styles.slideTitle}>{slideProject.name}</h3>
-                            <p style={styles.slideDescription}>{slideProject.description || 'No description added yet.'}</p>
+                            <div style={styles.slideHeaderMeta}>
+                              <Calendar size={14} style={{ color: 'var(--stone)' }} />
+                              <span>Target {slideProject.targetDate ? new Date(slideProject.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'TBD'}</span>
+                              <span style={styles.slideDivider}>•</span>
+                              <span style={{
+                                ...styles.slideInlineBadge,
+                                backgroundColor: getPriorityColor(slideProject.priority) + '20',
+                                color: getPriorityColor(slideProject.priority)
+                              }}>
+                                {slideProject.priority} priority
+                              </span>
+                              <span style={styles.slideInlineBadge}>{slideProject.status}</span>
+                            </div>
                           </div>
-                          <div style={styles.slideBadges}>
-                            <span style={styles.slideBadge}>{slideProject.status}</span>
-                            <span style={styles.slideBadgeMuted}>
-                              Target {slideProject.targetDate ? new Date(slideProject.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'TBD'}
-                            </span>
-                          </div>
+                          {slideProject.stakeholders.length > 0 && (
+                            <div style={styles.slideStakeholdersCompact}>
+                              {slideProject.stakeholders.map(person => (
+                                <div key={person.name} style={styles.slideStakeholderCompact} title={`${person.name} (${person.team})`}>
+                                  <div style={styles.activityAvatarSmall}>{person.name.split(' ').map(n => n[0]).join('')}</div>
+                                  <span style={styles.slideStakeholderName}>{person.name}</span>
+                                </div>
+                              ))}
+                            </div>
+                          )}
                         </div>
 
-                        <div style={styles.slideGrid}>
-                          <div style={styles.slidePanel}>
-                            <div style={styles.slidePanelTitle}>Recent updates</div>
+                        {/* Main content grid */}
+                        <div style={styles.slideMainGrid}>
+                          {/* Left column - Recent updates (larger) */}
+                          <div style={styles.slideMainPanel}>
+                            <div style={styles.slidePanelHeader}>
+                              <div style={styles.slidePanelTitle}>Recent updates</div>
+                            </div>
                             {slideRecent.length > 0 ? (
                               <ul style={styles.momentumList}>
                                 {slideRecent.map((activity, idx) => (
@@ -3409,43 +3432,40 @@ Keep tool calls granular (one discrete change per action), explain each action c
                             )}
                           </div>
 
-                          <div style={styles.slidePanel}>
-                            <div style={styles.slidePanelTitle}>Due soon</div>
-                            {slideDueSoon.length > 0 ? (
-                              <ul style={styles.momentumList}>
-                                {slideDueSoon.map((task, idx) => (
-                                  <li key={`${task.taskTitle}-${task.title}-${idx}`} style={styles.momentumListItem}>
-                                    <div style={styles.momentumListRow}>
-                                      <span style={styles.momentumListStrong}>{task.taskTitle} → {task.title}</span>
-                                      <span style={{ ...styles.actionDueText, color: task.dueDateInfo.color }}>
-                                        {task.dueDateInfo.text}
-                                      </span>
-                                    </div>
-                                    <div style={styles.momentumListText}>Due {task.dueDateInfo.formattedDate}</div>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <div style={styles.momentumEmptyText}>No flagged deadlines.</div>
-                            )}
-                          </div>
+                          {/* Right column - Tasks and summary */}
+                          <div style={styles.slideRightColumn}>
+                            {/* Due soon tasks */}
+                            <div style={styles.slideSecondaryPanel}>
+                              <div style={styles.slidePanelHeader}>
+                                <div style={styles.slidePanelTitle}>Due soon or overdue</div>
+                              </div>
+                              {slideDueSoon.length > 0 ? (
+                                <ul style={styles.momentumList}>
+                                  {slideDueSoon.map((task, idx) => (
+                                    <li key={`${task.taskTitle}-${task.title}-${idx}`} style={styles.momentumListItem}>
+                                      <div style={styles.momentumListRow}>
+                                        <span style={styles.momentumListStrong}>{task.taskTitle} → {task.title}</span>
+                                        <span style={{ ...styles.actionDueText, color: task.dueDateInfo.color }}>
+                                          {task.dueDateInfo.text}
+                                        </span>
+                                      </div>
+                                      <div style={styles.momentumListText}>Due {task.dueDateInfo.formattedDate}</div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <div style={styles.momentumEmptyText}>No near-term work flagged.</div>
+                              )}
+                            </div>
 
-                          <div style={styles.slidePanel}>
-                            <div style={styles.slidePanelTitle}>Stakeholders</div>
-                            {slideProject.stakeholders.length > 0 ? (
-                              <ul style={styles.slideStakeholderList}>
-                                {slideProject.stakeholders.map(person => (
-                                  <li key={person.name} style={styles.slideStakeholder}>
-                                    <div style={styles.activityAvatarSmall}>{person.name.split(' ').map(n => n[0]).join('')}</div>
-                                    <div>
-                                      <div style={styles.momentumListStrong}>{person.name}</div>
-                                      <div style={styles.momentumListMeta}>{person.team}</div>
-                                    </div>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <div style={styles.momentumEmptyText}>No stakeholders listed.</div>
+                            {/* Executive summary */}
+                            {slideProject.description && (
+                              <div style={styles.slideSecondaryPanel}>
+                                <div style={styles.slidePanelHeader}>
+                                  <div style={styles.slidePanelTitle}>Executive summary</div>
+                                </div>
+                                <div style={styles.slideExecSummary}>{slideProject.description}</div>
+                              </div>
                             )}
                           </div>
                         </div>
@@ -6206,17 +6226,17 @@ const styles = {
   },
 
   thrustInfoContent: {
-    padding: '16px 18px',
+    padding: '12px 14px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
+    gap: '10px',
   },
 
   momentumProjectCard: {
     border: '1px solid var(--cloud)',
     borderRadius: '12px',
     backgroundColor: '#FFFFFF',
-    padding: '20px',
+    padding: '12px',
     boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
     transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
     animation: 'fadeInUp 0.6s cubic-bezier(0.4, 0, 0.2, 1) backwards',
@@ -6229,10 +6249,10 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    gap: '12px',
+    gap: '10px',
     cursor: 'pointer',
-    padding: '8px',
-    margin: '-8px',
+    padding: '6px',
+    margin: '-6px',
     borderRadius: '8px',
     transition: 'background-color 0.2s ease',
   },
@@ -6241,13 +6261,13 @@ const styles = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
-    gap: '12px',
+    gap: '10px',
     flex: 1,
   },
 
   momentumProjectName: {
     margin: 0,
-    fontSize: '18px',
+    fontSize: '17px',
     fontWeight: '600',
     color: 'var(--charcoal)',
     textAlign: 'left',
@@ -6257,11 +6277,11 @@ const styles = {
   momentumProjectMeta: {
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
+    gap: '6px',
     color: 'var(--stone)',
-    fontSize: '13px',
+    fontSize: '12px',
     fontFamily: "'Inter', sans-serif",
-    marginTop: '6px',
+    marginTop: '4px',
   },
 
   momentumProjectMetaRight: {
@@ -6272,30 +6292,30 @@ const styles = {
 
   momentumProjectBody: {
     borderTop: '1px solid var(--cloud)',
-    marginTop: '16px',
-    paddingTop: '16px',
+    marginTop: '12px',
+    paddingTop: '12px',
     display: 'grid',
-    gap: '16px',
+    gap: '12px',
   },
 
   momentumSummarySection: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '10px',
-    padding: '14px',
+    gap: '8px',
+    padding: '10px',
     backgroundColor: 'var(--cream)',
     borderRadius: '8px',
     borderLeft: '3px solid var(--amber)',
   },
 
   momentumSummaryTitle: {
-    fontSize: '12px',
+    fontSize: '11px',
     fontFamily: "'Inter', sans-serif",
     fontWeight: '600',
     color: 'var(--stone)',
     letterSpacing: '0.5px',
     textTransform: 'uppercase',
-    marginBottom: '4px',
+    marginBottom: '2px',
   },
 
   momentumList: {
@@ -6303,14 +6323,14 @@ const styles = {
     padding: 0,
     display: 'flex',
     flexDirection: 'column',
-    gap: '10px',
+    gap: '8px',
   },
 
   momentumListItem: {
     listStyle: 'none',
     marginLeft: '0',
     paddingLeft: '0',
-    paddingBottom: '8px',
+    paddingBottom: '6px',
   },
 
   momentumListRow: {
@@ -6381,101 +6401,137 @@ const styles = {
   slideSurfaceInner: {
     position: 'absolute',
     inset: '0',
-    padding: '28px',
+    padding: '20px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '16px',
+    gap: '14px',
     boxSizing: 'border-box',
   },
 
-  slideHeaderRow: {
+  slideCompactHeader: {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'flex-start',
     gap: '16px',
+    paddingBottom: '12px',
+    borderBottom: '1px solid var(--cloud)',
+  },
+
+  slideHeaderLeft: {
+    flex: 1,
+    minWidth: 0,
   },
 
   slideTitle: {
     margin: 0,
-    fontSize: '26px',
+    fontSize: '22px',
+    fontWeight: '600',
     color: 'var(--charcoal)',
-    letterSpacing: '-0.5px',
+    letterSpacing: '-0.4px',
+    marginBottom: '6px',
   },
 
-  slideDescription: {
-    margin: '6px 0 0 0',
-    fontSize: '14px',
-    color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-    lineHeight: 1.6,
-    maxWidth: '720px',
-  },
-
-  slideBadges: {
+  slideHeaderMeta: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
     flexWrap: 'wrap',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--stone)',
   },
 
-  slideBadge: {
-    padding: '8px 10px',
+  slideDivider: {
+    color: 'var(--cloud)',
+    fontSize: '12px',
+  },
+
+  slideInlineBadge: {
+    padding: '4px 10px',
     borderRadius: '999px',
-    backgroundColor: 'var(--earth)' + '12',
-    color: 'var(--earth)',
+    backgroundColor: 'var(--cloud)',
+    color: 'var(--charcoal)',
     fontSize: '12px',
     fontFamily: "'Inter', sans-serif",
-    fontWeight: 700,
+    fontWeight: '600',
     textTransform: 'capitalize',
   },
 
-  slideBadgeMuted: {
-    padding: '8px 10px',
-    borderRadius: '999px',
-    backgroundColor: 'var(--cloud)',
-    color: 'var(--stone)',
-    fontSize: '12px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: 600,
-  },
-
-  slideGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
-    gap: '14px',
-    marginTop: '8px',
-  },
-
-  slidePanel: {
-    backgroundColor: '#FFFFFF',
-    border: '1px solid var(--cloud)',
-    borderRadius: '12px',
-    padding: '12px 14px',
-    boxShadow: '0 8px 20px rgba(0,0,0,0.04)',
-  },
-
-  slidePanelTitle: {
-    fontSize: '14px',
-    fontWeight: 700,
-    color: 'var(--charcoal)',
-    margin: '0 0 8px 0',
-    fontFamily: "'Inter', sans-serif",
-    letterSpacing: '0.2px',
-  },
-
-  slideStakeholderList: {
-    listStyle: 'none',
-    padding: 0,
-    margin: 0,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-  },
-
-  slideStakeholder: {
+  slideStakeholdersCompact: {
     display: 'flex',
     alignItems: 'center',
     gap: '10px',
+    flexWrap: 'wrap',
+  },
+
+  slideStakeholderCompact: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+  },
+
+  slideStakeholderName: {
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+    whiteSpace: 'nowrap',
+  },
+
+  slideMainGrid: {
+    display: 'grid',
+    gridTemplateColumns: '1.4fr 1fr',
+    gap: '14px',
+    flex: 1,
+    minHeight: 0,
+  },
+
+  slideMainPanel: {
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '10px',
+    padding: '12px',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+    display: 'flex',
+    flexDirection: 'column',
+    overflow: 'hidden',
+  },
+
+  slideSecondaryPanel: {
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '10px',
+    padding: '12px',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+
+  slideRightColumn: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '14px',
+  },
+
+  slidePanelHeader: {
+    marginBottom: '10px',
+  },
+
+  slidePanelTitle: {
+    fontSize: '11px',
+    fontWeight: '600',
+    color: 'var(--stone)',
+    letterSpacing: '0.5px',
+    textTransform: 'uppercase',
+    margin: 0,
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  slideExecSummary: {
+    fontSize: '13px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    lineHeight: 1.6,
     padding: '8px',
     borderRadius: '10px',
     backgroundColor: 'var(--cloud)' + '30',
