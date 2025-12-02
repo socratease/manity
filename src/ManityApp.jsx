@@ -55,6 +55,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   const [expandedMomentumProjects, setExpandedMomentumProjects] = useState({});
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
+  const [timelineView, setTimelineView] = useState(3); // 3, 6, or 12 months
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDescription, setNewProjectDescription] = useState('');
   const [newProjectPriority, setNewProjectPriority] = useState('medium');
@@ -1595,9 +1596,11 @@ Keep tool calls granular (one discrete change per action), explain each action c
   const renderProjectCard = (project, index) => (
     <div
       key={project.id}
+      onClick={() => setViewingProjectId(project.id)}
       style={{
         ...styles.projectCard,
-        animationDelay: `${index * 100}ms`
+        animationDelay: `${index * 100}ms`,
+        cursor: 'pointer'
       }}
     >
       <div style={styles.cardHeader}>
@@ -1693,7 +1696,10 @@ Keep tool calls granular (one discrete change per action), explain each action c
         <div style={styles.cardFooterActions}>
           {projectDeletionEnabled && (
             <button
-              onClick={() => openDeleteProject(project)}
+              onClick={(e) => {
+                e.stopPropagation();
+                openDeleteProject(project);
+              }}
               style={styles.cardDeleteButton}
               title="Delete project"
             >
@@ -1702,7 +1708,10 @@ Keep tool calls granular (one discrete change per action), explain each action c
             </button>
           )}
           <button
-            onClick={() => setViewingProjectId(project.id)}
+            onClick={(e) => {
+              e.stopPropagation();
+              setViewingProjectId(project.id);
+            }}
             style={styles.cardButton}
           >
             View Details
@@ -1712,6 +1721,157 @@ Keep tool calls granular (one discrete change per action), explain each action c
       </div>
     </div>
   );
+
+  const renderProjectTimeline = (project) => {
+    // Gather all tasks with due dates
+    const tasksWithDueDates = [];
+    project.plan.forEach(task => {
+      task.subtasks.forEach(subtask => {
+        if (subtask.dueDate) {
+          tasksWithDueDates.push({
+            title: subtask.title,
+            dueDate: new Date(subtask.dueDate),
+            status: subtask.status,
+            taskTitle: task.title
+          });
+        }
+      });
+    });
+
+    // Calculate timeline range
+    const now = new Date();
+    const startDate = new Date(now);
+    const endDate = new Date(now);
+    endDate.setMonth(endDate.getMonth() + timelineView);
+
+    // Filter tasks within the timeline range
+    const timelineTasks = tasksWithDueDates
+      .filter(task => task.dueDate >= startDate && task.dueDate <= endDate)
+      .sort((a, b) => a.dueDate - b.dueDate);
+
+    // Calculate position for each task on the timeline
+    const getTaskPosition = (taskDate) => {
+      const totalMs = endDate - startDate;
+      const taskMs = taskDate - startDate;
+      return (taskMs / totalMs) * 100;
+    };
+
+    return (
+      <div style={styles.timelineSection}>
+        <div style={styles.timelineHeader}>
+          <h3 style={styles.timelineSectionTitle}>Project Timeline</h3>
+          <div style={styles.timelineToggle}>
+            <button
+              onClick={() => setTimelineView(3)}
+              style={{
+                ...styles.timelineToggleButton,
+                ...(timelineView === 3 ? styles.timelineToggleButtonActive : {})
+              }}
+            >
+              3 Months
+            </button>
+            <button
+              onClick={() => setTimelineView(6)}
+              style={{
+                ...styles.timelineToggleButton,
+                ...(timelineView === 6 ? styles.timelineToggleButtonActive : {})
+              }}
+            >
+              6 Months
+            </button>
+            <button
+              onClick={() => setTimelineView(12)}
+              style={{
+                ...styles.timelineToggleButton,
+                ...(timelineView === 12 ? styles.timelineToggleButtonActive : {})
+              }}
+            >
+              1 Year
+            </button>
+          </div>
+        </div>
+
+        <div style={styles.timelineContainer}>
+          {/* Callouts above the timeline */}
+          <div style={{ position: 'relative', minHeight: '80px', marginBottom: '8px' }}>
+            {timelineTasks.map((task, idx) => {
+              const position = getTaskPosition(task.dueDate);
+              const isCompleted = task.status === 'completed';
+
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    position: 'absolute',
+                    left: `${position}%`,
+                    bottom: 0,
+                    transform: 'translateX(-50%)',
+                    zIndex: 3,
+                  }}
+                >
+                  <div style={styles.timelineCallout}>
+                    <div style={styles.timelineCalloutTitle}>{task.title}</div>
+                    <div style={styles.timelineCalloutDate}>
+                      {task.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </div>
+                  </div>
+                  {/* Connector line */}
+                  <div style={{
+                    position: 'absolute',
+                    bottom: -8,
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: '1px',
+                    height: '8px',
+                    backgroundColor: isCompleted ? 'var(--earth)' : getPriorityColor(project.priority),
+                    opacity: 0.5,
+                  }} />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Timeline bar */}
+          <div style={styles.timelineBar}>
+            <div style={styles.timelineBarFill} />
+
+            {/* Task markers */}
+            {timelineTasks.map((task, idx) => {
+              const position = getTaskPosition(task.dueDate);
+              const isCompleted = task.status === 'completed';
+
+              return (
+                <div
+                  key={idx}
+                  style={{
+                    ...styles.timelineMarker,
+                    left: `${position}%`
+                  }}
+                >
+                  <div
+                    style={{
+                      ...styles.timelineMarkerDot,
+                      backgroundColor: isCompleted ? 'var(--earth)' : getPriorityColor(project.priority)
+                    }}
+                  />
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Timeline labels */}
+          <div style={styles.timelineLabels}>
+            <span style={styles.timelineLabel}>
+              {startDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+            </span>
+            <span style={styles.timelineLabel}>
+              {endDate.toLocaleDateString('en-US', { month: 'short', year: 'numeric' })}
+            </span>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   return (
     <>
@@ -2214,6 +2374,9 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 )}
               </div>
             </div>
+
+            {/* Project Timeline */}
+            {renderProjectTimeline(viewingProject)}
 
             {/* Compact Info Bar */}
             <div style={styles.compactInfoBar}>
@@ -4233,6 +4396,139 @@ const styles = {
     height: '100%',
     transition: 'width 0.6s cubic-bezier(0.4, 0, 0.2, 1)',
     borderRadius: '4px',
+  },
+
+  // Timeline styles
+  timelineSection: {
+    marginBottom: '32px',
+    padding: '24px',
+    backgroundColor: '#FFFFFF',
+    borderRadius: '12px',
+    border: '1px solid var(--cloud)',
+  },
+
+  timelineHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: '24px',
+  },
+
+  timelineSectionTitle: {
+    fontSize: '16px',
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+    margin: 0,
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  timelineToggle: {
+    display: 'flex',
+    gap: '8px',
+    backgroundColor: 'var(--cream)',
+    padding: '4px',
+    borderRadius: '8px',
+  },
+
+  timelineToggleButton: {
+    padding: '6px 16px',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '500',
+    color: 'var(--stone)',
+    backgroundColor: 'transparent',
+    border: 'none',
+    borderRadius: '6px',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+
+  timelineToggleButtonActive: {
+    backgroundColor: '#FFFFFF',
+    color: 'var(--charcoal)',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
+  },
+
+  timelineContainer: {
+    position: 'relative',
+  },
+
+  timelineBar: {
+    position: 'relative',
+    height: '8px',
+    backgroundColor: 'var(--cloud)',
+    borderRadius: '4px',
+    marginBottom: '12px',
+  },
+
+  timelineBarFill: {
+    position: 'absolute',
+    left: 0,
+    top: 0,
+    width: '100%',
+    height: '100%',
+    background: 'linear-gradient(90deg, var(--cloud) 0%, var(--earth) 100%)',
+    borderRadius: '4px',
+    opacity: 0.3,
+  },
+
+  timelineMarker: {
+    position: 'absolute',
+    top: '50%',
+    transform: 'translate(-50%, -50%)',
+    zIndex: 2,
+  },
+
+  timelineMarkerDot: {
+    width: '12px',
+    height: '12px',
+    borderRadius: '50%',
+    border: '2px solid #FFFFFF',
+    boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+
+  timelineCallout: {
+    position: 'absolute',
+    bottom: '20px',
+    left: '50%',
+    transform: 'translateX(-50%)',
+    minWidth: '120px',
+    padding: '8px 12px',
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
+    whiteSpace: 'nowrap',
+    textAlign: 'center',
+  },
+
+  timelineCalloutTitle: {
+    fontSize: '13px',
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+    marginBottom: '2px',
+  },
+
+  timelineCalloutDate: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  timelineLabels: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    marginTop: '8px',
+  },
+
+  timelineLabel: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '500',
   },
 
   updateSection: {
