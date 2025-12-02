@@ -185,6 +185,12 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     }
   };
 
+  const formatStakeholderNames = (stakeholders = []) => {
+    const names = stakeholders.map(person => person.name);
+    if (names.length <= 2) return names.join(', ');
+    return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
+  };
+
   const handleImportChange = async (event) => {
     const file = event.target.files?.[0];
     if (!file) return;
@@ -4091,9 +4097,31 @@ Keep tool calls granular (one discrete change per action), explain each action c
             ) : (
               (() => {
                 const slideDueSoon = getProjectDueSoonTasks(slideProject).slice(0, 5);
-                const slideRecent = slideProject.recentActivity.slice(0, 5);
+                const slideRecent = slideProject.recentActivity.slice(0, 4);
                 return (
                   <div style={styles.slideStage}>
+                    <div style={styles.slideControlRail}>
+                      <button
+                        onClick={() => generateExecSummary(slideProject.id)}
+                        style={{
+                          ...styles.slideControlButton,
+                          opacity: isGeneratingSummary ? 0.5 : 1,
+                        }}
+                        disabled={isGeneratingSummary || !apiKey}
+                        title={!apiKey ? 'API key required' : 'AI generate summary'}
+                      >
+                        <Sparkles size={14} />
+                        <span>AI generate</span>
+                      </button>
+                      <button
+                        onClick={() => startEditingExecSummary(slideProject.id, slideProject.description)}
+                        style={styles.slideControlButton}
+                        title="Edit summary"
+                      >
+                        <Edit2 size={14} />
+                        <span>Edit</span>
+                      </button>
+                    </div>
                     <div style={styles.slideSurface}>
                       <div style={styles.slideSurfaceInner}>
                         {/* Header with name, description subtitle, and project details */}
@@ -4120,12 +4148,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
                               <>
                                 <span style={styles.slideDivider}>•</span>
                                 <Users size={14} style={{ color: 'var(--stone)', marginLeft: '4px' }} />
-                                <div style={{ display: 'flex', gap: '6px', marginLeft: '4px' }}>
-                                  {slideProject.stakeholders.map(person => (
-                                    <div key={person.name} style={styles.activityAvatar} title={`${person.name} (${person.team})`}>
-                                      {person.name.split(' ').map(n => n[0]).join('')}
-                                    </div>
-                                  ))}
+                                <div style={styles.slideStakeholderNames}>
+                                  {formatStakeholderNames(slideProject.stakeholders)}
                                 </div>
                               </>
                             )}
@@ -4137,29 +4161,9 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           {/* Left column - Executive summary and recent updates */}
                           <div style={styles.slideMainPanel}>
                             {/* Executive summary - editable */}
-                            <div style={styles.slideSecondaryPanel}>
+                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideExecSummaryPanel }}>
                               <div style={styles.slidePanelHeader}>
                                 <div style={styles.slidePanelTitle}>Executive summary</div>
-                                <div style={{ display: 'flex', gap: '8px' }}>
-                                  <button
-                                    onClick={() => generateExecSummary(slideProject.id)}
-                                    style={{
-                                      ...styles.iconButton,
-                                      opacity: isGeneratingSummary ? 0.5 : 1
-                                    }}
-                                    disabled={isGeneratingSummary || !apiKey}
-                                    title={!apiKey ? 'API key required' : 'AI generate summary'}
-                                  >
-                                    <Sparkles size={14} />
-                                  </button>
-                                  <button
-                                    onClick={() => startEditingExecSummary(slideProject.id, slideProject.description)}
-                                    style={styles.iconButton}
-                                    title="Edit summary"
-                                  >
-                                    <Edit2 size={14} />
-                                  </button>
-                                </div>
                               </div>
                               {editingExecSummary === slideProject.id ? (
                                 <div>
@@ -4193,32 +4197,34 @@ Keep tool calls granular (one discrete change per action), explain each action c
                             </div>
 
                             {/* Recent updates */}
-                            <div style={{ marginTop: '16px' }}>
+                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideUpdatesPanel }}>
                               <div style={styles.slidePanelHeader}>
                                 <div style={styles.slidePanelTitle}>Recent updates</div>
                               </div>
-                              {slideRecent.length > 0 ? (
-                                <ul style={styles.momentumList}>
-                                  {slideRecent.map((activity, idx) => (
-                                    <li key={activity.id || idx} style={styles.momentumListItem}>
-                                      <div style={styles.momentumListRow}>
-                                        <span style={styles.momentumListStrong}>{activity.author}</span>
-                                        <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
-                                      </div>
-                                      <div style={styles.momentumListText}>{activity.note}</div>
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : (
-                                <div style={styles.momentumEmptyText}>No updates yet.</div>
-                              )}
+                              <div style={styles.slideUpdatesContent}>
+                                {slideRecent.length > 0 ? (
+                                  <ul style={styles.momentumList}>
+                                    {slideRecent.map((activity, idx) => (
+                                      <li key={activity.id || idx} style={styles.momentumListItem}>
+                                        <div style={styles.momentumListRow}>
+                                          <span style={styles.momentumListStrong}>{activity.author}</span>
+                                          <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
+                                        </div>
+                                        <div style={styles.momentumListText}>{activity.note}</div>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <div style={styles.momentumEmptyText}>No updates yet.</div>
+                                )}
+                              </div>
                             </div>
                           </div>
 
                           {/* Right column - Tasks */}
                           <div style={styles.slideRightColumn}>
                             {/* Due soon tasks */}
-                            <div style={styles.slideSecondaryPanel}>
+                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel }}>
                               <div style={styles.slidePanelHeader}>
                                 <div style={styles.slidePanelTitle}>Due soon or overdue</div>
                               </div>
@@ -7326,6 +7332,34 @@ const styles = {
     display: 'flex',
     justifyContent: 'center',
     padding: '12px 0',
+    position: 'relative',
+  },
+
+  slideControlRail: {
+    position: 'absolute',
+    left: '-84px',
+    top: '30px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+    zIndex: 2,
+  },
+
+  slideControlButton: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 10px',
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    backgroundColor: '#fff',
+    color: 'var(--stone)',
+    cursor: 'pointer',
+    boxShadow: '0 6px 14px rgba(0,0,0,0.08)',
+    fontSize: '12px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
+    transition: 'all 0.2s ease',
   },
 
   slideSurface: {
@@ -7379,11 +7413,10 @@ const styles = {
 
   slideSubtitle: {
     margin: 0,
-    fontSize: '13px',
-    fontWeight: '400',
-    color: 'var(--stone)',
-    fontStyle: 'italic',
-    lineHeight: '1.4',
+    fontSize: '14px',
+    fontWeight: '500',
+    color: 'var(--charcoal)',
+    lineHeight: '1.5',
   },
 
   slideHeaderMeta: {
@@ -7433,12 +7466,21 @@ const styles = {
     whiteSpace: 'nowrap',
   },
 
+  slideStakeholderNames: {
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+    marginLeft: '2px',
+  },
+
   slideMainGrid: {
     display: 'grid',
     gridTemplateColumns: '1.4fr 1fr',
     gap: '14px',
     flex: 1,
     minHeight: 0,
+    alignItems: 'stretch',
   },
 
   slideMainPanel: {
@@ -7449,6 +7491,7 @@ const styles = {
     boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
     display: 'flex',
     flexDirection: 'column',
+    gap: '14px',
     overflow: 'hidden',
   },
 
@@ -7465,6 +7508,7 @@ const styles = {
   slideRightColumn: {
     display: 'flex',
     flexDirection: 'column',
+    height: '100%',
     gap: '14px',
   },
 
@@ -7490,6 +7534,27 @@ const styles = {
     padding: '8px',
     borderRadius: '10px',
     backgroundColor: 'var(--cloud)' + '30',
+  },
+
+  slideExecSummaryPanel: {
+    flexShrink: 0,
+  },
+
+  slideUpdatesPanel: {
+    flex: 1,
+    minHeight: '0',
+  },
+
+  slideUpdatesContent: {
+    maxHeight: '220px',
+    overflow: 'hidden',
+  },
+
+  slideTasksPanel: {
+    background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8F2 100%)',
+    borderColor: 'var(--sage)',
+    boxShadow: '0 6px 16px rgba(0,0,0,0.06)',
+    height: '100%',
   },
 
   iconButton: {
