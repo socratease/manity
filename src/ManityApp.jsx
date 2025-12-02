@@ -643,8 +643,22 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   };
 
   const startEditingExecSummary = (projectId, currentDescription) => {
-    setEditingExecSummary(projectId);
-    setExecSummaryDraft(currentDescription || '');
+    // If already editing this project, save and exit edit mode
+    if (editingExecSummary === projectId) {
+      setProjects(prevProjects =>
+        prevProjects.map(project =>
+          project.id === projectId
+            ? { ...project, description: execSummaryDraft }
+            : project
+        )
+      );
+      setEditingExecSummary(null);
+      setExecSummaryDraft('');
+    } else {
+      // Start editing
+      setEditingExecSummary(projectId);
+      setExecSummaryDraft(currentDescription || '');
+    }
   };
 
   const saveExecSummary = (projectId) => {
@@ -4096,8 +4110,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
               <div style={styles.emptyState}>No visible projects to show.</div>
             ) : (
               (() => {
-                const slideDueSoon = getProjectDueSoonTasks(slideProject).slice(0, 5);
-                const slideRecent = slideProject.recentActivity.slice(0, 4);
+                const slideDueSoon = getProjectDueSoonTasks(slideProject).slice(0, 3);
+                const slideRecent = slideProject.recentActivity.slice(0, 3);
                 return (
                   <div style={styles.slideStage}>
                     <div style={styles.slideControlRail}>
@@ -4116,10 +4130,10 @@ Keep tool calls granular (one discrete change per action), explain each action c
                       <button
                         onClick={() => startEditingExecSummary(slideProject.id, slideProject.description)}
                         style={styles.slideControlButton}
-                        title="Edit summary"
+                        title={editingExecSummary === slideProject.id ? "Save summary" : "Edit summary"}
                       >
                         <Edit2 size={14} />
-                        <span>Edit</span>
+                        <span>{editingExecSummary === slideProject.id ? "Save" : "Edit"}</span>
                       </button>
                     </div>
                     <div style={styles.slideSurface}>
@@ -4166,29 +4180,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                 <div style={styles.slidePanelTitle}>Executive summary</div>
                               </div>
                               {editingExecSummary === slideProject.id ? (
-                                <div>
-                                  <textarea
-                                    value={execSummaryDraft}
-                                    onChange={(e) => setExecSummaryDraft(e.target.value)}
-                                    style={styles.execSummaryInput}
-                                    placeholder="Write executive summary..."
-                                    autoFocus
-                                  />
-                                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                                    <button
-                                      onClick={() => saveExecSummary(slideProject.id)}
-                                      style={styles.commentSubmit}
-                                    >
-                                      Save
-                                    </button>
-                                    <button
-                                      onClick={() => setEditingExecSummary(null)}
-                                      style={styles.commentCancel}
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </div>
+                                <textarea
+                                  value={execSummaryDraft}
+                                  onChange={(e) => setExecSummaryDraft(e.target.value)}
+                                  style={styles.execSummaryInput}
+                                  placeholder="Write executive summary..."
+                                  autoFocus
+                                />
                               ) : (
                                 <div style={styles.slideExecSummary}>
                                   {slideProject.description || 'No executive summary yet.'}
@@ -7541,13 +7539,14 @@ const styles = {
   },
 
   slideUpdatesPanel: {
-    flex: 1,
-    minHeight: '0',
+    maxHeight: '280px',
+    overflow: 'hidden',
   },
 
   slideUpdatesContent: {
-    maxHeight: '220px',
     overflow: 'hidden',
+    display: 'flex',
+    flexDirection: 'column',
   },
 
   slideTasksPanel: {
