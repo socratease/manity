@@ -69,6 +69,107 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   const [focusedField, setFocusedField] = useState(null);
   const supportedMomentumActions = ['comment', 'add_task', 'update_task', 'add_subtask', 'update_subtask', 'update_project'];
 
+  // JSON Schema for structured output - ensures LLM returns properly formatted actions
+  const momentumResponseSchema = {
+    type: "json_schema",
+    json_schema: {
+      name: "momentum_response",
+      strict: true,
+      schema: {
+        type: "object",
+        properties: {
+          response: {
+            type: "string",
+            description: "The assistant's message to the user"
+          },
+          actions: {
+            type: "array",
+            description: "Array of atomic actions to perform",
+            items: {
+              type: "object",
+              properties: {
+                type: {
+                  type: "string",
+                  enum: ["comment", "add_task", "update_task", "add_subtask", "update_subtask", "update_project"],
+                  description: "The type of action"
+                },
+                projectId: {
+                  type: "string",
+                  description: "Project ID or name to target"
+                },
+                projectName: {
+                  type: "string",
+                  description: "Project name (alternative to projectId)"
+                },
+                note: {
+                  type: "string",
+                  description: "Comment content (for comment action)"
+                },
+                content: {
+                  type: "string",
+                  description: "Alternative to note for comment action"
+                },
+                author: {
+                  type: "string",
+                  description: "Author of the comment"
+                },
+                title: {
+                  type: "string",
+                  description: "Task or subtask title"
+                },
+                taskId: {
+                  type: "string",
+                  description: "Task ID to target"
+                },
+                taskTitle: {
+                  type: "string",
+                  description: "Task title (alternative to taskId)"
+                },
+                subtaskId: {
+                  type: "string",
+                  description: "Subtask ID to target"
+                },
+                subtaskTitle: {
+                  type: "string",
+                  description: "Subtask title (alternative to subtaskId)"
+                },
+                status: {
+                  type: "string",
+                  enum: ["todo", "in-progress", "completed", "planning", "active", "on-hold", "cancelled"],
+                  description: "Status of task, subtask, or project"
+                },
+                dueDate: {
+                  type: "string",
+                  description: "Due date in ISO format"
+                },
+                completedDate: {
+                  type: "string",
+                  description: "Completion date in ISO format"
+                },
+                progress: {
+                  type: "number",
+                  description: "Progress percentage (0-100)"
+                },
+                targetDate: {
+                  type: "string",
+                  description: "Target completion date for project"
+                },
+                lastUpdate: {
+                  type: "string",
+                  description: "Last update timestamp"
+                }
+              },
+              required: ["type"],
+              additionalProperties: false
+            }
+          }
+        },
+        required: ["response", "actions"],
+        additionalProperties: false
+      }
+    }
+  };
+
   const triggerImport = () => {
     if (importInputRef.current) {
       importInputRef.current.click();
@@ -696,6 +797,8 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   };
 
   const parseAssistantResponse = (content) => {
+    // With structured output, content should already be valid JSON
+    // but we still handle markdown code blocks as fallback
     const match = content.match(/```json\s*([\s\S]*?)```/);
     const maybeJson = match ? match[1] : content;
 
@@ -706,6 +809,9 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
         actions: Array.isArray(parsed.actions) ? parsed.actions : []
       };
     } catch (error) {
+      console.error('Failed to parse LLM response as JSON:', error, 'Content:', content);
+      // Return content as display message with empty actions
+      // The validation will catch any issues with missing actions
       return { display: content, actions: [] };
     }
   };
@@ -1154,7 +1260,11 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
 
   const requestMomentumActions = async (messages, attempt = 1) => {
     const maxAttempts = 3;
-    const { content } = await callOpenAIChat({ apiKey, messages });
+    const { content } = await callOpenAIChat({
+      apiKey,
+      messages,
+      responseFormat: momentumResponseSchema
+    });
     const parsed = parseAssistantResponse(content);
     const { validActions, errors } = validateThrustActions(parsed.actions);
 
