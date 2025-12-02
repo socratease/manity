@@ -1862,7 +1862,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
               />
 
               {renderEditingHint('daily-checkin')}
-              {renderCtrlEnterHint('submit update')}
 
               <div style={styles.modalActions}>
                 <button
@@ -3235,7 +3234,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                             style={styles.momentumProjectToggle}
                             onClick={() => setExpandedMomentumProjects(prev => ({
                               ...prev,
-                              [project.id]: !prev[project.id]
+                              [project.id]: !(prev[project.id] ?? true)
                             }))}
                             type="button"
                             aria-expanded={isExpanded}
@@ -3457,29 +3456,33 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 </p>
               </div>
               <div style={styles.headerActions}>
-                <button
-                  onClick={() => setShowNewProject(prev => !prev)}
-                  style={styles.newProjectButton}
-                >
-                  <Plus size={18} />
-                  New Project
-                </button>
-                <div style={styles.lockHint}>
-                  <span style={styles.lockHintTitle}>Delete projects</span>
-                  <span style={styles.lockHintSubtitle}>Unlock to enable deletion</span>
+                <div style={styles.primaryActionGroup}>
+                  <button
+                    onClick={() => setShowNewProject(prev => !prev)}
+                    style={styles.newProjectButton}
+                  >
+                    <Plus size={18} />
+                    New Project
+                  </button>
                 </div>
-                <button
-                  onClick={() => setProjectDeletionEnabled(prev => !prev)}
-                  style={{
-                    ...styles.activityLockButton,
-                    backgroundColor: projectDeletionEnabled ? 'var(--coral)' + '12' : '#FFFFFF',
-                    borderColor: projectDeletionEnabled ? 'var(--coral)' : 'var(--cloud)',
-                    color: projectDeletionEnabled ? 'var(--coral)' : 'var(--charcoal)'
-                  }}
-                  title={projectDeletionEnabled ? 'Lock to disable project deletion' : 'Unlock to delete projects'}
-                >
-                  {projectDeletionEnabled ? <Unlock size={18} /> : <Lock size={18} />}
-                </button>
+                <div style={styles.lockControlGroup}>
+                  <div style={styles.lockHint}>
+                    <span style={styles.lockHintTitle}>Delete projects</span>
+                    <span style={styles.lockHintSubtitle}>Unlock to enable deletion</span>
+                  </div>
+                  <button
+                    onClick={() => setProjectDeletionEnabled(prev => !prev)}
+                    style={{
+                      ...styles.activityLockButton,
+                      backgroundColor: projectDeletionEnabled ? 'var(--coral)' + '12' : '#FFFFFF',
+                      borderColor: projectDeletionEnabled ? 'var(--coral)' : 'var(--cloud)',
+                      color: projectDeletionEnabled ? 'var(--coral)' : 'var(--charcoal)'
+                    }}
+                    title={projectDeletionEnabled ? 'Lock to disable project deletion' : 'Unlock to delete projects'}
+                  >
+                    {projectDeletionEnabled ? <Unlock size={18} /> : <Lock size={18} />}
+                  </button>
+                </div>
               </div>
             </header>
 
@@ -3568,7 +3571,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     />
                   </div>
                 </div>
-                {renderCtrlEnterHint('create project')}
                 <div style={styles.newProjectActions}>
                   <button
                     onClick={handleCreateProject}
@@ -3771,21 +3773,21 @@ const styles = {
   },
 
   newProjectButton: {
-    width: '100%',
-    padding: '12px 16px',
-    border: '2px dashed var(--cloud)',
-    backgroundColor: 'transparent',
-    color: 'var(--earth)',
+    padding: '12px 18px',
+    border: '1px solid var(--earth)',
+    backgroundColor: 'var(--earth)',
+    color: '#FFFFFF',
     fontSize: '15px',
     fontFamily: "'Inter', sans-serif",
     cursor: 'pointer',
-    borderRadius: '8px',
+    borderRadius: '999px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
     gap: '8px',
     transition: 'all 0.2s ease',
-    fontWeight: '500',
+    fontWeight: '700',
+    boxShadow: '0 10px 30px rgba(139, 111, 71, 0.25)',
   },
 
   settingsIconButton: {
@@ -4015,6 +4017,68 @@ const styles = {
     fontSize: '12px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
+  },
+
+  newProjectPanel: {
+    marginTop: '16px',
+    padding: '20px 24px',
+    borderRadius: '16px',
+    border: '1px solid var(--cloud)',
+    background: 'linear-gradient(135deg, #FFFFFF 0%, #F7F1E9 100%)',
+    boxShadow: '0 16px 40px rgba(0, 0, 0, 0.06)',
+  },
+
+  newProjectFormGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))',
+    gap: '14px 16px',
+    marginTop: '12px',
+  },
+
+  formField: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+
+  formLabel: {
+    fontSize: '13px',
+    fontWeight: '700',
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+    letterSpacing: '0.2px',
+  },
+
+  input: {
+    width: '100%',
+    padding: '10px 12px',
+    borderRadius: '10px',
+    border: '1px solid var(--cloud)',
+    backgroundColor: '#FFFFFF',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+    boxShadow: '0 6px 18px rgba(0,0,0,0.03)',
+  },
+
+  select: {
+    width: '100%',
+    padding: '10px 12px',
+    borderRadius: '10px',
+    border: '1px solid var(--cloud)',
+    backgroundColor: '#FFFFFF',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    boxShadow: '0 6px 18px rgba(0,0,0,0.03)',
+  },
+
+  newProjectActions: {
+    marginTop: '12px',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
   },
 
   projectsGrid: {
@@ -5218,6 +5282,23 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
+  },
+
+  primaryActionGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+
+  lockControlGroup: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '10px 12px',
+    border: '1px solid var(--cloud)',
+    borderRadius: '12px',
+    backgroundColor: '#FFFFFF',
+    boxShadow: '0 8px 24px rgba(58, 54, 49, 0.06)',
   },
 
   editButton: {
