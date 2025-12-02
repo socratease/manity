@@ -67,6 +67,15 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   ];
   const [loggedInUser, setLoggedInUser] = useState('');
   const [focusedField, setFocusedField] = useState(null);
+  const [taskEditEnabled, setTaskEditEnabled] = useState(false);
+  const [editingTask, setEditingTask] = useState(null);
+  const [editingTaskTitle, setEditingTaskTitle] = useState('');
+  const [editingSubtask, setEditingSubtask] = useState(null);
+  const [editingSubtaskTitle, setEditingSubtaskTitle] = useState('');
+  const [editingExecSummary, setEditingExecSummary] = useState(null);
+  const [execSummaryDraft, setExecSummaryDraft] = useState('');
+  const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [hoveredTimelineGroup, setHoveredTimelineGroup] = useState(null);
   const supportedMomentumActions = ['comment', 'add_task', 'update_task', 'add_subtask', 'update_subtask', 'update_project'];
 
   // JSON Schema for structured output - ensures LLM returns properly formatted actions
@@ -524,6 +533,170 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
       ));
       setSubtaskComment('');
       setCommentingOn(null);
+    }
+  };
+
+  const toggleTaskEditing = () => {
+    setTaskEditEnabled(prev => !prev);
+    if (taskEditEnabled) {
+      setEditingTask(null);
+      setEditingSubtask(null);
+    }
+  };
+
+  const deleteTask = (taskId) => {
+    setProjects(prevProjects =>
+      prevProjects.map(project =>
+        project.id === viewingProjectId
+          ? {
+              ...project,
+              plan: project.plan.filter(task => task.id !== taskId)
+            }
+          : project
+      )
+    );
+  };
+
+  const deleteSubtask = (taskId, subtaskId) => {
+    setProjects(prevProjects =>
+      prevProjects.map(project =>
+        project.id === viewingProjectId
+          ? {
+              ...project,
+              plan: project.plan.map(task =>
+                task.id === taskId
+                  ? {
+                      ...task,
+                      subtasks: task.subtasks.filter(st => st.id !== subtaskId)
+                    }
+                  : task
+              )
+            }
+          : project
+      )
+    );
+  };
+
+  const startEditingTask = (taskId, currentTitle) => {
+    setEditingTask(taskId);
+    setEditingTaskTitle(currentTitle);
+  };
+
+  const saveTaskEdit = (taskId) => {
+    if (editingTaskTitle.trim()) {
+      setProjects(prevProjects =>
+        prevProjects.map(project =>
+          project.id === viewingProjectId
+            ? {
+                ...project,
+                plan: project.plan.map(task =>
+                  task.id === taskId
+                    ? { ...task, title: editingTaskTitle }
+                    : task
+                )
+              }
+            : project
+        )
+      );
+    }
+    setEditingTask(null);
+    setEditingTaskTitle('');
+  };
+
+  const startEditingSubtask = (subtaskId, currentTitle) => {
+    setEditingSubtask(subtaskId);
+    setEditingSubtaskTitle(currentTitle);
+  };
+
+  const saveSubtaskEdit = (taskId, subtaskId) => {
+    if (editingSubtaskTitle.trim()) {
+      setProjects(prevProjects =>
+        prevProjects.map(project =>
+          project.id === viewingProjectId
+            ? {
+                ...project,
+                plan: project.plan.map(task =>
+                  task.id === taskId
+                    ? {
+                        ...task,
+                        subtasks: task.subtasks.map(st =>
+                          st.id === subtaskId
+                            ? { ...st, title: editingSubtaskTitle }
+                            : st
+                        )
+                      }
+                    : task
+                )
+              }
+            : project
+        )
+      );
+    }
+    setEditingSubtask(null);
+    setEditingSubtaskTitle('');
+  };
+
+  const startEditingExecSummary = (projectId, currentDescription) => {
+    setEditingExecSummary(projectId);
+    setExecSummaryDraft(currentDescription || '');
+  };
+
+  const saveExecSummary = (projectId) => {
+    setProjects(prevProjects =>
+      prevProjects.map(project =>
+        project.id === projectId
+          ? { ...project, description: execSummaryDraft }
+          : project
+      )
+    );
+    setEditingExecSummary(null);
+    setExecSummaryDraft('');
+  };
+
+  const generateExecSummary = async (projectId) => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project || !apiKey) return;
+
+    setIsGeneratingSummary(true);
+    try {
+      // Gather recent and upcoming project data
+      const recentActivities = project.recentActivity.slice(0, 10).map(a => a.note).join('; ');
+      const upcomingTasks = project.plan
+        .flatMap(task => task.subtasks)
+        .filter(st => {
+          const dueDate = new Date(st.dueDate);
+          const now = new Date();
+          return dueDate > now;
+        })
+        .slice(0, 10)
+        .map(st => st.title)
+        .join('; ');
+
+      const prompt = `Based on this project data, write a concise 2-3 sentence executive summary:
+
+Project: ${project.name}
+Status: ${project.status}
+Priority: ${project.priority}
+Recent Activities: ${recentActivities || 'None'}
+Upcoming Tasks: ${upcomingTasks || 'None'}
+
+Write a professional executive summary that highlights the project's current state and key activities.`;
+
+      const response = await callOpenAIChat(apiKey, [
+        { role: 'user', content: prompt }
+      ]);
+
+      setProjects(prevProjects =>
+        prevProjects.map(p =>
+          p.id === projectId
+            ? { ...p, description: response }
+            : p
+        )
+      );
+    } catch (error) {
+      console.error('Error generating summary:', error);
+    } finally {
+      setIsGeneratingSummary(false);
     }
   };
 
@@ -1923,6 +2096,55 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
     const taskPositions = assignVerticalPositions(timelineTasks);
 
+    // Group tasks that are very close together
+    const groupTasks = (positions) => {
+      const groupThreshold = 8; // Group tasks within 8% of timeline
+      const maxItemsBeforeGrouping = 2; // Show up to 2 items, then "+N more"
+      const groups = [];
+      const sorted = [...positions].sort((a, b) => a.position - b.position);
+
+      let currentGroup = null;
+
+      for (let i = 0; i < sorted.length; i++) {
+        const current = sorted[i];
+
+        if (!currentGroup) {
+          currentGroup = {
+            items: [current],
+            position: current.position,
+            isAbove: current.isAbove
+          };
+        } else {
+          const distance = current.position - currentGroup.position;
+
+          if (distance < groupThreshold && current.isAbove === currentGroup.isAbove) {
+            // Add to current group
+            currentGroup.items.push(current);
+          } else {
+            // Save current group and start new one
+            groups.push(currentGroup);
+            currentGroup = {
+              items: [current],
+              position: current.position,
+              isAbove: current.isAbove
+            };
+          }
+        }
+      }
+
+      if (currentGroup) {
+        groups.push(currentGroup);
+      }
+
+      return groups.map((group, groupIdx) => ({
+        ...group,
+        id: `group-${groupIdx}`,
+        isGrouped: group.items.length > maxItemsBeforeGrouping
+      }));
+    };
+
+    const taskGroups = groupTasks(taskPositions);
+
     return (
       <div style={styles.timelineSection}>
         <div style={styles.timelineHeader}>
@@ -1985,34 +2207,39 @@ Keep tool calls granular (one discrete change per action), explain each action c
               </div>
             ))}
 
-            {/* Task markers */}
-            {taskPositions.map(({ task, position, idx, verticalOffset, isAbove }) => {
-              const isCompleted = task.status === 'completed';
-              const lineHeight = 20 + (verticalOffset * 12);
+            {/* Task markers - now with grouping support */}
+            {taskGroups.map((group) => {
+              const { items, position, isAbove, id, isGrouped } = group;
+              const firstItem = items[0];
+              const isCompleted = items.every(item => item.task.status === 'completed');
+              const lineHeight = 20 + (firstItem.verticalOffset * 12);
+              const isHovered = hoveredTimelineGroup === id;
+              const maxItemsBeforeGrouping = 2;
 
               return (
                 <div
-                  key={idx}
+                  key={id}
                   style={{
                     ...styles.timelineMarker,
                     left: `${position}%`
                   }}
+                  onMouseEnter={() => setHoveredTimelineGroup(id)}
+                  onMouseLeave={() => setHoveredTimelineGroup(null)}
                 >
                   <div
                     style={{
                       ...styles.timelineMarkerDot,
-                      backgroundColor: isCompleted ? 'var(--earth)' : getPriorityColor(project.priority)
+                      backgroundColor: isCompleted ? 'var(--earth)' : 'var(--amber)'
                     }}
                   />
 
-                  {/* Connector line - positioned above or below */}
+                  {/* Connector line - positioned above or below, pointing to left edge */}
                   <div style={{
                     position: 'absolute',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
+                    left: '0',
                     width: '1px',
                     height: `${lineHeight}px`,
-                    backgroundColor: isCompleted ? 'var(--earth)' : getPriorityColor(project.priority),
+                    backgroundColor: isCompleted ? 'var(--earth)' : 'var(--amber)',
                     opacity: 0.3,
                     ...(isAbove
                       ? { bottom: '6px' }
@@ -2020,32 +2247,80 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     )
                   }} />
 
-                  {/* Callout text - single line */}
+                  {/* Callout text - with overflow handling and grouping */}
                   <div style={{
                     position: 'absolute',
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    whiteSpace: 'nowrap',
+                    left: '0',
+                    maxWidth: isHovered && isGrouped ? '200px' : '150px',
                     fontSize: '11px',
                     fontFamily: "'Inter', sans-serif",
+                    padding: '4px 8px',
+                    backgroundColor: '#FFFFFF',
+                    border: '1px solid var(--cloud)',
+                    borderRadius: '4px',
+                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                    cursor: isGrouped ? 'pointer' : 'default',
+                    transition: 'all 0.2s ease',
+                    zIndex: isHovered ? 10 : 1,
                     ...(isAbove
                       ? { bottom: `${lineHeight + 6}px` }
                       : { top: `${lineHeight + 6}px` }
                     )
                   }}>
-                    <span style={{
-                      color: 'var(--charcoal)',
-                      fontWeight: '600',
-                    }}>
-                      {task.title}
-                    </span>
-                    <span style={{
-                      color: 'var(--stone)',
-                      fontWeight: '400',
-                      marginLeft: '6px'
-                    }}>
-                      {task.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    </span>
+                    {isHovered && isGrouped ? (
+                      // Show all items on hover
+                      <div>
+                        {items.map((item, itemIdx) => (
+                          <div key={itemIdx} style={{ marginBottom: itemIdx < items.length - 1 ? '4px' : '0' }}>
+                            <span style={{
+                              color: 'var(--charcoal)',
+                              fontWeight: '600',
+                              display: 'block',
+                              overflow: 'hidden',
+                              textOverflow: 'ellipsis',
+                              whiteSpace: 'nowrap'
+                            }}>
+                              {item.task.title}
+                            </span>
+                            <span style={{
+                              color: 'var(--stone)',
+                              fontWeight: '400',
+                              fontSize: '10px'
+                            }}>
+                              {item.task.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      // Show summary or individual items
+                      <div style={{
+                        overflow: 'hidden',
+                        textOverflow: 'ellipsis',
+                        whiteSpace: 'nowrap'
+                      }}>
+                        {items.slice(0, maxItemsBeforeGrouping).map((item, itemIdx) => (
+                          <span key={itemIdx}>
+                            <span style={{
+                              color: 'var(--charcoal)',
+                              fontWeight: '600',
+                            }}>
+                              {item.task.title}
+                            </span>
+                            {itemIdx < Math.min(maxItemsBeforeGrouping, items.length) - 1 && ', '}
+                          </span>
+                        ))}
+                        {isGrouped && (
+                          <span style={{
+                            color: 'var(--earth)',
+                            fontWeight: '600',
+                            marginLeft: '4px'
+                          }}>
+                            +{items.length - maxItemsBeforeGrouping} more
+                          </span>
+                        )}
+                      </div>
+                    )}
                   </div>
                 </div>
               );
@@ -2714,11 +2989,20 @@ Keep tool calls granular (one discrete change per action), explain each action c
             <div style={styles.mainContentGrid}>
               {/* Left: Project Plan */}
               <div style={styles.planSection}>
-                <div style={styles.sectionHeader}>
-                  <h3 style={styles.sectionTitle}>Project Plan</h3>
-                  <span style={styles.sectionSubtitle}>
-                    {viewingProject.plan.reduce((acc, task) => acc + task.subtasks.length, 0)} total tasks
-                  </span>
+                <div style={styles.sectionHeaderCompact}>
+                  <div>
+                    <h3 style={styles.sectionTitle}>Project Plan</h3>
+                    <span style={styles.sectionSubtitle}>
+                      {viewingProject.plan.reduce((acc, task) => acc + task.subtasks.length, 0)} total tasks
+                    </span>
+                  </div>
+                  <button
+                    onClick={toggleTaskEditing}
+                    style={styles.activityLockButton}
+                    title={taskEditEnabled ? 'Lock to disable editing tasks' : 'Unlock to edit tasks'}
+                  >
+                    {taskEditEnabled ? <Unlock size={18} /> : <Lock size={18} />}
+                  </button>
                 </div>
 
                 <div style={styles.planList}>
@@ -2738,7 +3022,22 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           >
                             <div style={styles.taskHeaderLeft}>
                               {getStatusIcon(task.status)}
-                              <span style={styles.taskTitle}>{task.title}</span>
+                              {editingTask === task.id ? (
+                                <input
+                                  type="text"
+                                  value={editingTaskTitle}
+                                  onChange={(e) => setEditingTaskTitle(e.target.value)}
+                                  onBlur={() => saveTaskEdit(task.id)}
+                                  onKeyPress={(e) => {
+                                    if (e.key === 'Enter') saveTaskEdit(task.id);
+                                  }}
+                                  onClick={(e) => e.stopPropagation()}
+                                  style={styles.taskTitleInput}
+                                  autoFocus
+                                />
+                              ) : (
+                                <span style={styles.taskTitle}>{task.title}</span>
+                              )}
                               {isEditingTaskDate ? (
                                 <input
                                   type="date"
@@ -2775,14 +3074,38 @@ Keep tool calls granular (one discrete change per action), explain each action c
                               )}
                             </div>
                             <div style={styles.taskHeaderRight}>
+                              {taskEditEnabled && (
+                                <>
+                                  <button
+                                    style={styles.taskActionButton}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      startEditingTask(task.id, task.title);
+                                    }}
+                                    title="Edit task"
+                                  >
+                                    <Edit2 size={14} />
+                                  </button>
+                                  <button
+                                    style={styles.activityDeleteButton}
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      deleteTask(task.id);
+                                    }}
+                                    title="Delete task"
+                                  >
+                                    <Trash2 size={14} />
+                                  </button>
+                                </>
+                              )}
                               <span style={styles.taskProgress}>{progress}%</span>
-                              <ChevronDown 
-                                size={18} 
-                                style={{ 
+                              <ChevronDown
+                                size={18}
+                                style={{
                                   color: 'var(--stone)',
                                   transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
                                   transition: 'transform 0.2s ease'
-                                }} 
+                                }}
                               />
                             </div>
                           </div>
@@ -2804,22 +3127,37 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                       onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--cloud)'}
                                       onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#FFFFFF'}
                                     >
-                                      <div 
+                                      <div
                                         style={styles.subtaskCheckbox}
                                         onClick={() => toggleSubtaskStatus(task.id, subtask.id)}
                                       >
                                         {getStatusIcon(subtask.status)}
                                       </div>
-                                      <span 
-                                        style={{
-                                          ...styles.subtaskTitle,
-                                          textDecoration: subtask.status === 'completed' ? 'line-through' : 'none',
-                                          opacity: subtask.status === 'completed' ? 0.6 : 1
-                                        }}
-                                        onClick={() => toggleSubtaskStatus(task.id, subtask.id)}
-                                      >
-                                        {subtask.title}
-                                      </span>
+                                      {editingSubtask === subtask.id ? (
+                                        <input
+                                          type="text"
+                                          value={editingSubtaskTitle}
+                                          onChange={(e) => setEditingSubtaskTitle(e.target.value)}
+                                          onBlur={() => saveSubtaskEdit(task.id, subtask.id)}
+                                          onKeyPress={(e) => {
+                                            if (e.key === 'Enter') saveSubtaskEdit(task.id, subtask.id);
+                                          }}
+                                          onClick={(e) => e.stopPropagation()}
+                                          style={styles.subtaskTitleInput}
+                                          autoFocus
+                                        />
+                                      ) : (
+                                        <span
+                                          style={{
+                                            ...styles.subtaskTitle,
+                                            textDecoration: subtask.status === 'completed' ? 'line-through' : 'none',
+                                            opacity: subtask.status === 'completed' ? 0.6 : 1
+                                          }}
+                                          onClick={() => toggleSubtaskStatus(task.id, subtask.id)}
+                                        >
+                                          {subtask.title}
+                                        </span>
+                                      )}
                                       {isEditingSubtaskDate ? (
                                         <input
                                           type="date"
@@ -2874,6 +3212,30 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                       >
                                         <MessageSquare size={14} />
                                       </button>
+                                      {taskEditEnabled && (
+                                        <>
+                                          <button
+                                            style={styles.subtaskActionButton}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              startEditingSubtask(subtask.id, subtask.title);
+                                            }}
+                                            title="Edit subtask"
+                                          >
+                                            <Edit2 size={12} />
+                                          </button>
+                                          <button
+                                            style={styles.subtaskDeleteButton}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              deleteSubtask(task.id, subtask.id);
+                                            }}
+                                            title="Delete subtask"
+                                          >
+                                            <Trash2 size={12} />
+                                          </button>
+                                        </>
+                                      )}
                                     </div>
                                     
                                     {isCommenting && (
@@ -3734,61 +4096,126 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   <div style={styles.slideStage}>
                     <div style={styles.slideSurface}>
                       <div style={styles.slideSurfaceInner}>
-                        {/* Compact header with name, badges, and stakeholders */}
+                        {/* Header with name, description subtitle, and project details */}
                         <div style={styles.slideCompactHeader}>
-                          <div style={styles.slideHeaderLeft}>
+                          <div style={styles.slideHeaderTop}>
                             <h3 style={styles.slideTitle}>{slideProject.name}</h3>
-                            <div style={styles.slideHeaderMeta}>
-                              <Calendar size={14} style={{ color: 'var(--stone)' }} />
-                              <span>Target {slideProject.targetDate ? new Date(slideProject.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'TBD'}</span>
-                              <span style={styles.slideDivider}>•</span>
-                              <span style={{
-                                ...styles.slideInlineBadge,
-                                backgroundColor: getPriorityColor(slideProject.priority) + '20',
-                                color: getPriorityColor(slideProject.priority)
-                              }}>
-                                {slideProject.priority} priority
-                              </span>
-                              <span style={styles.slideInlineBadge}>{slideProject.status}</span>
-                            </div>
+                            {slideProject.description && (
+                              <p style={styles.slideSubtitle}>{slideProject.description}</p>
+                            )}
                           </div>
-                          {slideProject.stakeholders.length > 0 && (
-                            <div style={styles.slideStakeholdersCompact}>
-                              {slideProject.stakeholders.map(person => (
-                                <div key={person.name} style={styles.slideStakeholderCompact} title={`${person.name} (${person.team})`}>
-                                  <div style={styles.activityAvatarSmall}>{person.name.split(' ').map(n => n[0]).join('')}</div>
-                                  <span style={styles.slideStakeholderName}>{person.name}</span>
+                          <div style={styles.slideHeaderMeta}>
+                            <Calendar size={14} style={{ color: 'var(--stone)' }} />
+                            <span>Target {slideProject.targetDate ? new Date(slideProject.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'TBD'}</span>
+                            <span style={styles.slideDivider}>•</span>
+                            <span style={{
+                              ...styles.slideInlineBadge,
+                              backgroundColor: getPriorityColor(slideProject.priority) + '20',
+                              color: getPriorityColor(slideProject.priority)
+                            }}>
+                              {slideProject.priority} priority
+                            </span>
+                            <span style={styles.slideInlineBadge}>{slideProject.status}</span>
+                            {slideProject.stakeholders.length > 0 && (
+                              <>
+                                <span style={styles.slideDivider}>•</span>
+                                <Users size={14} style={{ color: 'var(--stone)', marginLeft: '4px' }} />
+                                <div style={{ display: 'flex', gap: '6px', marginLeft: '4px' }}>
+                                  {slideProject.stakeholders.map(person => (
+                                    <div key={person.name} style={styles.activityAvatar} title={`${person.name} (${person.team})`}>
+                                      {person.name.split(' ').map(n => n[0]).join('')}
+                                    </div>
+                                  ))}
                                 </div>
-                              ))}
-                            </div>
-                          )}
+                              </>
+                            )}
+                          </div>
                         </div>
 
                         {/* Main content grid */}
                         <div style={styles.slideMainGrid}>
-                          {/* Left column - Recent updates (larger) */}
+                          {/* Left column - Executive summary and recent updates */}
                           <div style={styles.slideMainPanel}>
-                            <div style={styles.slidePanelHeader}>
-                              <div style={styles.slidePanelTitle}>Recent updates</div>
+                            {/* Executive summary - editable */}
+                            <div style={styles.slideSecondaryPanel}>
+                              <div style={styles.slidePanelHeader}>
+                                <div style={styles.slidePanelTitle}>Executive summary</div>
+                                <div style={{ display: 'flex', gap: '8px' }}>
+                                  <button
+                                    onClick={() => generateExecSummary(slideProject.id)}
+                                    style={{
+                                      ...styles.iconButton,
+                                      opacity: isGeneratingSummary ? 0.5 : 1
+                                    }}
+                                    disabled={isGeneratingSummary || !apiKey}
+                                    title={!apiKey ? 'API key required' : 'AI generate summary'}
+                                  >
+                                    <Sparkles size={14} />
+                                  </button>
+                                  <button
+                                    onClick={() => startEditingExecSummary(slideProject.id, slideProject.description)}
+                                    style={styles.iconButton}
+                                    title="Edit summary"
+                                  >
+                                    <Edit2 size={14} />
+                                  </button>
+                                </div>
+                              </div>
+                              {editingExecSummary === slideProject.id ? (
+                                <div>
+                                  <textarea
+                                    value={execSummaryDraft}
+                                    onChange={(e) => setExecSummaryDraft(e.target.value)}
+                                    style={styles.execSummaryInput}
+                                    placeholder="Write executive summary..."
+                                    autoFocus
+                                  />
+                                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                                    <button
+                                      onClick={() => saveExecSummary(slideProject.id)}
+                                      style={styles.commentSubmit}
+                                    >
+                                      Save
+                                    </button>
+                                    <button
+                                      onClick={() => setEditingExecSummary(null)}
+                                      style={styles.commentCancel}
+                                    >
+                                      Cancel
+                                    </button>
+                                  </div>
+                                </div>
+                              ) : (
+                                <div style={styles.slideExecSummary}>
+                                  {slideProject.description || 'No executive summary yet.'}
+                                </div>
+                              )}
                             </div>
-                            {slideRecent.length > 0 ? (
-                              <ul style={styles.momentumList}>
-                                {slideRecent.map((activity, idx) => (
-                                  <li key={activity.id || idx} style={styles.momentumListItem}>
-                                    <div style={styles.momentumListRow}>
-                                      <span style={styles.momentumListStrong}>{activity.author}</span>
-                                      <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
-                                    </div>
-                                    <div style={styles.momentumListText}>{activity.note}</div>
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <div style={styles.momentumEmptyText}>No updates yet.</div>
-                            )}
+
+                            {/* Recent updates */}
+                            <div style={{ marginTop: '16px' }}>
+                              <div style={styles.slidePanelHeader}>
+                                <div style={styles.slidePanelTitle}>Recent updates</div>
+                              </div>
+                              {slideRecent.length > 0 ? (
+                                <ul style={styles.momentumList}>
+                                  {slideRecent.map((activity, idx) => (
+                                    <li key={activity.id || idx} style={styles.momentumListItem}>
+                                      <div style={styles.momentumListRow}>
+                                        <span style={styles.momentumListStrong}>{activity.author}</span>
+                                        <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
+                                      </div>
+                                      <div style={styles.momentumListText}>{activity.note}</div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <div style={styles.momentumEmptyText}>No updates yet.</div>
+                              )}
+                            </div>
                           </div>
 
-                          {/* Right column - Tasks and summary */}
+                          {/* Right column - Tasks */}
                           <div style={styles.slideRightColumn}>
                             {/* Due soon tasks */}
                             <div style={styles.slideSecondaryPanel}>
@@ -3813,16 +4240,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                 <div style={styles.momentumEmptyText}>No near-term work flagged.</div>
                               )}
                             </div>
-
-                            {/* Executive summary */}
-                            {slideProject.description && (
-                              <div style={styles.slideSecondaryPanel}>
-                                <div style={styles.slidePanelHeader}>
-                                  <div style={styles.slidePanelTitle}>Executive summary</div>
-                                </div>
-                                <div style={styles.slideExecSummary}>{slideProject.description}</div>
-                              </div>
-                            )}
                           </div>
                         </div>
                       </div>
@@ -5998,6 +6415,68 @@ const styles = {
     transition: 'all 0.2s ease',
   },
 
+  taskTitleInput: {
+    flex: 1,
+    fontSize: '15px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+    border: '2px solid var(--earth)',
+    borderRadius: '4px',
+    padding: '4px 8px',
+    backgroundColor: '#FFFFFF',
+  },
+
+  subtaskTitleInput: {
+    flex: 1,
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    border: '2px solid var(--earth)',
+    borderRadius: '4px',
+    padding: '4px 8px',
+    backgroundColor: '#FFFFFF',
+  },
+
+  taskActionButton: {
+    padding: '6px',
+    border: 'none',
+    borderRadius: '4px',
+    backgroundColor: 'transparent',
+    color: 'var(--stone)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.2s ease',
+  },
+
+  subtaskActionButton: {
+    padding: '4px',
+    border: 'none',
+    borderRadius: '4px',
+    backgroundColor: 'transparent',
+    color: 'var(--stone)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.2s ease',
+  },
+
+  subtaskDeleteButton: {
+    padding: '4px',
+    border: 'none',
+    borderRadius: '4px',
+    backgroundColor: 'transparent',
+    color: 'var(--coral)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.2s ease',
+  },
+
   commentBox: {
     backgroundColor: '#FFFFFF',
     padding: '12px',
@@ -6873,11 +7352,16 @@ const styles = {
 
   slideCompactHeader: {
     display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: '16px',
+    flexDirection: 'column',
+    gap: '8px',
     paddingBottom: '12px',
     borderBottom: '1px solid var(--cloud)',
+  },
+
+  slideHeaderTop: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
   },
 
   slideHeaderLeft: {
@@ -6891,7 +7375,15 @@ const styles = {
     fontWeight: '600',
     color: 'var(--charcoal)',
     letterSpacing: '-0.4px',
-    marginBottom: '6px',
+  },
+
+  slideSubtitle: {
+    margin: 0,
+    fontSize: '13px',
+    fontWeight: '400',
+    color: 'var(--stone)',
+    fontStyle: 'italic',
+    lineHeight: '1.4',
   },
 
   slideHeaderMeta: {
@@ -6998,6 +7490,32 @@ const styles = {
     padding: '8px',
     borderRadius: '10px',
     backgroundColor: 'var(--cloud)' + '30',
+  },
+
+  iconButton: {
+    padding: '6px',
+    border: '1px solid var(--cloud)',
+    borderRadius: '6px',
+    backgroundColor: '#FFFFFF',
+    color: 'var(--stone)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.2s ease',
+  },
+
+  execSummaryInput: {
+    width: '100%',
+    minHeight: '80px',
+    padding: '8px',
+    border: '1px solid var(--cloud)',
+    borderRadius: '6px',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    resize: 'vertical',
+    lineHeight: '1.6',
   },
 
   thrustProjectHeader: {
