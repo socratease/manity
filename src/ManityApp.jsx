@@ -9,9 +9,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   const timelineInputRef = useRef(null);
   const projectUpdateInputRef = useRef(null);
   
-  const { projects, setProjects, handleExport, handleImport } = usePortfolioData();
-  const importInputRef = useRef(null);
-  const [importFeedback, setImportFeedback] = useState('');
+  const { projects, setProjects } = usePortfolioData();
 
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
@@ -76,6 +74,12 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   const [execSummaryDraft, setExecSummaryDraft] = useState('');
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [hoveredTimelineGroup, setHoveredTimelineGroup] = useState(null);
+  const [isEditingSlide, setIsEditingSlide] = useState(false);
+  const [hiddenSlideItems, setHiddenSlideItems] = useState({
+    recentUpdates: [],
+    recentlyCompleted: [],
+    nextUp: []
+  });
   const supportedMomentumActions = ['comment', 'add_task', 'update_task', 'add_subtask', 'update_subtask', 'update_project'];
 
   // JSON Schema for structured output - ensures LLM returns properly formatted actions
@@ -179,30 +183,11 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     }
   };
 
-  const triggerImport = () => {
-    if (importInputRef.current) {
-      importInputRef.current.click();
-    }
-  };
-
   const formatStakeholderNames = (stakeholders = []) => {
     const names = stakeholders.map(person => person.name);
-    if (names.length <= 2) return names.join(', ');
-    return `${names.slice(0, 2).join(', ')} +${names.length - 2}`;
-  };
-
-  const handleImportChange = async (event) => {
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    try {
-      await handleImport(file);
-      setImportFeedback('Portfolio imported successfully.');
-    } catch (error) {
-      setImportFeedback(error?.message || 'Failed to import portfolio.');
-    } finally {
-      event.target.value = '';
-    }
+    // Show all names unless there are more than 5
+    if (names.length <= 5) return names.join(', ');
+    return `${names.slice(0, 5).join(', ')} +${names.length - 5}`;
   };
 
   useEffect(() => {
@@ -706,6 +691,25 @@ Write a professional executive summary that highlights the project's current sta
     }
   };
 
+  const toggleSlideEditMode = () => {
+    setIsEditingSlide(prev => !prev);
+    if (isEditingSlide) {
+      // Reset hidden items when exiting edit mode
+      setHiddenSlideItems({
+        recentUpdates: [],
+        recentlyCompleted: [],
+        nextUp: []
+      });
+    }
+  };
+
+  const hideSlideItem = (category, itemId) => {
+    setHiddenSlideItems(prev => ({
+      ...prev,
+      [category]: [...prev[category], itemId]
+    }));
+  };
+
   const formatDueDate = (dateString, status, completedDate) => {
     // If completed, show completion date with green checkmark
     if (status === 'completed' && completedDate) {
@@ -769,6 +773,50 @@ Write a professional executive summary that highlights the project's current sta
       });
     });
 
+    return tasks.sort((a, b) => new Date(a.dueDate || 0) - new Date(b.dueDate || 0));
+  };
+
+  const getRecentlyCompletedTasks = (project) => {
+    const tasks = [];
+
+    project.plan.forEach(task => {
+      task.subtasks.forEach(subtask => {
+        if (subtask.status === 'completed' && subtask.completedDate) {
+          const dueDateInfo = formatDueDate(subtask.dueDate, subtask.status, subtask.completedDate);
+          tasks.push({
+            title: subtask.title,
+            taskTitle: task.title,
+            completedDate: subtask.completedDate,
+            dueDateInfo,
+            id: subtask.id
+          });
+        }
+      });
+    });
+
+    // Sort by completion date, most recent first
+    return tasks.sort((a, b) => new Date(b.completedDate || 0) - new Date(a.completedDate || 0));
+  };
+
+  const getNextUpTasks = (project) => {
+    const tasks = [];
+
+    project.plan.forEach(task => {
+      task.subtasks.forEach(subtask => {
+        if (subtask.status !== 'completed' && subtask.dueDate) {
+          const dueDateInfo = formatDueDate(subtask.dueDate, subtask.status, subtask.completedDate);
+          tasks.push({
+            title: subtask.title,
+            taskTitle: task.title,
+            dueDate: subtask.dueDate,
+            dueDateInfo,
+            id: subtask.id
+          });
+        }
+      });
+    });
+
+    // Sort by due date, earliest first
     return tasks.sort((a, b) => new Date(a.dueDate || 0) - new Date(b.dueDate || 0));
   };
 
@@ -2712,21 +2760,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
         <div style={styles.topBar}>
           <div />
           <div style={styles.topBarRight}>
-            <div style={styles.dataActions}>
-              <button onClick={handleExport} style={styles.dataButton} aria-label="Export portfolio">
-                Export
-              </button>
-              <button onClick={triggerImport} style={styles.dataButton} aria-label="Import portfolio">
-                Import
-              </button>
-              <input
-                ref={importInputRef}
-                type="file"
-                accept="application/json"
-                onChange={handleImportChange}
-                style={styles.hiddenFileInput}
-              />
-            </div>
             <div style={styles.userIndicator}>
               <div style={styles.userAvatar}>{(loggedInUser || '?').split(' ').map(n => n[0]).join('')}</div>
               <div style={styles.userDetails}>
@@ -2754,8 +2787,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
             </button>
           </div>
         </div>
-
-        {importFeedback && <p style={styles.importFeedback}>{importFeedback}</p>}
 
         {viewingProject ? (
           // Project Details View
@@ -4096,8 +4127,21 @@ Keep tool calls granular (one discrete change per action), explain each action c
               <div style={styles.emptyState}>No visible projects to show.</div>
             ) : (
               (() => {
-                const slideDueSoon = getProjectDueSoonTasks(slideProject).slice(0, 5);
-                const slideRecent = slideProject.recentActivity.slice(0, 4);
+                const allRecentlyCompleted = getRecentlyCompletedTasks(slideProject);
+                const allNextUp = getNextUpTasks(slideProject);
+                const allRecentUpdates = slideProject.recentActivity;
+
+                // Filter out hidden items and take the first N visible ones
+                const slideRecentUpdates = allRecentUpdates
+                  .filter(activity => !hiddenSlideItems.recentUpdates.includes(activity.id))
+                  .slice(0, 4);
+                const slideRecentlyCompleted = allRecentlyCompleted
+                  .filter(task => !hiddenSlideItems.recentlyCompleted.includes(task.id))
+                  .slice(0, 5);
+                const slideNextUp = allNextUp
+                  .filter(task => !hiddenSlideItems.nextUp.includes(task.id))
+                  .slice(0, 5);
+
                 return (
                   <div style={styles.slideStage}>
                     <div style={styles.slideControlRail}>
@@ -4114,9 +4158,19 @@ Keep tool calls granular (one discrete change per action), explain each action c
                         <span>AI generate</span>
                       </button>
                       <button
-                        onClick={() => startEditingExecSummary(slideProject.id, slideProject.description)}
-                        style={styles.slideControlButton}
-                        title="Edit summary"
+                        onClick={() => {
+                          if (!isEditingSlide) {
+                            startEditingExecSummary(slideProject.id, slideProject.description);
+                          }
+                          toggleSlideEditMode();
+                        }}
+                        style={{
+                          ...styles.slideControlButton,
+                          backgroundColor: isEditingSlide ? 'var(--coral)' + '15' : 'transparent',
+                          borderColor: isEditingSlide ? 'var(--coral)' : 'var(--cloud)',
+                          color: isEditingSlide ? 'var(--coral)' : 'var(--charcoal)'
+                        }}
+                        title="Edit slide"
                       >
                         <Edit2 size={14} />
                         <span>Edit</span>
@@ -4156,94 +4210,141 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           </div>
                         </div>
 
-                        {/* Main content grid */}
+                        {/* Main content grid - 3 columns */}
                         <div style={styles.slideMainGrid}>
-                          {/* Left column - Executive summary and recent updates */}
-                          <div style={styles.slideMainPanel}>
-                            {/* Executive summary - editable */}
-                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideExecSummaryPanel }}>
-                              <div style={styles.slidePanelHeader}>
-                                <div style={styles.slidePanelTitle}>Executive summary</div>
-                              </div>
-                              {editingExecSummary === slideProject.id ? (
-                                <div>
-                                  <textarea
-                                    value={execSummaryDraft}
-                                    onChange={(e) => setExecSummaryDraft(e.target.value)}
-                                    style={styles.execSummaryInput}
-                                    placeholder="Write executive summary..."
-                                    autoFocus
-                                  />
-                                  <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                                    <button
-                                      onClick={() => saveExecSummary(slideProject.id)}
-                                      style={styles.commentSubmit}
-                                    >
-                                      Save
-                                    </button>
-                                    <button
-                                      onClick={() => setEditingExecSummary(null)}
-                                      style={styles.commentCancel}
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
-                                </div>
-                              ) : (
-                                <div style={styles.slideExecSummary}>
-                                  {slideProject.description || 'No executive summary yet.'}
-                                </div>
-                              )}
+                          {/* Executive summary */}
+                          <div style={{ ...styles.slideSecondaryPanel, ...styles.slideExecSummaryPanel }}>
+                            <div style={styles.slidePanelHeader}>
+                              <div style={styles.slidePanelTitle}>Executive summary</div>
                             </div>
+                            {editingExecSummary === slideProject.id ? (
+                              <div>
+                                <textarea
+                                  value={execSummaryDraft}
+                                  onChange={(e) => setExecSummaryDraft(e.target.value)}
+                                  style={styles.execSummaryInput}
+                                  placeholder="Write executive summary..."
+                                  autoFocus
+                                />
+                                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
+                                  <button
+                                    onClick={() => saveExecSummary(slideProject.id)}
+                                    style={styles.commentSubmit}
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingExecSummary(null)}
+                                    style={styles.commentCancel}
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div style={styles.slideExecSummary}>
+                                {slideProject.description || 'No executive summary yet.'}
+                              </div>
+                            )}
+                          </div>
 
-                            {/* Recent updates */}
-                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideUpdatesPanel }}>
-                              <div style={styles.slidePanelHeader}>
-                                <div style={styles.slidePanelTitle}>Recent updates</div>
-                              </div>
-                              <div style={styles.slideUpdatesContent}>
-                                {slideRecent.length > 0 ? (
-                                  <ul style={styles.momentumList}>
-                                    {slideRecent.map((activity, idx) => (
-                                      <li key={activity.id || idx} style={styles.momentumListItem}>
-                                        <div style={styles.momentumListRow}>
-                                          <span style={styles.momentumListStrong}>{activity.author}</span>
-                                          <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
-                                        </div>
-                                        <div style={styles.momentumListText}>{activity.note}</div>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : (
-                                  <div style={styles.momentumEmptyText}>No updates yet.</div>
-                                )}
-                              </div>
+                          {/* Recent updates */}
+                          <div style={{ ...styles.slideSecondaryPanel, ...styles.slideUpdatesPanel }}>
+                            <div style={styles.slidePanelHeader}>
+                              <div style={styles.slidePanelTitle}>Recent updates</div>
+                            </div>
+                            <div style={styles.slideUpdatesContent}>
+                              {slideRecentUpdates.length > 0 ? (
+                                <ul style={styles.momentumList}>
+                                  {slideRecentUpdates.map((activity, idx) => (
+                                    <li key={activity.id || idx} style={styles.momentumListItem}>
+                                      <div style={styles.momentumListRow}>
+                                        <span style={styles.momentumListStrong}>{activity.author}</span>
+                                        <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
+                                        {isEditingSlide && (
+                                          <button
+                                            onClick={() => hideSlideItem('recentUpdates', activity.id)}
+                                            style={styles.slideRemoveButton}
+                                            title="Remove from slide"
+                                          >
+                                            <X size={14} />
+                                          </button>
+                                        )}
+                                      </div>
+                                      <div style={styles.momentumListText}>{activity.note}</div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <div style={styles.momentumEmptyText}>No updates yet.</div>
+                              )}
                             </div>
                           </div>
 
-                          {/* Right column - Tasks */}
+                          {/* Right column - Recently Completed and Next Up */}
                           <div style={styles.slideRightColumn}>
-                            {/* Due soon tasks */}
-                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel }}>
+                            {/* Recently Completed */}
+                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel, marginBottom: '14px' }}>
                               <div style={styles.slidePanelHeader}>
-                                <div style={styles.slidePanelTitle}>Due soon or overdue</div>
+                                <div style={styles.slidePanelTitle}>Recently Completed</div>
                               </div>
-                              {slideDueSoon.length > 0 ? (
+                              {slideRecentlyCompleted.length > 0 ? (
                                 <ul style={styles.momentumList}>
-                                  {slideDueSoon.map((task, idx) => (
+                                  {slideRecentlyCompleted.map((task, idx) => (
                                     <li key={`${task.taskTitle}-${task.title}-${idx}`} style={styles.momentumListItem}>
                                       <div style={styles.momentumListRow}>
                                         <span style={styles.momentumListStrong}>{task.taskTitle} → {task.title}</span>
                                         <span style={{ ...styles.actionDueText, color: task.dueDateInfo.color }}>
                                           {task.dueDateInfo.text}
                                         </span>
+                                        {isEditingSlide && (
+                                          <button
+                                            onClick={() => hideSlideItem('recentlyCompleted', task.id)}
+                                            style={styles.slideRemoveButton}
+                                            title="Remove from slide"
+                                          >
+                                            <X size={14} />
+                                          </button>
+                                        )}
+                                      </div>
+                                    </li>
+                                  ))}
+                                </ul>
+                              ) : (
+                                <div style={styles.momentumEmptyText}>No recently completed tasks.</div>
+                              )}
+                            </div>
+
+                            {/* Next Up */}
+                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel }}>
+                              <div style={styles.slidePanelHeader}>
+                                <div style={styles.slidePanelTitle}>Next Up</div>
+                              </div>
+                              {slideNextUp.length > 0 ? (
+                                <ul style={styles.momentumList}>
+                                  {slideNextUp.map((task, idx) => (
+                                    <li key={`${task.taskTitle}-${task.title}-${idx}`} style={styles.momentumListItem}>
+                                      <div style={styles.momentumListRow}>
+                                        <span style={styles.momentumListStrong}>{task.taskTitle} → {task.title}</span>
+                                        <span style={{ ...styles.actionDueText, color: task.dueDateInfo.color }}>
+                                          {task.dueDateInfo.text}
+                                        </span>
+                                        {isEditingSlide && (
+                                          <button
+                                            onClick={() => hideSlideItem('nextUp', task.id)}
+                                            style={styles.slideRemoveButton}
+                                            title="Remove from slide"
+                                          >
+                                            <X size={14} />
+                                          </button>
+                                        )}
                                       </div>
                                       <div style={styles.momentumListText}>Due {task.dueDateInfo.formattedDate}</div>
                                     </li>
                                   ))}
                                 </ul>
                               ) : (
-                                <div style={styles.momentumEmptyText}>No near-term work flagged.</div>
+                                <div style={styles.momentumEmptyText}>No upcoming tasks.</div>
                               )}
                             </div>
                           </div>
@@ -4615,6 +4716,18 @@ const styles = {
     alignSelf: 'flex-start',
   },
 
+  dataButton: {
+    padding: '8px 12px',
+    borderRadius: '10px',
+    border: '1px solid var(--cloud)',
+    backgroundColor: '#fff',
+    color: 'var(--charcoal)',
+    cursor: 'pointer',
+    fontWeight: 600,
+    letterSpacing: '0.2px',
+    transition: 'all 0.2s ease',
+  },
+
   topBar: {
     display: 'flex',
     justifyContent: 'space-between',
@@ -4628,34 +4741,6 @@ const styles = {
     gap: '12px',
   },
 
-  dataActions: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-  },
-
-  dataButton: {
-    padding: '8px 12px',
-    borderRadius: '10px',
-    border: '1px solid var(--cloud)',
-    backgroundColor: '#fff',
-    color: 'var(--charcoal)',
-    cursor: 'pointer',
-    fontWeight: 600,
-    letterSpacing: '0.2px',
-    transition: 'all 0.2s ease',
-  },
-
-  hiddenFileInput: {
-    display: 'none',
-  },
-
-  importFeedback: {
-    marginTop: '-12px',
-    marginBottom: '12px',
-    color: 'var(--stone)',
-    fontSize: '14px',
-  },
 
   userIndicator: {
     display: 'flex',
@@ -7362,6 +7447,21 @@ const styles = {
     transition: 'all 0.2s ease',
   },
 
+  slideRemoveButton: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '4px',
+    border: 'none',
+    borderRadius: '4px',
+    backgroundColor: 'var(--coral)',
+    color: '#fff',
+    cursor: 'pointer',
+    marginLeft: '8px',
+    transition: 'all 0.15s ease',
+    flexShrink: 0,
+  },
+
   slideSurface: {
     width: '100%',
     maxWidth: '1100px',
@@ -7476,23 +7576,11 @@ const styles = {
 
   slideMainGrid: {
     display: 'grid',
-    gridTemplateColumns: '1.4fr 1fr',
+    gridTemplateColumns: '1fr 1fr 1fr',
     gap: '14px',
     flex: 1,
     minHeight: 0,
-    alignItems: 'stretch',
-  },
-
-  slideMainPanel: {
-    backgroundColor: '#FFFFFF',
-    border: '1px solid var(--cloud)',
-    borderRadius: '10px',
-    padding: '12px',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '14px',
-    overflow: 'hidden',
+    alignItems: 'start',
   },
 
   slideSecondaryPanel: {

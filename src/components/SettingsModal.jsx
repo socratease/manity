@@ -1,4 +1,5 @@
-import React from "react";
+import React, { useState, useRef } from "react";
+import { Download, Upload } from "lucide-react";
 
 export default function SettingsModal({
   isOpen,
@@ -8,8 +9,38 @@ export default function SettingsModal({
   onSave,
   onClear,
   onClose,
+  onExport,
+  onImport,
+  projects,
 }) {
+  const [exportTarget, setExportTarget] = useState("all");
+  const importInputRef = useRef(null);
+
   if (!isOpen) return null;
+
+  const handleExport = () => {
+    if (exportTarget === "all") {
+      onExport();
+    } else {
+      onExport(exportTarget);
+    }
+  };
+
+  const handleImportClick = () => {
+    if (importInputRef.current) {
+      importInputRef.current.click();
+    }
+  };
+
+  const handleImportChange = async (e) => {
+    const file = e.target.files?.[0];
+    if (file) {
+      await onImport(file);
+      if (importInputRef.current) {
+        importInputRef.current.value = '';
+      }
+    }
+  };
 
   return (
     <div
@@ -22,35 +53,89 @@ export default function SettingsModal({
       <div style={styles.modal} onClick={(e) => e.stopPropagation()}>
         <div style={styles.header}>
           <h2 id="settings-title" style={styles.title}>
-            API key
+            Settings
           </h2>
           <button onClick={onClose} style={styles.closeButton} aria-label="Close settings">
             ×
           </button>
         </div>
 
-        <p style={styles.description}>
-          Your API key is stored only in this browser (localStorage) and is sent only to the model provider when you explicitly make a
-          request. It is never sent to GitHub or any other server.
-        </p>
+        {/* API Key Section */}
+        <div style={styles.section}>
+          <h3 style={styles.sectionTitle}>API key</h3>
+          <p style={styles.description}>
+            Your API key is stored only in this browser (localStorage) and is sent only to the model provider when you explicitly make a
+            request. It is never sent to GitHub or any other server.
+          </p>
 
-        <input
-          type="password"
-          value={tempKey}
-          onChange={(e) => onTempKeyChange(e.target.value)}
-          placeholder="Paste your OpenAI API key"
-          style={styles.input}
-        />
+          <input
+            type="password"
+            value={tempKey}
+            onChange={(e) => onTempKeyChange(e.target.value)}
+            placeholder="Paste your OpenAI API key"
+            style={styles.input}
+          />
 
-        <div style={styles.actions}>
-          <button onClick={onSave} style={styles.primaryButton}>
-            Save
-          </button>
-          {hasStoredKey && (
-            <button onClick={onClear} type="button" style={styles.secondaryButton}>
-              Clear stored key
+          <div style={styles.actions}>
+            <button onClick={onSave} style={styles.primaryButton}>
+              Save
             </button>
-          )}
+            {hasStoredKey && (
+              <button onClick={onClear} type="button" style={styles.secondaryButton}>
+                Clear stored key
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Divider */}
+        <div style={styles.divider} />
+
+        {/* Import/Export Section */}
+        <div style={styles.section}>
+          <h3 style={styles.sectionTitle}>Portfolio data</h3>
+          <p style={styles.description}>
+            Export your portfolio to a JSON file or import data from a previously exported file.
+          </p>
+
+          {/* Export */}
+          <div style={styles.dataGroup}>
+            <label style={styles.label}>Export</label>
+            <div style={styles.exportControls}>
+              <select
+                value={exportTarget}
+                onChange={(e) => setExportTarget(e.target.value)}
+                style={styles.select}
+              >
+                <option value="all">All projects</option>
+                {projects && projects.map(project => (
+                  <option key={project.id} value={project.id}>
+                    {project.name}
+                  </option>
+                ))}
+              </select>
+              <button onClick={handleExport} style={styles.iconButton}>
+                <Download size={16} />
+                Export
+              </button>
+            </div>
+          </div>
+
+          {/* Import */}
+          <div style={styles.dataGroup}>
+            <label style={styles.label}>Import</label>
+            <button onClick={handleImportClick} style={styles.iconButton}>
+              <Upload size={16} />
+              Import from file
+            </button>
+            <input
+              ref={importInputRef}
+              type="file"
+              accept="application/json"
+              onChange={handleImportChange}
+              style={styles.hiddenFileInput}
+            />
+          </div>
         </div>
       </div>
     </div>
@@ -69,7 +154,9 @@ const styles = {
     zIndex: 20,
   },
   modal: {
-    width: "min(520px, 100%)",
+    width: "min(580px, 100%)",
+    maxHeight: "90vh",
+    overflow: "auto",
     backgroundColor: "#ffffff",
     borderRadius: 16,
     padding: "24px",
@@ -82,7 +169,7 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 12,
+    marginBottom: 20,
   },
   title: {
     margin: 0,
@@ -100,6 +187,21 @@ const styles = {
     padding: 6,
     borderRadius: 8,
   },
+  section: {
+    marginBottom: 20,
+  },
+  sectionTitle: {
+    margin: "0 0 8px 0",
+    fontSize: "16px",
+    fontWeight: 600,
+    letterSpacing: "-0.2px",
+    color: "#3a3631",
+  },
+  divider: {
+    height: 1,
+    backgroundColor: "#e8e3d8",
+    margin: "20px 0",
+  },
   description: {
     fontSize: "14px",
     color: "#6b6554",
@@ -114,6 +216,16 @@ const styles = {
     fontSize: "14px",
     marginBottom: 12,
     backgroundColor: "#faf8f3",
+    boxSizing: "border-box",
+  },
+  select: {
+    flex: 1,
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #e8e3d8",
+    fontSize: "14px",
+    backgroundColor: "#faf8f3",
+    cursor: "pointer",
   },
   actions: {
     display: "flex",
@@ -138,5 +250,36 @@ const styles = {
     color: "#6b6554",
     cursor: "pointer",
     fontWeight: 500,
+  },
+  dataGroup: {
+    marginBottom: 16,
+  },
+  label: {
+    display: "block",
+    fontSize: "14px",
+    fontWeight: 500,
+    color: "#3a3631",
+    marginBottom: 8,
+  },
+  exportControls: {
+    display: "flex",
+    gap: 10,
+    alignItems: "center",
+  },
+  iconButton: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    padding: "10px 16px",
+    borderRadius: 10,
+    border: "1px solid #e8e3d8",
+    backgroundColor: "#fff",
+    color: "#6b6554",
+    cursor: "pointer",
+    fontWeight: 500,
+    fontSize: "14px",
+  },
+  hiddenFileInput: {
+    display: "none",
   },
 };

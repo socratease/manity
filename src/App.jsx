@@ -2,10 +2,11 @@ import React, { useState, useEffect } from "react";
 import ManityApp from "./ManityApp";
 import SettingsModal from "./components/SettingsModal";
 import { useApiKey } from "./hooks/useApiKey";
-import { PortfolioProvider } from "./hooks/usePortfolioData";
+import { PortfolioProvider, usePortfolioData } from "./hooks/usePortfolioData";
 
-export default function App() {
+function AppContent() {
   const { apiKey, setApiKey, clearApiKey, hasStoredKey } = useApiKey();
+  const { projects, handleExport, handleImport } = usePortfolioData();
   const [tempKey, setTempKey] = useState("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
@@ -36,11 +37,17 @@ export default function App() {
     setTempKey("");
   };
 
+  const handleImportWrapper = async (file) => {
+    try {
+      await handleImport(file, 'merge');
+    } catch (error) {
+      console.error('Import failed:', error);
+    }
+  };
+
   return (
     <>
-      <PortfolioProvider>
-        <ManityApp onOpenSettings={openSettings} apiKey={apiKey} />
-      </PortfolioProvider>
+      <ManityApp onOpenSettings={openSettings} apiKey={apiKey} />
       <SettingsModal
         isOpen={isSettingsOpen}
         tempKey={tempKey}
@@ -49,7 +56,18 @@ export default function App() {
         onSave={handleSave}
         onClear={handleClear}
         onClose={closeSettings}
+        onExport={handleExport}
+        onImport={handleImportWrapper}
+        projects={projects}
       />
     </>
+  );
+}
+
+export default function App() {
+  return (
+    <PortfolioProvider>
+      <AppContent />
+    </PortfolioProvider>
   );
 }
