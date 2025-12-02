@@ -710,12 +710,7 @@ Write a professional executive summary that highlights the project's current sta
         setExecSummaryDraft('');
       }
 
-      // Reset hidden items when exiting edit mode
-      setHiddenSlideItems({
-        recentUpdates: [],
-        recentlyCompleted: [],
-        nextUp: []
-      });
+      // Don't reset hidden items - keep the changes persistent
     }
   };
 
@@ -4289,7 +4284,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           {/* Right column - Recently Completed and Next Up */}
                           <div style={styles.slideRightColumn}>
                             {/* Recently Completed */}
-                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel, marginBottom: '14px' }}>
+                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel }}>
                               <div style={styles.slidePanelHeader}>
                                 <div style={styles.slidePanelTitle}>Recently Completed</div>
                               </div>
@@ -7585,7 +7580,7 @@ const styles = {
     gap: '14px',
     flex: 1,
     minHeight: 0,
-    alignItems: 'start',
+    alignItems: 'stretch',
   },
 
   slideSecondaryPanel: {
@@ -7641,8 +7636,9 @@ const styles = {
   },
 
   slideUpdatesPanel: {
-    flexShrink: 0,
+    flex: 1,
     overflow: 'hidden',
+    minHeight: 0,
   },
 
   slideUpdatesContent: {
@@ -7653,8 +7649,9 @@ const styles = {
     background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8F2 100%)',
     borderColor: 'var(--sage)',
     boxShadow: '0 6px 16px rgba(0,0,0,0.06)',
-    flexShrink: 0,
+    flex: 1,
     overflow: 'hidden',
+    minHeight: 0,
   },
 
   iconButton: {
