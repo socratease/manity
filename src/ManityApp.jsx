@@ -692,8 +692,24 @@ Write a professional executive summary that highlights the project's current sta
   };
 
   const toggleSlideEditMode = () => {
+    const wasEditing = isEditingSlide;
     setIsEditingSlide(prev => !prev);
-    if (isEditingSlide) {
+
+    if (wasEditing) {
+      // Save exec summary when exiting edit mode
+      if (editingExecSummary) {
+        const projectId = editingExecSummary;
+        setProjects(prevProjects =>
+          prevProjects.map(project =>
+            project.id === projectId
+              ? { ...project, description: execSummaryDraft }
+              : project
+          )
+        );
+        setEditingExecSummary(null);
+        setExecSummaryDraft('');
+      }
+
       // Reset hidden items when exiting edit mode
       setHiddenSlideItems({
         recentUpdates: [],
@@ -4131,16 +4147,16 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 const allNextUp = getNextUpTasks(slideProject);
                 const allRecentUpdates = slideProject.recentActivity;
 
-                // Filter out hidden items and take the first N visible ones
+                // Filter out hidden items and take the first N visible ones that fit
                 const slideRecentUpdates = allRecentUpdates
                   .filter(activity => !hiddenSlideItems.recentUpdates.includes(activity.id))
-                  .slice(0, 4);
+                  .slice(0, 3);
                 const slideRecentlyCompleted = allRecentlyCompleted
                   .filter(task => !hiddenSlideItems.recentlyCompleted.includes(task.id))
-                  .slice(0, 5);
+                  .slice(0, 3);
                 const slideNextUp = allNextUp
                   .filter(task => !hiddenSlideItems.nextUp.includes(task.id))
-                  .slice(0, 5);
+                  .slice(0, 3);
 
                 return (
                   <div style={styles.slideStage}>
@@ -4210,74 +4226,63 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           </div>
                         </div>
 
-                        {/* Main content grid - 3 columns */}
+                        {/* Main content grid - 2 columns */}
                         <div style={styles.slideMainGrid}>
-                          {/* Executive summary */}
-                          <div style={{ ...styles.slideSecondaryPanel, ...styles.slideExecSummaryPanel }}>
-                            <div style={styles.slidePanelHeader}>
-                              <div style={styles.slidePanelTitle}>Executive summary</div>
-                            </div>
-                            {editingExecSummary === slideProject.id ? (
-                              <div>
-                                <textarea
-                                  value={execSummaryDraft}
-                                  onChange={(e) => setExecSummaryDraft(e.target.value)}
-                                  style={styles.execSummaryInput}
-                                  placeholder="Write executive summary..."
-                                  autoFocus
-                                />
-                                <div style={{ display: 'flex', gap: '8px', marginTop: '8px' }}>
-                                  <button
-                                    onClick={() => saveExecSummary(slideProject.id)}
-                                    style={styles.commentSubmit}
-                                  >
-                                    Save
-                                  </button>
-                                  <button
-                                    onClick={() => setEditingExecSummary(null)}
-                                    style={styles.commentCancel}
-                                  >
-                                    Cancel
-                                  </button>
+                          {/* Left column - Executive Summary and Recent Updates */}
+                          <div style={styles.slideLeftColumn}>
+                            {/* Executive summary */}
+                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideExecSummaryPanel }}>
+                              <div style={styles.slidePanelHeader}>
+                                <div style={styles.slidePanelTitle}>Executive summary</div>
+                              </div>
+                              {editingExecSummary === slideProject.id ? (
+                                <div>
+                                  <textarea
+                                    value={execSummaryDraft}
+                                    onChange={(e) => setExecSummaryDraft(e.target.value)}
+                                    style={styles.execSummaryInput}
+                                    placeholder="Write executive summary..."
+                                    autoFocus
+                                  />
                                 </div>
-                              </div>
-                            ) : (
-                              <div style={styles.slideExecSummary}>
-                                {slideProject.description || 'No executive summary yet.'}
-                              </div>
-                            )}
-                          </div>
-
-                          {/* Recent updates */}
-                          <div style={{ ...styles.slideSecondaryPanel, ...styles.slideUpdatesPanel }}>
-                            <div style={styles.slidePanelHeader}>
-                              <div style={styles.slidePanelTitle}>Recent updates</div>
-                            </div>
-                            <div style={styles.slideUpdatesContent}>
-                              {slideRecentUpdates.length > 0 ? (
-                                <ul style={styles.momentumList}>
-                                  {slideRecentUpdates.map((activity, idx) => (
-                                    <li key={activity.id || idx} style={styles.momentumListItem}>
-                                      <div style={styles.momentumListRow}>
-                                        <span style={styles.momentumListStrong}>{activity.author}</span>
-                                        <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
-                                        {isEditingSlide && (
-                                          <button
-                                            onClick={() => hideSlideItem('recentUpdates', activity.id)}
-                                            style={styles.slideRemoveButton}
-                                            title="Remove from slide"
-                                          >
-                                            <X size={14} />
-                                          </button>
-                                        )}
-                                      </div>
-                                      <div style={styles.momentumListText}>{activity.note}</div>
-                                    </li>
-                                  ))}
-                                </ul>
                               ) : (
-                                <div style={styles.momentumEmptyText}>No updates yet.</div>
+                                <div style={styles.slideExecSummary}>
+                                  {slideProject.description || 'No executive summary yet.'}
+                                </div>
                               )}
+                            </div>
+
+                            {/* Recent updates */}
+                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideUpdatesPanel }}>
+                              <div style={styles.slidePanelHeader}>
+                                <div style={styles.slidePanelTitle}>Recent updates</div>
+                              </div>
+                              <div style={styles.slideUpdatesContent}>
+                                {slideRecentUpdates.length > 0 ? (
+                                  <ul style={styles.momentumList}>
+                                    {slideRecentUpdates.map((activity, idx) => (
+                                      <li key={activity.id || idx} style={styles.momentumListItem}>
+                                        <div style={styles.momentumListRow}>
+                                          <span style={styles.momentumListStrong}>{activity.author}</span>
+                                          <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
+                                          {isEditingSlide && (
+                                            <button
+                                              onClick={() => hideSlideItem('recentUpdates', activity.id)}
+                                              style={styles.slideRemoveButton}
+                                              title="Remove from slide"
+                                            >
+                                              <X size={14} />
+                                            </button>
+                                          )}
+                                        </div>
+                                        <div style={styles.momentumListText}>{activity.note}</div>
+                                      </li>
+                                    ))}
+                                  </ul>
+                                ) : (
+                                  <div style={styles.momentumEmptyText}>No updates yet.</div>
+                                )}
+                              </div>
                             </div>
                           </div>
 
@@ -7576,7 +7581,7 @@ const styles = {
 
   slideMainGrid: {
     display: 'grid',
-    gridTemplateColumns: '1fr 1fr 1fr',
+    gridTemplateColumns: '1fr 1fr',
     gap: '14px',
     flex: 1,
     minHeight: 0,
@@ -7591,6 +7596,13 @@ const styles = {
     boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
     display: 'flex',
     flexDirection: 'column',
+  },
+
+  slideLeftColumn: {
+    display: 'flex',
+    flexDirection: 'column',
+    height: '100%',
+    gap: '14px',
   },
 
   slideRightColumn: {
@@ -7629,12 +7641,11 @@ const styles = {
   },
 
   slideUpdatesPanel: {
-    flex: 1,
-    minHeight: '0',
+    flexShrink: 0,
+    overflow: 'hidden',
   },
 
   slideUpdatesContent: {
-    maxHeight: '220px',
     overflow: 'hidden',
   },
 
@@ -7642,7 +7653,8 @@ const styles = {
     background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8F2 100%)',
     borderColor: 'var(--sage)',
     boxShadow: '0 6px 16px rgba(0,0,0,0.06)',
-    height: '100%',
+    flexShrink: 0,
+    overflow: 'hidden',
   },
 
   iconButton: {
