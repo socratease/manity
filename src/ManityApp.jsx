@@ -1756,6 +1756,63 @@ Keep tool calls granular (one discrete change per action), explain each action c
       return (taskMs / totalMs) * 100;
     };
 
+    // Generate month labels
+    const generateMonthLabels = () => {
+      const labels = [];
+      const current = new Date(startDate);
+      current.setDate(1); // Start at the first of the month
+
+      while (current <= endDate) {
+        const position = getTaskPosition(current);
+        if (position >= 0 && position <= 100) {
+          labels.push({
+            month: current.toLocaleDateString('en-US', { month: 'short' }),
+            position: position
+          });
+        }
+        current.setMonth(current.getMonth() + 1);
+      }
+      return labels;
+    };
+
+    const monthLabels = generateMonthLabels();
+
+    // Check for overlaps and assign vertical positions
+    const assignVerticalPositions = (tasks) => {
+      const minSpacing = 15; // Minimum horizontal spacing in percentage points
+      const positions = tasks.map((task, idx) => ({
+        task,
+        position: getTaskPosition(task.dueDate),
+        idx,
+        verticalOffset: 0,
+        isAbove: idx % 2 === 0 // Alternate above/below
+      }));
+
+      // Sort by position for overlap detection
+      const sorted = [...positions].sort((a, b) => a.position - b.position);
+
+      // Stagger heights to avoid overlaps
+      for (let i = 0; i < sorted.length; i++) {
+        const current = sorted[i];
+        let maxOffset = 0;
+
+        // Check all previous tasks
+        for (let j = 0; j < i; j++) {
+          const prev = sorted[j];
+          // If on same side (above/below) and within spacing threshold
+          if (prev.isAbove === current.isAbove &&
+              Math.abs(current.position - prev.position) < minSpacing) {
+            maxOffset = Math.max(maxOffset, prev.verticalOffset + 1);
+          }
+        }
+        current.verticalOffset = maxOffset;
+      }
+
+      return positions;
+    };
+
+    const taskPositions = assignVerticalPositions(timelineTasks);
+
     return (
       <div style={styles.timelineSection}>
         <div style={styles.timelineHeader}>
@@ -1792,53 +1849,36 @@ Keep tool calls granular (one discrete change per action), explain each action c
         </div>
 
         <div style={styles.timelineContainer}>
-          {/* Callouts above the timeline */}
-          <div style={{ position: 'relative', minHeight: '80px', marginBottom: '8px' }}>
-            {timelineTasks.map((task, idx) => {
-              const position = getTaskPosition(task.dueDate);
-              const isCompleted = task.status === 'completed';
-
-              return (
-                <div
-                  key={idx}
-                  style={{
-                    position: 'absolute',
-                    left: `${position}%`,
-                    bottom: 0,
-                    transform: 'translateX(-50%)',
-                    zIndex: 3,
-                  }}
-                >
-                  <div style={styles.timelineCallout}>
-                    <div style={styles.timelineCalloutTitle}>{task.title}</div>
-                    <div style={styles.timelineCalloutDate}>
-                      {task.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                    </div>
-                  </div>
-                  {/* Connector line */}
-                  <div style={{
-                    position: 'absolute',
-                    bottom: -8,
-                    left: '50%',
-                    transform: 'translateX(-50%)',
-                    width: '1px',
-                    height: '8px',
-                    backgroundColor: isCompleted ? 'var(--earth)' : getPriorityColor(project.priority),
-                    opacity: 0.5,
-                  }} />
-                </div>
-              );
-            })}
-          </div>
-
           {/* Timeline bar */}
           <div style={styles.timelineBar}>
             <div style={styles.timelineBarFill} />
 
+            {/* Month labels */}
+            {monthLabels.map((label, idx) => (
+              <div
+                key={idx}
+                style={{
+                  position: 'absolute',
+                  left: `${label.position}%`,
+                  top: '-18px',
+                  transform: 'translateX(-50%)',
+                  fontSize: '10px',
+                  color: 'var(--stone)',
+                  opacity: 0.5,
+                  fontFamily: "'Inter', sans-serif",
+                  fontWeight: '500',
+                  letterSpacing: '0.3px',
+                  textTransform: 'uppercase',
+                }}
+              >
+                {label.month}
+              </div>
+            ))}
+
             {/* Task markers */}
-            {timelineTasks.map((task, idx) => {
-              const position = getTaskPosition(task.dueDate);
+            {taskPositions.map(({ task, position, idx, verticalOffset, isAbove }) => {
               const isCompleted = task.status === 'completed';
+              const lineHeight = 20 + (verticalOffset * 12);
 
               return (
                 <div
@@ -1854,6 +1894,49 @@ Keep tool calls granular (one discrete change per action), explain each action c
                       backgroundColor: isCompleted ? 'var(--earth)' : getPriorityColor(project.priority)
                     }}
                   />
+
+                  {/* Connector line - positioned above or below */}
+                  <div style={{
+                    position: 'absolute',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    width: '1px',
+                    height: `${lineHeight}px`,
+                    backgroundColor: isCompleted ? 'var(--earth)' : getPriorityColor(project.priority),
+                    opacity: 0.3,
+                    ...(isAbove
+                      ? { bottom: '6px' }
+                      : { top: '6px' }
+                    )
+                  }} />
+
+                  {/* Callout text - single line */}
+                  <div style={{
+                    position: 'absolute',
+                    left: '50%',
+                    transform: 'translateX(-50%)',
+                    whiteSpace: 'nowrap',
+                    fontSize: '11px',
+                    fontFamily: "'Inter', sans-serif",
+                    ...(isAbove
+                      ? { bottom: `${lineHeight + 6}px` }
+                      : { top: `${lineHeight + 6}px` }
+                    )
+                  }}>
+                    <span style={{
+                      color: 'var(--charcoal)',
+                      fontWeight: '600',
+                    }}>
+                      {task.title}
+                    </span>
+                    <span style={{
+                      color: 'var(--stone)',
+                      fontWeight: '400',
+                      marginLeft: '6px'
+                    }}>
+                      {task.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                    </span>
+                  </div>
                 </div>
               );
             })}
@@ -3049,7 +3132,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
               </div>
             </header>
 
-            <div style={styles.timelineContainer}>
+            <div style={styles.timelineViewContainer}>
               <div style={styles.activityControlsRow}>
                 <button
                   onClick={toggleActivityEditing}
@@ -4451,6 +4534,8 @@ const styles = {
 
   timelineContainer: {
     position: 'relative',
+    paddingTop: '80px',
+    paddingBottom: '80px',
   },
 
   timelineBar: {
@@ -4489,34 +4574,6 @@ const styles = {
     transition: 'all 0.2s ease',
   },
 
-  timelineCallout: {
-    position: 'absolute',
-    bottom: '20px',
-    left: '50%',
-    transform: 'translateX(-50%)',
-    minWidth: '120px',
-    padding: '8px 12px',
-    backgroundColor: '#FFFFFF',
-    border: '1px solid var(--cloud)',
-    borderRadius: '8px',
-    boxShadow: '0 4px 12px rgba(0,0,0,0.1)',
-    whiteSpace: 'nowrap',
-    textAlign: 'center',
-  },
-
-  timelineCalloutTitle: {
-    fontSize: '13px',
-    fontWeight: '600',
-    color: 'var(--charcoal)',
-    fontFamily: "'Inter', sans-serif",
-    marginBottom: '2px',
-  },
-
-  timelineCalloutDate: {
-    fontSize: '12px',
-    color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-  },
 
   timelineLabels: {
     display: 'flex',
@@ -6079,8 +6136,8 @@ const styles = {
     transition: 'all 0.2s ease',
   },
 
-  // Timeline Styles
-  timelineContainer: {
+  // Timeline View Styles
+  timelineViewContainer: {
     maxWidth: '800px',
     margin: '0 auto',
   },
