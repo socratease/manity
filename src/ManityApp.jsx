@@ -3236,6 +3236,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                               ...prev,
                               [project.id]: !(prev[project.id] ?? true)
                             }))}
+                            onMouseEnter={(e) => {
+                              e.currentTarget.style.backgroundColor = 'var(--cream)';
+                            }}
+                            onMouseLeave={(e) => {
+                              e.currentTarget.style.backgroundColor = 'transparent';
+                            }}
                             type="button"
                             aria-expanded={isExpanded}
                           >
@@ -3289,7 +3295,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                 )}
                               </div>
 
-                              <div style={styles.momentumSummarySection}>
+                              <div style={{
+                                ...styles.momentumSummarySection,
+                                borderLeft: dueSoonTasks.some(task => task.dueDateInfo.isOverdue)
+                                  ? '3px solid var(--coral)'
+                                  : '3px solid var(--amber)'
+                              }}>
                                 <div style={styles.momentumSummaryTitle}>Due soon or overdue</div>
                                 {dueSoonTasks.length > 0 ? (
                                   <ul style={styles.momentumList}>
@@ -6205,8 +6216,10 @@ const styles = {
     border: '1px solid var(--cloud)',
     borderRadius: '12px',
     backgroundColor: '#FFFFFF',
-    padding: '12px',
-    boxShadow: '0 4px 16px rgba(0,0,0,0.05)',
+    padding: '20px',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
+    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
+    animation: 'fadeInUp 0.6s cubic-bezier(0.4, 0, 0.2, 1) backwards',
   },
 
   momentumProjectToggle: {
@@ -6218,7 +6231,10 @@ const styles = {
     justifyContent: 'space-between',
     gap: '12px',
     cursor: 'pointer',
-    padding: 0,
+    padding: '8px',
+    margin: '-8px',
+    borderRadius: '8px',
+    transition: 'background-color 0.2s ease',
   },
 
   momentumProjectHeader: {
@@ -6231,10 +6247,11 @@ const styles = {
 
   momentumProjectName: {
     margin: 0,
-    fontSize: '17px',
-    fontWeight: '700',
+    fontSize: '18px',
+    fontWeight: '600',
     color: 'var(--charcoal)',
     textAlign: 'left',
+    letterSpacing: '-0.3px',
   },
 
   momentumProjectMeta: {
@@ -6255,37 +6272,45 @@ const styles = {
 
   momentumProjectBody: {
     borderTop: '1px solid var(--cloud)',
-    marginTop: '12px',
-    paddingTop: '12px',
+    marginTop: '16px',
+    paddingTop: '16px',
     display: 'grid',
-    gap: '12px',
+    gap: '16px',
   },
 
   momentumSummarySection: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '8px',
+    gap: '10px',
+    padding: '14px',
+    backgroundColor: 'var(--cream)',
+    borderRadius: '8px',
+    borderLeft: '3px solid var(--amber)',
   },
 
   momentumSummaryTitle: {
-    fontSize: '13px',
+    fontSize: '12px',
     fontFamily: "'Inter', sans-serif",
-    fontWeight: '700',
+    fontWeight: '600',
     color: 'var(--stone)',
-    letterSpacing: '0.3px',
+    letterSpacing: '0.5px',
     textTransform: 'uppercase',
+    marginBottom: '4px',
   },
 
   momentumList: {
     margin: 0,
-    paddingLeft: '16px',
+    padding: 0,
     display: 'flex',
     flexDirection: 'column',
-    gap: '6px',
+    gap: '10px',
   },
 
   momentumListItem: {
-    listStyle: 'disc',
+    listStyle: 'none',
+    marginLeft: '0',
+    paddingLeft: '0',
+    paddingBottom: '8px',
   },
 
   momentumListRow: {
@@ -6310,10 +6335,10 @@ const styles = {
 
   momentumListText: {
     fontSize: '13px',
-    color: 'var(--charcoal)',
+    color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
     lineHeight: 1.5,
-    marginTop: '2px',
+    marginTop: '3px',
   },
 
   momentumEmptyText: {
