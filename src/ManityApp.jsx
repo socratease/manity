@@ -8,7 +8,10 @@ const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`
 export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   const timelineInputRef = useRef(null);
   const projectUpdateInputRef = useRef(null);
-  
+  const recentUpdatesRef = useRef(null);
+  const recentlyCompletedRef = useRef(null);
+  const nextUpRef = useRef(null);
+
   const { projects, setProjects } = usePortfolioData();
 
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
@@ -79,6 +82,11 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     recentUpdates: [],
     recentlyCompleted: [],
     nextUp: []
+  });
+  const [slideItemCounts, setSlideItemCounts] = useState({
+    recentUpdates: 3,
+    recentlyCompleted: 3,
+    nextUp: 3
   });
   const supportedMomentumActions = ['comment', 'add_task', 'update_task', 'add_subtask', 'update_subtask', 'update_project'];
 
@@ -207,6 +215,110 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
       setActivityEdits({});
     }
   }, [activityEditEnabled, projects]);
+
+  // Reset item counts when slide changes or when switching to slides view
+  useEffect(() => {
+    setSlideItemCounts({
+      recentUpdates: 3,
+      recentlyCompleted: 3,
+      nextUp: 3
+    });
+  }, [currentSlideIndex, activeView]);
+
+  // Overflow detection for slide panels
+  useEffect(() => {
+    if (activeView !== 'slides') return;
+
+    const checkOverflow = () => {
+      const panels = [
+        { ref: recentUpdatesRef, key: 'recentUpdates' },
+        { ref: recentlyCompletedRef, key: 'recentlyCompleted' },
+        { ref: nextUpRef, key: 'nextUp' }
+      ];
+
+      let needsUpdate = false;
+      const newCounts = { ...slideItemCounts };
+
+      panels.forEach(({ ref, key }) => {
+        if (!ref.current) return;
+
+        const element = ref.current;
+        const isOverflowing = element.scrollHeight > element.clientHeight;
+        const hasRoom = element.scrollHeight < element.clientHeight * 0.8;
+
+        // Get current visible items for this section
+        const visibleProjects = projects.filter(p => p.status !== 'deleted');
+        if (visibleProjects.length === 0) return;
+
+        const slideProject = visibleProjects[currentSlideIndex % visibleProjects.length];
+        if (!slideProject) return;
+
+        // Get all available items
+        let allItems = [];
+        if (key === 'recentUpdates') {
+          allItems = slideProject.recentActivity.filter(
+            activity => !hiddenSlideItems.recentUpdates.includes(activity.id)
+          );
+        } else if (key === 'recentlyCompleted') {
+          const allRecentlyCompleted = slideProject.plan
+            .flatMap(task =>
+              task.subtasks
+                .filter(sub => sub.completed)
+                .map(sub => ({
+                  id: `${task.id}-${sub.id}`,
+                  title: sub.title,
+                  taskTitle: task.title,
+                  completedDate: sub.completedDate,
+                  dueDate: sub.dueDate
+                }))
+            )
+            .sort((a, b) => new Date(b.completedDate) - new Date(a.completedDate));
+          allItems = allRecentlyCompleted.filter(
+            task => !hiddenSlideItems.recentlyCompleted.includes(task.id)
+          );
+        } else if (key === 'nextUp') {
+          const allNextUp = slideProject.plan
+            .flatMap(task =>
+              task.subtasks
+                .filter(sub => !sub.completed && sub.dueDate)
+                .map(sub => ({
+                  id: `${task.id}-${sub.id}`,
+                  title: sub.title,
+                  taskTitle: task.title,
+                  dueDate: sub.dueDate
+                }))
+            )
+            .sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+          allItems = allNextUp.filter(
+            task => !hiddenSlideItems.nextUp.includes(task.id)
+          );
+        }
+
+        const currentCount = newCounts[key];
+        const maxPossible = allItems.length;
+
+        // If overflowing, reduce count
+        if (isOverflowing && currentCount > 1) {
+          newCounts[key] = Math.max(1, currentCount - 1);
+          needsUpdate = true;
+        }
+        // If plenty of room and more items available, increase count
+        else if (hasRoom && currentCount < maxPossible && currentCount < 10) {
+          newCounts[key] = currentCount + 1;
+          needsUpdate = true;
+        }
+      });
+
+      if (needsUpdate) {
+        setSlideItemCounts(newCounts);
+      }
+    };
+
+    // Run check after render with a small delay to ensure DOM is updated
+    const timeoutId = setTimeout(checkOverflow, 100);
+
+    return () => clearTimeout(timeoutId);
+  }, [activeView, currentSlideIndex, slideItemCounts, projects, hiddenSlideItems]);
 
   const handleDailyCheckin = (projectId) => {
     if (checkinNote.trim()) {
@@ -4145,13 +4257,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 // Filter out hidden items and take the first N visible ones that fit
                 const slideRecentUpdates = allRecentUpdates
                   .filter(activity => !hiddenSlideItems.recentUpdates.includes(activity.id))
-                  .slice(0, 3);
+                  .slice(0, slideItemCounts.recentUpdates);
                 const slideRecentlyCompleted = allRecentlyCompleted
                   .filter(task => !hiddenSlideItems.recentlyCompleted.includes(task.id))
-                  .slice(0, 3);
+                  .slice(0, slideItemCounts.recentlyCompleted);
                 const slideNextUp = allNextUp
                   .filter(task => !hiddenSlideItems.nextUp.includes(task.id))
-                  .slice(0, 3);
+                  .slice(0, slideItemCounts.nextUp);
 
                 return (
                   <div style={styles.slideStage}>
@@ -4248,7 +4360,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                             </div>
 
                             {/* Recent updates */}
-                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideUpdatesPanel }}>
+                            <div ref={recentUpdatesRef} style={{ ...styles.slideSecondaryPanel, ...styles.slideUpdatesPanel }}>
                               <div style={styles.slidePanelHeader}>
                                 <div style={styles.slidePanelTitle}>Recent updates</div>
                               </div>
@@ -4284,7 +4396,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           {/* Right column - Recently Completed and Next Up */}
                           <div style={styles.slideRightColumn}>
                             {/* Recently Completed */}
-                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel }}>
+                            <div ref={recentlyCompletedRef} style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel }}>
                               <div style={styles.slidePanelHeader}>
                                 <div style={styles.slidePanelTitle}>Recently Completed</div>
                               </div>
@@ -4316,7 +4428,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                             </div>
 
                             {/* Next Up */}
-                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel }}>
+                            <div ref={nextUpRef} style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel }}>
                               <div style={styles.slidePanelHeader}>
                                 <div style={styles.slidePanelTitle}>Next Up</div>
                               </div>
