@@ -95,7 +95,6 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     type: "json_schema",
     json_schema: {
       name: "momentum_response",
-      strict: true,
       schema: {
         type: "object",
         properties: {
@@ -7375,6 +7374,8 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     gap: '10px',
+    maxHeight: '500px',
+    overflowY: 'auto',
   },
 
   momentumProjectCard: {
