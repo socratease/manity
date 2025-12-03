@@ -56,7 +56,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
   const [expandedMomentumProjects, setExpandedMomentumProjects] = useState({});
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
-  const [timelineView, setTimelineView] = useState(3); // 3, 6, or 12 months
+  const [timelineView, setTimelineView] = useState(6); // Timeline zoom in months (1-24)
   const [newProjectName, setNewProjectName] = useState('');
   const [newProjectDescription, setNewProjectDescription] = useState('');
   const [newProjectPriority, setNewProjectPriority] = useState('medium');
@@ -2215,23 +2215,44 @@ Keep tool calls granular (one discrete change per action), explain each action c
       return (taskMs / totalMs) * 100;
     };
 
-    // Generate month labels
+    // Generate month labels with smart collision detection
     const generateMonthLabels = () => {
-      const labels = [];
+      const allLabels = [];
       const current = new Date(startDate);
       current.setDate(1); // Start at the first of the month
 
+      // Generate all potential month labels
       while (current <= endDate) {
         const position = getTaskPosition(current);
         if (position >= 0 && position <= 100) {
-          labels.push({
+          allLabels.push({
             month: current.toLocaleDateString('en-US', { month: 'short' }),
-            position: position
+            year: current.getFullYear(),
+            position: position,
+            date: new Date(current)
           });
         }
         current.setMonth(current.getMonth() + 1);
       }
-      return labels;
+
+      // Calculate minimum spacing based on zoom level
+      // Estimate: each label is roughly 30-40px wide, and we need some padding
+      // Assume timeline width is around 800-1000px, so 1% ≈ 8-10px
+      // Therefore, minimum spacing between labels ≈ 5% (50px)
+      const minSpacing = 5; // percentage points
+
+      // Filter labels to prevent collisions
+      const visibleLabels = [];
+      let lastPosition = -minSpacing;
+
+      for (const label of allLabels) {
+        if (label.position - lastPosition >= minSpacing) {
+          visibleLabels.push(label);
+          lastPosition = label.position;
+        }
+      }
+
+      return visibleLabels;
     };
 
     const monthLabels = generateMonthLabels();
@@ -2325,34 +2346,22 @@ Keep tool calls granular (one discrete change per action), explain each action c
       <div style={styles.timelineSection}>
         <div style={styles.timelineHeader}>
           <h3 style={styles.timelineSectionTitle}>Project Timeline</h3>
-          <div style={styles.timelineToggle}>
-            <button
-              onClick={() => setTimelineView(3)}
-              style={{
-                ...styles.timelineToggleButton,
-                ...(timelineView === 3 ? styles.timelineToggleButtonActive : {})
-              }}
-            >
-              3 Months
-            </button>
-            <button
-              onClick={() => setTimelineView(6)}
-              style={{
-                ...styles.timelineToggleButton,
-                ...(timelineView === 6 ? styles.timelineToggleButtonActive : {})
-              }}
-            >
-              6 Months
-            </button>
-            <button
-              onClick={() => setTimelineView(12)}
-              style={{
-                ...styles.timelineToggleButton,
-                ...(timelineView === 12 ? styles.timelineToggleButtonActive : {})
-              }}
-            >
-              1 Year
-            </button>
+          <div style={styles.timelineZoomControl}>
+            <span style={styles.timelineZoomLabel}>
+              {timelineView === 1 ? '1 Month' : timelineView === 12 ? '1 Year' : `${timelineView} Months`}
+            </span>
+            <input
+              type="range"
+              min="1"
+              max="24"
+              value={timelineView}
+              onChange={(e) => setTimelineView(parseInt(e.target.value))}
+              style={styles.timelineZoomSlider}
+            />
+            <div style={styles.timelineZoomTicks}>
+              <span style={styles.timelineZoomTick}>1M</span>
+              <span style={styles.timelineZoomTick}>24M</span>
+            </div>
           </div>
         </div>
 
@@ -2427,17 +2436,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   <div style={{
                     position: 'absolute',
                     left: '0',
-                    maxWidth: isHovered && isGrouped ? '200px' : '150px',
                     fontSize: '11px',
                     fontFamily: "'Inter', sans-serif",
-                    padding: '4px 8px',
-                    backgroundColor: '#FFFFFF',
-                    border: '1px solid var(--cloud)',
-                    borderRadius: '4px',
-                    boxShadow: '0 1px 3px rgba(0,0,0,0.05)',
+                    padding: '2px 0',
                     cursor: isGrouped ? 'pointer' : 'default',
                     transition: 'all 0.2s ease',
                     zIndex: isHovered ? 10 : 1,
+                    whiteSpace: 'nowrap',
                     ...(isAbove
                       ? { bottom: `${lineHeight + 6}px` }
                       : { top: `${lineHeight + 6}px` }
@@ -2451,10 +2456,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                             <span style={{
                               color: 'var(--charcoal)',
                               fontWeight: '600',
-                              display: 'block',
-                              overflow: 'hidden',
-                              textOverflow: 'ellipsis',
-                              whiteSpace: 'nowrap'
+                              display: 'block'
                             }}>
                               {item.task.title}
                             </span>
@@ -2470,11 +2472,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                       </div>
                     ) : (
                       // Show summary or individual items
-                      <div style={{
-                        overflow: 'hidden',
-                        textOverflow: 'ellipsis',
-                        whiteSpace: 'nowrap'
-                      }}>
+                      <div>
                         {items.slice(0, maxItemsBeforeGrouping).map((item, itemIdx) => (
                           <span key={itemIdx}>
                             <span style={{
@@ -5234,37 +5232,52 @@ const styles = {
     fontFamily: "'Inter', sans-serif",
   },
 
-  timelineToggle: {
+  timelineZoomControl: {
     display: 'flex',
-    gap: '8px',
-    backgroundColor: 'var(--cream)',
-    padding: '4px',
-    borderRadius: '8px',
+    flexDirection: 'column',
+    alignItems: 'flex-end',
+    gap: '4px',
+    minWidth: '200px',
   },
 
-  timelineToggleButton: {
-    padding: '6px 16px',
+  timelineZoomLabel: {
     fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+  },
+
+  timelineZoomSlider: {
+    width: '100%',
+    height: '6px',
+    borderRadius: '3px',
+    outline: 'none',
+    appearance: 'none',
+    WebkitAppearance: 'none',
+    background: 'linear-gradient(90deg, var(--cream) 0%, var(--earth) 100%)',
+    cursor: 'pointer',
+  },
+
+  timelineZoomTicks: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    width: '100%',
+    marginTop: '-2px',
+  },
+
+  timelineZoomTick: {
+    fontSize: '10px',
     fontFamily: "'Inter', sans-serif",
     fontWeight: '500',
     color: 'var(--stone)',
-    backgroundColor: 'transparent',
-    border: 'none',
-    borderRadius: '6px',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-  },
-
-  timelineToggleButtonActive: {
-    backgroundColor: '#FFFFFF',
-    color: 'var(--charcoal)',
-    boxShadow: '0 2px 4px rgba(0,0,0,0.08)',
+    opacity: 0.6,
   },
 
   timelineContainer: {
     position: 'relative',
     paddingTop: '80px',
     paddingBottom: '80px',
+    overflow: 'hidden',
   },
 
   timelineBar: {
