@@ -4,7 +4,14 @@ import { defaultPortfolio, exportPortfolio, importPortfolio, loadPortfolio, save
 const PortfolioContext = createContext(null);
 
 export const PortfolioProvider = ({ children }) => {
-  const [projects, setProjects] = useState(() => loadPortfolio(defaultPortfolio));
+  const [projects, setProjects] = useState(() => {
+    const loadedProjects = loadPortfolio(defaultPortfolio);
+    // Migration: Initialize executiveUpdate from description if not set
+    return loadedProjects.map(project => ({
+      ...project,
+      executiveUpdate: project.executiveUpdate || project.description
+    }));
+  });
 
   useEffect(() => {
     savePortfolio(projects);

@@ -747,7 +747,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     setProjects(prevProjects =>
       prevProjects.map(project =>
         project.id === projectId
-          ? { ...project, description: execSummaryDraft }
+          ? { ...project, executiveUpdate: execSummaryDraft }
           : project
       )
     );
@@ -791,7 +791,7 @@ Write a professional executive summary that highlights the project's current sta
       setProjects(prevProjects =>
         prevProjects.map(p =>
           p.id === projectId
-            ? { ...p, description: response }
+            ? { ...p, executiveUpdate: response }
             : p
         )
       );
@@ -4280,7 +4280,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                       <button
                         onClick={() => {
                           if (!isEditingSlide) {
-                            startEditingExecSummary(slideProject.id, slideProject.description);
+                            startEditingExecSummary(slideProject.id, slideProject.executiveUpdate || slideProject.description);
                           }
                           toggleSlideEditMode();
                         }}
@@ -4334,10 +4334,10 @@ Keep tool calls granular (one discrete change per action), explain each action c
                         <div style={styles.slideMainGrid}>
                           {/* Left column - Executive Summary and Recent Updates */}
                           <div style={styles.slideLeftColumn}>
-                            {/* Executive summary */}
+                            {/* Executive Update */}
                             <div style={{ ...styles.slideSecondaryPanel, ...styles.slideExecSummaryPanel }}>
                               <div style={styles.slidePanelHeader}>
-                                <div style={styles.slidePanelTitle}>Executive summary</div>
+                                <div style={styles.slidePanelTitle}>Executive Update</div>
                               </div>
                               {editingExecSummary === slideProject.id ? (
                                 <div>
@@ -4345,13 +4345,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                     value={execSummaryDraft}
                                     onChange={(e) => setExecSummaryDraft(e.target.value)}
                                     style={styles.execSummaryInput}
-                                    placeholder="Write executive summary..."
+                                    placeholder="Write executive update..."
                                     autoFocus
                                   />
                                 </div>
                               ) : (
                                 <div style={styles.slideExecSummary}>
-                                  {slideProject.description || 'No executive summary yet.'}
+                                  {slideProject.executiveUpdate || slideProject.description || 'No executive update yet.'}
                                 </div>
                               )}
                             </div>
@@ -4448,7 +4448,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                           </button>
                                         )}
                                       </div>
-                                      <div style={styles.momentumListText}>Due {task.dueDateInfo.formattedDate}</div>
                                     </li>
                                   ))}
                                 </ul>

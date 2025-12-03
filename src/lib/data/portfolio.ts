@@ -36,6 +36,7 @@ export interface Project {
   progress: number;
   lastUpdate: string;
   description: string;
+  executiveUpdate?: string;
   startDate?: string;
   targetDate?: string;
   plan: Task[];
@@ -66,6 +67,7 @@ export const defaultPortfolio: Project[] = [
     progress: 65,
     lastUpdate: 'Completed homepage mockups and user testing',
     description: 'Complete overhaul of company website with focus on improved user experience and modern design standards.',
+    executiveUpdate: 'Complete overhaul of company website with focus on improved user experience and modern design standards.',
     startDate: '2025-10-15',
     targetDate: '2025-12-20',
     plan: [
@@ -127,6 +129,7 @@ export const defaultPortfolio: Project[] = [
     progress: 40,
     lastUpdate: 'Draft content calendar completed, awaiting approval',
     description: 'Multi-channel marketing campaign to drive Q4 sales and brand awareness across social media, email, and paid advertising.',
+    executiveUpdate: 'Multi-channel marketing campaign to drive Q4 sales and brand awareness across social media, email, and paid advertising.',
     startDate: '2025-11-01',
     targetDate: '2025-12-31',
     plan: [
@@ -185,6 +188,7 @@ export const defaultPortfolio: Project[] = [
     progress: 15,
     lastUpdate: 'Requirements gathering phase, initial wireframes drafted',
     description: 'Build next generation customer portal with enhanced self-service features, real-time support chat, and personalized dashboard.',
+    executiveUpdate: 'Build next generation customer portal with enhanced self-service features, real-time support chat, and personalized dashboard.',
     startDate: '2025-11-15',
     targetDate: '2026-02-28',
     plan: [
@@ -283,24 +287,32 @@ const clampProgress = (progress: unknown): number => {
   return Math.min(100, Math.max(0, progress));
 };
 
-const normalizeProject = (project: Partial<Project>, idx: number): Project => ({
-  id: project.id ?? idx + 1,
-  name: typeof project.name === 'string' ? project.name : `Project ${idx + 1}`,
-  stakeholders: Array.isArray(project.stakeholders)
-    ? project.stakeholders.map((stakeholder, stakeholderIdx) => normalizeStakeholder(stakeholder, stakeholderIdx))
-    : [],
-  status: typeof project.status === 'string' ? project.status : 'planning',
-  priority: typeof project.priority === 'string' ? project.priority : 'medium',
-  progress: clampProgress(project.progress),
-  lastUpdate: typeof project.lastUpdate === 'string' ? project.lastUpdate : '',
-  description: typeof project.description === 'string' ? project.description : '',
-  startDate: project.startDate,
-  targetDate: project.targetDate,
-  plan: Array.isArray(project.plan) ? project.plan.map((task, taskIdx) => normalizeTask(task, taskIdx)) : [],
-  recentActivity: Array.isArray(project.recentActivity)
-    ? addIdsToActivities(project.recentActivity.map((activity, actIdx) => normalizeActivity(activity, actIdx)), `p${idx + 1}`)
-    : []
-});
+const normalizeProject = (project: Partial<Project>, idx: number): Project => {
+  const description = typeof project.description === 'string' ? project.description : '';
+  const executiveUpdate = typeof project.executiveUpdate === 'string'
+    ? project.executiveUpdate
+    : description; // Initialize from description if not set
+
+  return {
+    id: project.id ?? idx + 1,
+    name: typeof project.name === 'string' ? project.name : `Project ${idx + 1}`,
+    stakeholders: Array.isArray(project.stakeholders)
+      ? project.stakeholders.map((stakeholder, stakeholderIdx) => normalizeStakeholder(stakeholder, stakeholderIdx))
+      : [],
+    status: typeof project.status === 'string' ? project.status : 'planning',
+    priority: typeof project.priority === 'string' ? project.priority : 'medium',
+    progress: clampProgress(project.progress),
+    lastUpdate: typeof project.lastUpdate === 'string' ? project.lastUpdate : '',
+    description,
+    executiveUpdate,
+    startDate: project.startDate,
+    targetDate: project.targetDate,
+    plan: Array.isArray(project.plan) ? project.plan.map((task, taskIdx) => normalizeTask(task, taskIdx)) : [],
+    recentActivity: Array.isArray(project.recentActivity)
+      ? addIdsToActivities(project.recentActivity.map((activity, actIdx) => normalizeActivity(activity, actIdx)), `p${idx + 1}`)
+      : []
+  };
+};
 
 export const exportPortfolio = (projects: Project[]): string => {
   const normalizedProjects = Array.isArray(projects) ? projects.map((project, idx) => normalizeProject(project, idx)) : [];
