@@ -88,7 +88,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     recentlyCompleted: 3,
     nextUp: 3
   });
-  const supportedMomentumActions = ['comment', 'add_task', 'update_task', 'add_subtask', 'update_subtask', 'update_project'];
+  const supportedMomentumActions = ['comment', 'add_task', 'update_task', 'add_subtask', 'update_subtask', 'update_project', 'create_project'];
 
   // JSON Schema for structured output - ensures LLM returns properly formatted actions
   const momentumResponseSchema = {
@@ -110,7 +110,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
               properties: {
                 type: {
                   type: "string",
-                  enum: ["comment", "add_task", "update_task", "add_subtask", "update_subtask", "update_project"],
+                  enum: ["comment", "add_task", "update_task", "add_subtask", "update_subtask", "update_project", "create_project"],
                   description: "The type of action"
                 },
                 projectId: {
@@ -177,6 +177,23 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
                 lastUpdate: {
                   type: "string",
                   description: "Last update timestamp"
+                },
+                name: {
+                  type: "string",
+                  description: "Project name (for create_project action)"
+                },
+                description: {
+                  type: "string",
+                  description: "Project description (for create_project action)"
+                },
+                priority: {
+                  type: "string",
+                  enum: ["low", "medium", "high"],
+                  description: "Project priority (for create_project action)"
+                },
+                stakeholders: {
+                  type: "string",
+                  description: "Comma-separated list of stakeholder names (for create_project action)"
                 }
               },
               required: ["type"],
@@ -331,12 +348,35 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
           e.preventDefault();
           toggleSlideEditMode();
         }
+        // Handle Esc to cancel edit mode without saving
+        if (e.key === 'Escape' && isEditingSlide) {
+          e.preventDefault();
+          setIsEditingSlide(false);
+          setEditingExecSummary(null);
+          setExecSummaryDraft('');
+        }
         return;
       }
 
       const visibleProjects = projects.filter(p => p.status !== 'deleted');
       if (visibleProjects.length === 0) return;
       const slideProject = visibleProjects[currentSlideIndex % visibleProjects.length];
+
+      // Ctrl+Enter: Save and exit edit mode (when focus is outside textarea)
+      if (e.ctrlKey && e.key === 'Enter' && isEditingSlide) {
+        e.preventDefault();
+        toggleSlideEditMode();
+        return;
+      }
+
+      // Esc: Cancel edit mode without saving (when focus is outside textarea)
+      if (e.key === 'Escape' && isEditingSlide) {
+        e.preventDefault();
+        setIsEditingSlide(false);
+        setEditingExecSummary(null);
+        setExecSummaryDraft('');
+        return;
+      }
 
       // 'e' key: Enter edit mode
       if (e.key === 'e' && !isEditingSlide) {
@@ -1245,6 +1285,17 @@ Write a professional executive summary that highlights the project's current sta
         return;
       }
 
+      // create_project doesn't need a projectId - it creates a new project
+      if (action.type === 'create_project') {
+        const projectName = action.name || action.projectName;
+        if (!projectName) {
+          errors.push(`Action ${idx + 1} (create_project) is missing a name or projectName.`);
+          return;
+        }
+        validActions.push(action);
+        return;
+      }
+
       const projectRef = action.projectId ?? action.projectName;
       if (!projectRef) {
         errors.push(`Action ${idx + 1} (${action.type}) is missing a projectId or projectName.`);
@@ -1274,6 +1325,15 @@ Write a professional executive summary that highlights the project's current sta
       const working = prevProjects.map(cloneProjectDeep);
 
       deltas.slice().reverse().forEach(delta => {
+        // Handle remove_project separately since it removes the entire project
+        if (delta.type === 'remove_project') {
+          const index = working.findIndex(p => `${p.id}` === `${delta.projectId}`);
+          if (index !== -1) {
+            working.splice(index, 1);
+          }
+          return;
+        }
+
         const project = working.find(p => `${p.id}` === `${delta.projectId}`);
         if (!project) return;
 
@@ -1525,6 +1585,43 @@ Write a professional executive summary that highlights the project's current sta
             detail = `Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`;
             break;
           }
+          case 'create_project': {
+            const projectName = action.name || action.projectName;
+            if (!projectName) {
+              label = 'Skipped action: missing project name';
+              detail = 'Skipped create_project because no name was provided.';
+              break;
+            }
+
+            const stakeholderEntries = action.stakeholders
+              ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean).map(name => ({ name, team: 'Contributor' }))
+              : [{ name: loggedInUser || 'Momentum', team: 'Owner' }];
+
+            const createdAt = new Date().toISOString();
+            const newId = `proj-${Date.now()}`;
+            const newProject = {
+              id: newId,
+              name: projectName.trim(),
+              stakeholders: stakeholderEntries,
+              status: action.status || 'planning',
+              priority: action.priority || 'medium',
+              progress: 0,
+              lastUpdate: action.description ? action.description.slice(0, 120) : 'New project created by Momentum',
+              description: action.description || '',
+              startDate: createdAt.split('T')[0],
+              targetDate: action.targetDate || '',
+              plan: [],
+              recentActivity: action.description
+                ? [{ id: generateActivityId(), date: createdAt, note: action.description, author: 'Momentum' }]
+                : []
+            };
+
+            workingProjects.push(newProject);
+            actionDeltas.push({ type: 'remove_project', projectId: newId });
+            label = `Created new project "${projectName}"`;
+            detail = `Created new project "${projectName}" with status ${newProject.status} and priority ${newProject.priority}`;
+            break;
+          }
           default:
             label = 'Skipped action: unsupported type';
             detail = `Skipped unsupported action type: ${action.type}`;
@@ -1717,8 +1814,9 @@ Supported atomic actions (never combine multiple changes into one action):
 - add_subtask: create a subtask. Fields: projectId, taskId or taskTitle, subtaskTitle or title, status, dueDate.
 - update_subtask: adjust a subtask. Fields: projectId, taskId or taskTitle, subtaskId or subtaskTitle, title, status, dueDate, completedDate.
 - update_project: change project status/progress/dates. Fields: projectId, status, progress (0-100), targetDate, lastUpdate.
+- create_project: create a new project. Fields: name (required), description (optional), priority (low/medium/high, default medium), status (planning/active/on-hold/cancelled, default planning), targetDate (optional), stakeholders (comma-separated names, optional).
 
-Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project.`;
+Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project. When creating projects, if you lack required information like name or description, ask the user for these details before proceeding with the action.`;
     const context = buildThrustContext();
     const orderedMessages = [...nextMessages].sort((a, b) => new Date(a.date) - new Date(b.date));
     const messages = [
