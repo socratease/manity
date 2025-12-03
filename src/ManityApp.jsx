@@ -319,6 +319,55 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
     return () => clearTimeout(timeoutId);
   }, [activeView, currentSlideIndex, slideItemCounts, projects, hiddenSlideItems]);
 
+  // Keyboard shortcuts for slides view
+  useEffect(() => {
+    if (activeView !== 'slides') return;
+
+    const handleKeyDown = (e) => {
+      // Don't interfere with typing in inputs/textareas
+      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
+        // Only handle Ctrl+Enter when in textarea to save and exit edit mode
+        if (e.ctrlKey && e.key === 'Enter' && isEditingSlide) {
+          e.preventDefault();
+          toggleSlideEditMode();
+        }
+        return;
+      }
+
+      const visibleProjects = projects.filter(p => p.status !== 'deleted');
+      if (visibleProjects.length === 0) return;
+      const slideProject = visibleProjects[currentSlideIndex % visibleProjects.length];
+
+      // 'e' key: Enter edit mode
+      if (e.key === 'e' && !isEditingSlide) {
+        e.preventDefault();
+        startEditingExecSummary(slideProject.id, slideProject.executiveUpdate || slideProject.description);
+        setIsEditingSlide(true);
+        // Focus will be handled by autoFocus on textarea
+      }
+
+      // 'g' key: Generate AI summary (only in edit mode)
+      if (e.key === 'g' && isEditingSlide && !isGeneratingSummary && apiKey) {
+        e.preventDefault();
+        generateExecSummary(slideProject.id);
+      }
+
+      // Arrow keys: Navigate slides (only when not editing)
+      if (!isEditingSlide) {
+        if (e.key === 'ArrowLeft') {
+          e.preventDefault();
+          handleSlideAdvance(-1);
+        } else if (e.key === 'ArrowRight') {
+          e.preventDefault();
+          handleSlideAdvance(1);
+        }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [activeView, isEditingSlide, currentSlideIndex, projects, isGeneratingSummary, apiKey]);
+
   const handleDailyCheckin = (projectId) => {
     if (checkinNote.trim()) {
       setProjects(projects.map(p =>
@@ -813,7 +862,7 @@ Write a professional executive summary that highlights the project's current sta
         setProjects(prevProjects =>
           prevProjects.map(project =>
             project.id === projectId
-              ? { ...project, description: execSummaryDraft }
+              ? { ...project, executiveUpdate: execSummaryDraft }
               : project
           )
         );
@@ -4215,7 +4264,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
               <div>
                 <h2 style={styles.pageTitle}>Slides</h2>
                 <p style={styles.pageSubtitle}>
-                  Cycle through {visibleProjects.length} projects in a 16:9 frame, ready for screenshots.
+                  Cycle through {visibleProjects.length} projects in a 16:9 frame, ready for screenshots. Use ← → arrow keys to navigate.
                 </p>
               </div>
               <div style={styles.headerActions}>
@@ -4265,18 +4314,21 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 return (
                   <div style={styles.slideStage}>
                     <div style={styles.slideControlRail}>
-                      <button
-                        onClick={() => generateExecSummary(slideProject.id)}
-                        style={{
-                          ...styles.slideControlButton,
-                          opacity: isGeneratingSummary ? 0.5 : 1,
-                        }}
-                        disabled={isGeneratingSummary || !apiKey}
-                        title={!apiKey ? 'API key required' : 'AI generate summary'}
-                      >
-                        <Sparkles size={14} />
-                        <span>AI generate</span>
-                      </button>
+                      {isEditingSlide && (
+                        <button
+                          onClick={() => generateExecSummary(slideProject.id)}
+                          style={{
+                            ...styles.slideControlButton,
+                            opacity: isGeneratingSummary ? 0.5 : 1,
+                          }}
+                          disabled={isGeneratingSummary || !apiKey}
+                          title={!apiKey ? 'API key required' : 'AI generate summary (g)'}
+                        >
+                          <Sparkles size={14} />
+                          <span>AI generate</span>
+                          <span style={{ fontSize: '10px', opacity: 0.6, marginLeft: '4px' }}>G</span>
+                        </button>
+                      )}
                       <button
                         onClick={() => {
                           if (!isEditingSlide) {
@@ -4290,10 +4342,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           borderColor: isEditingSlide ? 'var(--coral)' : 'var(--cloud)',
                           color: isEditingSlide ? 'var(--coral)' : 'var(--charcoal)'
                         }}
-                        title="Edit slide"
+                        title={isEditingSlide ? 'Save and exit edit mode (Ctrl+Enter)' : 'Edit slide (e)'}
                       >
                         <Edit2 size={14} />
-                        <span>Edit</span>
+                        <span>{isEditingSlide ? 'Save' : 'Edit'}</span>
+                        <span style={{ fontSize: '10px', opacity: 0.6, marginLeft: '4px' }}>
+                          {isEditingSlide ? 'Ctrl+⏎' : 'E'}
+                        </span>
                       </button>
                     </div>
                     <div style={styles.slideSurface}>
