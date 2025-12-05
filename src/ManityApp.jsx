@@ -344,9 +344,21 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
       // Don't interfere with typing in inputs/textareas
       if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') {
         // Only handle Ctrl+Enter when in textarea to save and exit edit mode
-        if (e.ctrlKey && e.key === 'Enter' && isEditingSlide) {
+        if (e.ctrlKey && e.key === 'Enter' && isEditingSlide && editingExecSummary) {
           e.preventDefault();
-          toggleSlideEditMode();
+          // Explicitly save changes
+          const projectId = editingExecSummary;
+          setProjects(prevProjects =>
+            prevProjects.map(project =>
+              project.id === projectId
+                ? { ...project, executiveUpdate: execSummaryDraft }
+                : project
+            )
+          );
+          // Exit edit mode
+          setIsEditingSlide(false);
+          setEditingExecSummary(null);
+          setExecSummaryDraft('');
         }
         // Handle Esc to cancel edit mode without saving
         if (e.key === 'Escape' && isEditingSlide) {
@@ -363,9 +375,21 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
       const slideProject = visibleProjects[currentSlideIndex % visibleProjects.length];
 
       // Ctrl+Enter: Save and exit edit mode (when focus is outside textarea)
-      if (e.ctrlKey && e.key === 'Enter' && isEditingSlide) {
+      if (e.ctrlKey && e.key === 'Enter' && isEditingSlide && editingExecSummary) {
         e.preventDefault();
-        toggleSlideEditMode();
+        // Explicitly save changes
+        const projectId = editingExecSummary;
+        setProjects(prevProjects =>
+          prevProjects.map(project =>
+            project.id === projectId
+              ? { ...project, executiveUpdate: execSummaryDraft }
+              : project
+          )
+        );
+        // Exit edit mode
+        setIsEditingSlide(false);
+        setEditingExecSummary(null);
+        setExecSummaryDraft('');
         return;
       }
 
@@ -2958,6 +2982,22 @@ Keep tool calls granular (one discrete change per action), explain each action c
             <div style={styles.logoIcon}>
               <TrendingUp size={20} style={{ color: '#FFFFFF' }} />
             </div>
+            <button
+              onClick={() => {
+                setActiveView('thrust');
+                setViewingProjectId(null);
+              }}
+              style={{
+                ...styles.navItem,
+                ...(activeView === 'thrust' && !viewingProjectId ? styles.navItemActive : {}),
+                padding: '12px',
+                justifyContent: 'center',
+                marginTop: '16px'
+              }}
+              title="Momentum"
+            >
+              <TrendingUp size={20} style={{ color: activeView === 'thrust' ? 'var(--earth)' : 'var(--charcoal)' }} />
+            </button>
           </div>
         ) : (
           <div style={styles.sidebarContent}>
@@ -2979,7 +3019,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   ...(activeView === 'overview' && !viewingProjectId ? styles.navItemActive : {})
                 }}
               >
-                Overview
+                Portfolio
               </button>
               <button
                 onClick={() => {
@@ -4093,10 +4133,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 <div style={styles.thrustChatPanel}>
                   <div style={styles.sectionHeaderRow}>
                     <div>
-                      <h3 style={styles.sectionTitle}>Chat</h3>
-                      <p style={styles.sectionSubtitle}>Threaded updates stay aligned with project momentum</p>
+                      <h3 style={styles.sectionTitle}>Interlocutor</h3>
                     </div>
-                    <div style={styles.thrustPill}>Live</div>
                   </div>
 
                   {thrustPendingActions.length > 0 && (
@@ -4214,7 +4252,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                         handleSendThrustMessage();
                       }
                     }}
-                    placeholder="Share a Momentum update..."
+                    placeholder="share a work update..."
                     style={{ ...styles.timelineInput, minHeight: '96px' }}
                   />
                   {renderEditingHint('thrust-draft')}
@@ -4238,7 +4276,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   <div style={styles.thrustInfoTitle}>
                     <Sparkles size={16} style={{ color: 'var(--earth)' }} />
                     <div>
-                      <div style={styles.thrustInfoLabel}>Projects</div>
+                      <div style={styles.thrustInfoLabel}>Portfolio</div>
                       <div style={styles.thrustInfoSubtle}>Expand a project for a daily update snapshot</div>
                     </div>
                   </div>
@@ -7700,7 +7738,7 @@ const styles = {
 
   slideControlRail: {
     position: 'absolute',
-    left: '-84px',
+    left: '0px',
     top: '30px',
     display: 'flex',
     flexDirection: 'column',
