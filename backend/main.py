@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import os
 import uuid
 from datetime import datetime
+from enum import Enum
 from typing import List, Optional
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field as PydanticField
+import httpx
 from sqlalchemy import Column, delete
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import selectinload
@@ -115,6 +118,23 @@ class ProjectPayload(ProjectBase):
 class ImportPayload(BaseModel):
     projects: List[ProjectPayload]
     mode: str = "replace"
+
+
+class ChatRole(str, Enum):
+    SYSTEM = "system"
+    USER = "user"
+    ASSISTANT = "assistant"
+
+
+class ChatMessage(BaseModel):
+    role: ChatRole
+    content: str
+
+
+class ChatRequest(BaseModel):
+    model: str = "gpt-5.1"
+    messages: List[ChatMessage] = PydanticField(..., min_items=1)
+    response_format: Optional[dict] = None
 
 
 app = FastAPI(title="Manity Portfolio API")
@@ -579,6 +599,50 @@ def import_portfolio(
 
     projects = list_projects(session)
     return {"projects": projects}
+
+
+@app.post("/api/llm/chat")
+async def proxy_llm_chat(payload: ChatRequest):
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="OpenAI API key not configured on server",
+        )
+
+    request_body = {
+        "model": payload.model,
+        "messages": [message.model_dump() for message in payload.messages],
+    }
+
+    if payload.response_format is not None:
+        request_body["response_format"] = payload.response_format
+
+    try:
+        async with httpx.AsyncClient(timeout=30) as client:
+            response = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={
+                    "Content-Type": "application/json",
+                    "Authorization": f"Bearer {api_key}",
+                },
+                json=request_body,
+            )
+    except httpx.HTTPError as exc:  # pragma: no cover - network safeguard
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=f"Upstream request failed: {exc}",
+        ) from exc
+
+    if response.status_code >= 400:
+        raise HTTPException(
+            status_code=response.status_code,
+            detail=response.text,
+        )
+
+    data = response.json()
+    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    return {"content": content, "raw": data}
 
 
 @app.get("/")

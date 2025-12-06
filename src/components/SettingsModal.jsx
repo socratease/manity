@@ -3,11 +3,6 @@ import { Download, Upload } from "lucide-react";
 
 export default function SettingsModal({
   isOpen,
-  tempKey,
-  hasStoredKey,
-  onTempKeyChange,
-  onSave,
-  onClear,
   onClose,
   onExport,
   onImport,
@@ -59,37 +54,6 @@ export default function SettingsModal({
             ×
           </button>
         </div>
-
-        {/* API Key Section */}
-        <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>API key</h3>
-          <p style={styles.description}>
-            Your API key is stored only in this browser (localStorage) and is sent only to the model provider when you explicitly make a
-            request. It is never sent to GitHub or any other server.
-          </p>
-
-          <input
-            type="password"
-            value={tempKey}
-            onChange={(e) => onTempKeyChange(e.target.value)}
-            placeholder="Paste your OpenAI API key"
-            style={styles.input}
-          />
-
-          <div style={styles.actions}>
-            <button onClick={onSave} style={styles.primaryButton}>
-              Save
-            </button>
-            {hasStoredKey && (
-              <button onClick={onClear} type="button" style={styles.secondaryButton}>
-                Clear stored key
-              </button>
-            )}
-          </div>
-        </div>
-
-        {/* Divider */}
-        <div style={styles.divider} />
 
         {/* Import/Export Section */}
         <div style={styles.section}>
