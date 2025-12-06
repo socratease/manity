@@ -13,7 +13,7 @@ from pydantic import BaseModel, Field as PydanticField
 import httpx
 from sqlalchemy import Column, delete
 from sqlalchemy.dialects.sqlite import JSON
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import Mapped, selectinload
 from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, select
 
 DATABASE_URL = "sqlite:///./portfolio.db"
@@ -39,7 +39,7 @@ class SubtaskBase(SQLModel):
 class Subtask(SubtaskBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     task_id: Optional[str] = Field(default=None, foreign_key="task.id")
-    task: Optional["Task"] = Relationship(back_populates="subtasks")
+    task: Mapped[Optional["Task"]] = Relationship(back_populates="subtasks")
 
 
 class TaskBase(SQLModel):
@@ -52,8 +52,8 @@ class TaskBase(SQLModel):
 class Task(TaskBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     project_id: Optional[str] = Field(default=None, foreign_key="project.id")
-    project: Optional["Project"] = Relationship(back_populates="plan")
-    subtasks: List[Subtask] = Relationship(
+    project: Mapped[Optional["Project"]] = Relationship(back_populates="plan")
+    subtasks: Mapped[List[Subtask]] = Relationship(
         back_populates="task",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
@@ -68,7 +68,7 @@ class ActivityBase(SQLModel):
 class Activity(ActivityBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     project_id: Optional[str] = Field(default=None, foreign_key="project.id")
-    project: Optional["Project"] = Relationship(back_populates="recentActivity")
+    project: Mapped[Optional["Project"]] = Relationship(back_populates="recentActivity")
 
 
 class ProjectBase(SQLModel):
@@ -86,11 +86,11 @@ class ProjectBase(SQLModel):
 
 class Project(ProjectBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
-    plan: List[Task] = Relationship(
+    plan: Mapped[List[Task]] = Relationship(
         back_populates="project",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
-    recentActivity: List[Activity] = Relationship(
+    recentActivity: Mapped[List[Activity]] = Relationship(
         back_populates="project",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
