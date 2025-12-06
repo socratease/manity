@@ -2,3 +2,4 @@ fastapi
 uvicorn
 sqlmodel
 httpx
+python-multipart
