@@ -50,6 +50,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     verticalRepulsion: 10000,
     settleTreshold: 0.25,
     boundaryForce: 0.8,
+    dotTug: 0.008, // Force pulling box toward its connected dot
   };
 
   const getTimelineX = useCallback((date) => {
@@ -81,8 +82,8 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
 
       return {
         ...task,
-        x: targetX + (Math.random() - 0.5) * 400,
-        y: targetY + (Math.random() - 0.5) * 200,
+        x: targetX + (Math.random() - 0.5) * 100,
+        y: targetY + (Math.random() - 0.5) * 80,
         targetX,
         targetY,
         isAbove,
@@ -110,11 +111,20 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
           let fx = 0;
           let fy = 0;
 
+          // Spring force toward target position (horizontal and vertical offsets)
           const dx = node.targetX - node.x;
           fx += dx * physics.springStrength;
 
           const dy = node.targetY - node.y;
           fy += dy * physics.verticalSpring;
+
+          // Tug force toward the connected dot on timeline
+          const dotX = node.targetX;
+          const dotY = timelineConfig.lineY;
+          const dotDx = dotX - node.x;
+          const dotDy = dotY - node.y;
+          fx += dotDx * physics.dotTug;
+          fy += dotDy * physics.dotTug;
 
           prevNodes.forEach((other, j) => {
             if (i === j) return;
