@@ -1,33 +1,27 @@
-export async function callOpenAIChat({ apiKey, messages, model = "gpt-5.1", responseFormat = null }) {
-  if (!apiKey) {
-    throw new Error("Missing API key");
-  }
-
+export async function callOpenAIChat({ messages, model = "gpt-5.1", responseFormat = null }) {
   const requestBody = {
     model,
     messages,
   };
 
-  // Add structured output if provided
   if (responseFormat) {
     requestBody.response_format = responseFormat;
   }
 
-  const res = await fetch("https://api.openai.com/v1/chat/completions", {
+  const res = await fetch("/api/llm/chat", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      Authorization: `Bearer ${apiKey}`,
     },
     body: JSON.stringify(requestBody),
   });
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`OpenAI error: ${text}`);
+    throw new Error(`Chat API error: ${text}`);
   }
 
   const json = await res.json();
-  const content = json.choices?.[0]?.message?.content ?? "";
-  return { content, raw: json };
+  const content = json.content ?? "";
+  return { content, raw: json.raw };
 }

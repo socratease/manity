@@ -1,40 +1,18 @@
-import React, { useState, useEffect } from "react";
+import React, { useState } from "react";
 import ManityApp from "./ManityApp";
 import SettingsModal from "./components/SettingsModal";
-import { useApiKey } from "./hooks/useApiKey";
 import { PortfolioProvider, usePortfolioData } from "./hooks/usePortfolioData";
 
 function AppContent() {
-  const { apiKey, setApiKey, clearApiKey, hasStoredKey } = useApiKey();
   const { projects, handleExport, handleImport } = usePortfolioData();
-  const [tempKey, setTempKey] = useState("");
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const openSettings = () => {
     setIsSettingsOpen(true);
-    setTempKey(apiKey ? "********" : "");
   };
 
   const closeSettings = () => {
     setIsSettingsOpen(false);
-  };
-
-  useEffect(() => {
-    if (apiKey) {
-      setTempKey("********");
-    }
-  }, [apiKey]);
-
-  const handleSave = () => {
-    if (tempKey && tempKey !== "********") {
-      setApiKey(tempKey.trim());
-    }
-    setIsSettingsOpen(false);
-  };
-
-  const handleClear = () => {
-    clearApiKey();
-    setTempKey("");
   };
 
   const handleImportWrapper = async (file) => {
@@ -47,14 +25,9 @@ function AppContent() {
 
   return (
     <>
-      <ManityApp onOpenSettings={openSettings} apiKey={apiKey} />
+      <ManityApp onOpenSettings={openSettings} />
       <SettingsModal
         isOpen={isSettingsOpen}
-        tempKey={tempKey}
-        hasStoredKey={hasStoredKey}
-        onTempKeyChange={setTempKey}
-        onSave={handleSave}
-        onClear={handleClear}
         onClose={closeSettings}
         onExport={handleExport}
         onImport={handleImportWrapper}

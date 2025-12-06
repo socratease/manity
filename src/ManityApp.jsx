@@ -6,7 +6,7 @@ import ForceDirectedTimeline from './components/ForceDirectedTimeline';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
-export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
+export default function ManityApp({ onOpenSettings = () => {} }) {
   const timelineInputRef = useRef(null);
   const projectUpdateInputRef = useRef(null);
   const recentUpdatesRef = useRef(null);
@@ -411,7 +411,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
       }
 
       // 'g' key: Generate AI summary (only in edit mode)
-      if (e.key === 'g' && isEditingSlide && !isGeneratingSummary && apiKey) {
+      if (e.key === 'g' && isEditingSlide && !isGeneratingSummary) {
         e.preventDefault();
         generateExecSummary(slideProject.id);
       }
@@ -430,7 +430,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeView, isEditingSlide, currentSlideIndex, projects, isGeneratingSummary, apiKey]);
+  }, [activeView, isEditingSlide, currentSlideIndex, projects, isGeneratingSummary]);
 
   const handleDailyCheckin = (projectId) => {
     if (checkinNote.trim()) {
@@ -870,7 +870,7 @@ export default function ManityApp({ onOpenSettings = () => {}, apiKey = '' }) {
 
   const generateExecSummary = async (projectId) => {
     const project = projects.find(p => p.id === projectId);
-    if (!project || !apiKey) return;
+    if (!project) return;
 
     setIsGeneratingSummary(true);
     try {
@@ -897,14 +897,16 @@ Upcoming Tasks: ${upcomingTasks || 'None'}
 
 Write a professional executive summary that highlights the project's current state and key activities.`;
 
-      const response = await callOpenAIChat(apiKey, [
-        { role: 'user', content: prompt }
-      ]);
+      const { content } = await callOpenAIChat({
+        messages: [
+          { role: 'user', content: prompt }
+        ]
+      });
 
       setProjects(prevProjects =>
         prevProjects.map(p =>
           p.id === projectId
-            ? { ...p, executiveUpdate: response }
+            ? { ...p, executiveUpdate: content }
             : p
         )
       );
@@ -1780,7 +1782,6 @@ Write a professional executive summary that highlights the project's current sta
   const requestMomentumActions = async (messages, attempt = 1) => {
     const maxAttempts = 3;
     const { content } = await callOpenAIChat({
-      apiKey,
       messages,
       responseFormat: momentumResponseSchema
     });
@@ -1823,11 +1824,6 @@ Write a professional executive summary that highlights the project's current sta
     setThrustDraft('');
     setThrustError('');
     setThrustPendingActions([]);
-
-    if (!apiKey) {
-      setThrustError('Add an API key in Settings to chat with Momentum.');
-      return;
-    }
 
     const systemPrompt = `You are Momentum, an experienced technical project manager using dialectic project planning. Be concise but explicit about what you are doing, offer guiding prompts such as "have you thought of X yet?", and rely on the provided project data for context. Respond with a JSON object containing a 'response' string and an 'actions' array.
 
@@ -4157,8 +4153,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
                             ...styles.slideControlButton,
                             opacity: isGeneratingSummary ? 0.5 : 1,
                           }}
-                          disabled={isGeneratingSummary || !apiKey}
-                          title={!apiKey ? 'API key required' : 'AI generate summary (g)'}
+                          disabled={isGeneratingSummary}
+                          title="AI generate summary (g)"
                         >
                           <Sparkles size={14} />
                           <span>AI generate</span>
