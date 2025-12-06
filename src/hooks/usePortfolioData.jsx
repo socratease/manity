@@ -1,77 +1,272 @@
-import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { defaultPortfolio, exportPortfolio, importPortfolio, loadPortfolio, savePortfolio } from '../lib/data/portfolio';
+import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
+import { defaultPortfolio } from '../lib/data/portfolio';
 
 const PortfolioContext = createContext(null);
 
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const resolveUrl = (path) => {
+  if (API_BASE.startsWith('http')) return `${API_BASE}${path}`;
+  return `${window.location.origin}${API_BASE}${path}`;
+};
+
 export const PortfolioProvider = ({ children }) => {
-  const [projects, setProjects] = useState(() => {
-    const loadedProjects = loadPortfolio(defaultPortfolio);
-    // Migration: Initialize executiveUpdate from description if not set
-    return loadedProjects.map(project => ({
-      ...project,
-      executiveUpdate: project.executiveUpdate || project.description
-    }));
-  });
+  const [projects, setProjectsState] = useState([]);
+  const hasInitializedRef = useRef(false);
+
+  const apiRequest = useCallback(async (path, options = {}) => {
+    const response = await fetch(resolveUrl(path), {
+      headers: {
+        'Content-Type': 'application/json',
+        ...(options.headers || {})
+      },
+      ...options
+    });
+
+    if (!response.ok) {
+      const message = await response.text();
+      throw new Error(message || 'API request failed');
+    }
+
+    if (response.status === 204) return null;
+    return response.json();
+  }, []);
+
+  const persistPortfolio = useCallback(async (nextProjects) => {
+    if (!hasInitializedRef.current) return;
+    try {
+      await apiRequest('/import', {
+        method: 'POST',
+        body: JSON.stringify({ projects: nextProjects, mode: 'replace' })
+      });
+    } catch (error) {
+      console.error('Unable to persist portfolio to API', error);
+    }
+  }, [apiRequest]);
+
+  const refreshProjects = useCallback(async () => {
+    try {
+      const data = await apiRequest('/projects');
+      if (Array.isArray(data)) {
+        setProjectsState(data);
+        hasInitializedRef.current = true;
+      }
+    } catch (error) {
+      console.error('Failed to load projects, seeding defaults', error);
+      try {
+        const seeded = await apiRequest('/import', {
+          method: 'POST',
+          body: JSON.stringify({ projects: defaultPortfolio, mode: 'replace' })
+        });
+        if (Array.isArray(seeded?.projects)) {
+          setProjectsState(seeded.projects);
+          hasInitializedRef.current = true;
+        }
+      } catch (seedError) {
+        console.error('Unable to seed defaults', seedError);
+        setProjectsState(defaultPortfolio);
+        hasInitializedRef.current = true;
+      }
+    }
+  }, [apiRequest]);
 
   useEffect(() => {
-    savePortfolio(projects);
-  }, [projects]);
+    refreshProjects();
+  }, [refreshProjects]);
 
-  const handleExport = (projectId) => {
-    let data, filename;
+  const updateProjects = useCallback((updater) => {
+    setProjectsState(prevProjects => {
+      const nextProjects = typeof updater === 'function' ? updater(prevProjects) : updater;
+      persistPortfolio(nextProjects);
+      return nextProjects;
+    });
+  }, [persistPortfolio]);
+
+  const handleExport = useCallback((projectId) => {
+    const url = new URL(resolveUrl('/export'));
     if (projectId && projectId !== 'all') {
-      // Export single project
-      const project = projects.find(p => p.id == projectId);
-      if (project) {
-        data = exportPortfolio([project]);
-        filename = `manity-${project.name.toLowerCase().replace(/\s+/g, '-')}.json`;
-      } else {
-        console.error('Project not found');
-        return;
-      }
-    } else {
-      // Export all projects
-      data = exportPortfolio(projects);
-      filename = 'manity-portfolio.json';
+      url.searchParams.set('project_id', projectId);
     }
 
-    const blob = new Blob([data], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
-    link.href = url;
-    link.download = filename;
+    link.href = url.toString();
+    link.download = projectId && projectId !== 'all' ? 'manity-project.json' : 'manity-portfolio.json';
     link.click();
-    URL.revokeObjectURL(url);
-  };
+  }, []);
 
-  const handleImport = async (fileOrText, mode = 'replace') => {
-    const importedProjects = await importPortfolio(fileOrText);
+  const handleImport = useCallback(async (fileOrText, mode = 'replace') => {
+    let body;
+    let headers = {};
+    const url = new URL(resolveUrl('/import'));
+    url.searchParams.set('mode', mode);
 
-    if (mode === 'merge') {
-      // Merge imported projects with existing ones
-      const mergedProjects = [...projects];
-      importedProjects.forEach(importedProject => {
-        const existingIndex = mergedProjects.findIndex(p => p.id === importedProject.id);
-        if (existingIndex >= 0) {
-          // Replace existing project
-          mergedProjects[existingIndex] = importedProject;
-        } else {
-          // Add new project
-          mergedProjects.push(importedProject);
-        }
-      });
-      setProjects(mergedProjects);
-      savePortfolio(mergedProjects);
-      return mergedProjects;
+    if (fileOrText instanceof File) {
+      const formData = new FormData();
+      formData.append('file', fileOrText);
+      body = formData;
+      headers = undefined;
     } else {
-      // Replace all projects
-      setProjects(importedProjects);
-      savePortfolio(importedProjects);
-      return importedProjects;
+      if (typeof fileOrText !== 'string') {
+        throw new Error('Unsupported import type');
+      }
+      const parsed = JSON.parse(fileOrText);
+      const projects = parsed.projects || parsed;
+      body = JSON.stringify({ projects, mode });
+      headers = { 'Content-Type': 'application/json' };
     }
-  };
 
-  const value = useMemo(() => ({ projects, setProjects, handleExport, handleImport }), [projects]);
+    const response = await fetch(url.toString(), {
+      method: 'POST',
+      body,
+      headers
+    });
+
+    if (!response.ok) {
+      throw new Error('Import failed');
+    }
+
+    const data = await response.json();
+    if (Array.isArray(data?.projects)) {
+      setProjectsState(data.projects);
+      hasInitializedRef.current = true;
+    }
+    return data?.projects || [];
+  }, []);
+
+  const createProject = useCallback(async (project) => {
+    const created = await apiRequest('/projects', {
+      method: 'POST',
+      body: JSON.stringify(project)
+    });
+    updateProjects(prev => [...prev, created]);
+    return created;
+  }, [apiRequest, updateProjects]);
+
+  const updateProject = useCallback(async (projectId, updates) => {
+    const existing = projects.find(project => project.id === projectId) || {};
+    const updated = await apiRequest(`/projects/${projectId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ ...existing, ...updates, id: projectId })
+    });
+    updateProjects(prev => prev.map(project => project.id === projectId ? updated : project));
+    return updated;
+  }, [apiRequest, updateProjects, projects]);
+
+  const deleteProject = useCallback(async (projectId) => {
+    await apiRequest(`/projects/${projectId}`, { method: 'DELETE' });
+    updateProjects(prev => prev.filter(project => project.id !== projectId));
+  }, [apiRequest, updateProjects]);
+
+  const updateProjectFromResponse = useCallback((updatedProject) => {
+    updateProjects(prev => prev.map(project => project.id === updatedProject.id ? updatedProject : project));
+    return updatedProject;
+  }, [updateProjects]);
+
+  const addTask = useCallback(async (projectId, task) => {
+    const updatedProject = await apiRequest(`/projects/${projectId}/tasks`, {
+      method: 'POST',
+      body: JSON.stringify(task)
+    });
+    return updateProjectFromResponse(updatedProject);
+  }, [apiRequest, updateProjectFromResponse]);
+
+  const updateTask = useCallback(async (projectId, taskId, updates) => {
+    const updatedProject = await apiRequest(`/projects/${projectId}/tasks/${taskId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ ...updates, id: taskId })
+    });
+    return updateProjectFromResponse(updatedProject);
+  }, [apiRequest, updateProjectFromResponse]);
+
+  const deleteTask = useCallback(async (projectId, taskId) => {
+    await apiRequest(`/projects/${projectId}/tasks/${taskId}`, { method: 'DELETE' });
+    updateProjects(prev => prev.map(project => project.id === projectId ? { ...project, plan: project.plan.filter(task => task.id !== taskId) } : project));
+  }, [apiRequest, updateProjects]);
+
+  const addSubtask = useCallback(async (projectId, taskId, subtask) => {
+    const updatedProject = await apiRequest(`/projects/${projectId}/tasks/${taskId}/subtasks`, {
+      method: 'POST',
+      body: JSON.stringify(subtask)
+    });
+    return updateProjectFromResponse(updatedProject);
+  }, [apiRequest, updateProjectFromResponse]);
+
+  const updateSubtask = useCallback(async (projectId, taskId, subtaskId, updates) => {
+    const updatedProject = await apiRequest(`/projects/${projectId}/tasks/${taskId}/subtasks/${subtaskId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ ...updates, id: subtaskId })
+    });
+    return updateProjectFromResponse(updatedProject);
+  }, [apiRequest, updateProjectFromResponse]);
+
+  const deleteSubtask = useCallback(async (projectId, taskId, subtaskId) => {
+    await apiRequest(`/projects/${projectId}/tasks/${taskId}/subtasks/${subtaskId}`, { method: 'DELETE' });
+    updateProjects(prev => prev.map(project => project.id === projectId ? {
+      ...project,
+      plan: project.plan.map(task => task.id === taskId ? { ...task, subtasks: task.subtasks.filter(st => st.id !== subtaskId) } : task)
+    } : project));
+  }, [apiRequest, updateProjects]);
+
+  const addActivity = useCallback(async (projectId, activity) => {
+    const updatedProject = await apiRequest(`/projects/${projectId}/activities`, {
+      method: 'POST',
+      body: JSON.stringify(activity)
+    });
+    return updateProjectFromResponse(updatedProject);
+  }, [apiRequest, updateProjectFromResponse]);
+
+  const updateActivity = useCallback(async (projectId, activityId, updates) => {
+    const updatedProject = await apiRequest(`/projects/${projectId}/activities/${activityId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ ...updates, id: activityId })
+    });
+    return updateProjectFromResponse(updatedProject);
+  }, [apiRequest, updateProjectFromResponse]);
+
+  const deleteActivity = useCallback(async (projectId, activityId) => {
+    await apiRequest(`/projects/${projectId}/activities/${activityId}`, { method: 'DELETE' });
+    updateProjects(prev => prev.map(project => project.id === projectId ? {
+      ...project,
+      recentActivity: project.recentActivity.filter(activity => activity.id !== activityId)
+    } : project));
+  }, [apiRequest, updateProjects]);
+
+  const value = useMemo(() => ({
+    projects,
+    setProjects: updateProjects,
+    handleExport,
+    handleImport,
+    createProject,
+    updateProject,
+    deleteProject,
+    addTask,
+    updateTask,
+    deleteTask,
+    addSubtask,
+    updateSubtask,
+    deleteSubtask,
+    addActivity,
+    updateActivity,
+    deleteActivity,
+    refreshProjects
+  }), [
+    projects,
+    updateProjects,
+    handleExport,
+    handleImport,
+    createProject,
+    updateProject,
+    deleteProject,
+    addTask,
+    updateTask,
+    deleteTask,
+    addSubtask,
+    updateSubtask,
+    deleteSubtask,
+    addActivity,
+    updateActivity,
+    deleteActivity,
+    refreshProjects
+  ]);
 
   return <PortfolioContext.Provider value={value}>{children}</PortfolioContext.Provider>;
 };
