@@ -7,7 +7,6 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
   const [dimensions, setDimensions] = useState({ width: 900, height: 250 });
   const [nodes, setNodes] = useState([]);
   const [hoveredNode, setHoveredNode] = useState(null);
-  const [hoveredDot, setHoveredDot] = useState(null);
   const [draggedNode, setDraggedNode] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [timelineZoom, setTimelineZoom] = useState(3);
@@ -44,11 +43,11 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
   };
 
   const physics = {
-    springStrength: 0.03,
-    repulsion: 12000,
+    springStrength: 0.015,
+    repulsion: 15000,
     damping: 0.68,
-    verticalSpring: 0.04,
-    verticalRepulsion: 8000,
+    verticalSpring: 0.02,
+    verticalRepulsion: 10000,
     settleTreshold: 0.25,
     boundaryForce: 0.8,
   };
@@ -102,11 +101,6 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
 
     const simulate = () => {
       setNodes(prevNodes => {
-        // Find nodes sharing the hovered dot
-        const hoveredDotNodes = hoveredDot !== null
-          ? prevNodes.filter(n => Math.abs(n.targetX - hoveredDot) < 1)
-          : [];
-
         const newNodes = prevNodes.map((node, i) => {
           // Skip physics for dragged node
           if (draggedNode === node.id) {
@@ -131,16 +125,11 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
 
             const minDist = (node.width + other.width) / 2 + 30;
 
-            // Apply extra repulsion if both nodes share the hovered dot
-            const isNodeHoveredDot = hoveredDotNodes.some(n => n.id === node.id);
-            const isOtherHoveredDot = hoveredDotNodes.some(n => n.id === other.id);
-            const repulsionMultiplier = (isNodeHoveredDot && isOtherHoveredDot) ? 3 : 1;
-
             if (dist < minDist * 1.5 && dist > 0) {
-              const hForce = (physics.repulsion * repulsionMultiplier) / (dist * dist);
+              const hForce = physics.repulsion / (dist * dist);
               fx += (distX / dist) * hForce;
 
-              const vForce = (physics.verticalRepulsion * repulsionMultiplier) / (dist * dist);
+              const vForce = physics.verticalRepulsion / (dist * dist);
               fy += (distY / dist) * vForce;
             }
           });
@@ -197,7 +186,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [nodes.length, dimensions.width, draggedNode, hoveredDot]);
+  }, [nodes.length, dimensions.width, draggedNode]);
 
   // Handle resize
   useEffect(() => {
@@ -412,9 +401,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
           {nodes.map((node) => {
             const dotX = node.targetX;
             const dotY = timelineConfig.lineY;
-            const isDotHovered = hoveredDot !== null && Math.abs(dotX - hoveredDot) < 1;
             const isNodeHovered = hoveredNode === node.id;
-            const isHovered = isNodeHovered || isDotHovered;
             const controlY = node.isAbove
               ? Math.min(node.y + 14, dotY - 25)
               : Math.max(node.y - 14, dotY + 25);
@@ -426,31 +413,26 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
                       Q ${node.x} ${controlY} ${dotX} ${dotY}`}
                   fill="none"
                   stroke={getStatusColor(node.status)}
-                  strokeWidth={isHovered ? 3 : 2}
-                  opacity={isHovered ? 1 : 0.6}
+                  strokeWidth={isNodeHovered ? 3 : 2}
+                  opacity={isNodeHovered ? 1 : 0.6}
                   style={{
                     transition: 'stroke-width 0.15s, opacity 0.15s',
-                    cursor: 'pointer',
-                    pointerEvents: 'stroke'
+                    pointerEvents: 'none'
                   }}
                   strokeLinecap="round"
-                  onMouseEnter={() => setHoveredDot(dotX)}
-                  onMouseLeave={() => setHoveredDot(null)}
                 />
                 <circle
                   cx={dotX}
                   cy={dotY}
-                  r={isHovered ? 12 : 8}
+                  r={isNodeHovered ? 12 : 8}
                   fill={getStatusColor(node.status)}
                   stroke="#FFFFFF"
                   strokeWidth="3"
-                  filter={isHovered ? "url(#glow)" : "none"}
+                  filter={isNodeHovered ? "url(#glow)" : "none"}
                   style={{
                     transition: 'r 0.15s',
-                    cursor: 'pointer'
+                    pointerEvents: 'none'
                   }}
-                  onMouseEnter={() => setHoveredDot(dotX)}
-                  onMouseLeave={() => setHoveredDot(null)}
                 />
               </g>
             );
@@ -461,19 +443,13 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
             .sort((a, b) => {
               if (a.id === draggedNode) return 1;
               if (b.id === draggedNode) return -1;
-              // Prioritize nodes with hovered dots
-              const aDotHovered = hoveredDot !== null && Math.abs(a.targetX - hoveredDot) < 1;
-              const bDotHovered = hoveredDot !== null && Math.abs(b.targetX - hoveredDot) < 1;
-              if (aDotHovered && !bDotHovered) return 1;
-              if (bDotHovered && !aDotHovered) return -1;
               if (a.id === hoveredNode) return 1;
               if (b.id === hoveredNode) return -1;
               return 0;
             })
             .map((node) => {
-              const isDotHovered = hoveredDot !== null && Math.abs(node.targetX - hoveredDot) < 1;
               const isNodeHovered = hoveredNode === node.id;
-              const isHovered = isNodeHovered || isDotHovered;
+              const isHovered = isNodeHovered;
               const isDragged = draggedNode === node.id;
               const scale = isHovered || isDragged ? 1.03 : 1;
               const maxTitleChars = Math.floor((node.width - 50) / 7);
@@ -482,7 +458,10 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
                 : node.title;
 
               // Calculate tooltip position to prevent overflow
-              const tooltipWidth = Math.min(node.width + 40, 300);
+              // Dynamically calculate width based on text length (approximately 7px per character + padding)
+              const titleWidth = node.title.length * 7 + 40;
+              const dateWidth = 150; // Fixed width for date text
+              const tooltipWidth = Math.max(titleWidth, dateWidth, 200);
               const tooltipHeight = 36;
               let tooltipX = -tooltipWidth / 2;
               let tooltipY = -50;
@@ -583,7 +562,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
           {/* Zoom slider inside timeline */}
           <foreignObject
             x={dimensions.width - 250}
-            y={dimensions.height - 50}
+            y={10}
             width="230"
             height="40"
           >
@@ -604,23 +583,24 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         </svg>
       </div>
 
-      <div style={styles.legend}>
-        <div style={styles.legendItem}>
-          <span style={{...styles.legendDot, backgroundColor: '#7A9B76'}}></span>
-          Completed
+      <div style={styles.footer}>
+        <div style={styles.legend}>
+          <div style={styles.legendItem}>
+            <span style={{...styles.legendDot, backgroundColor: '#7A9B76'}}></span>
+            Completed
+          </div>
+          <div style={styles.legendItem}>
+            <span style={{...styles.legendDot, backgroundColor: '#E8A75D'}}></span>
+            In Progress
+          </div>
+          <div style={styles.legendItem}>
+            <span style={{...styles.legendDot, backgroundColor: '#8B6F47'}}></span>
+            To Do
+          </div>
         </div>
-        <div style={styles.legendItem}>
-          <span style={{...styles.legendDot, backgroundColor: '#E8A75D'}}></span>
-          In Progress
+        <div style={styles.hint}>
+          💡 Drag labels to reposition • Hover to see full titles • Use zoom to adjust timeline range
         </div>
-        <div style={styles.legendItem}>
-          <span style={{...styles.legendDot, backgroundColor: '#8B6F47'}}></span>
-          To Do
-        </div>
-      </div>
-
-      <div style={styles.hint}>
-        💡 Drag labels to reposition • Hover to see full titles • Use zoom to adjust timeline range
       </div>
     </div>
   );
@@ -717,11 +697,17 @@ const styles = {
     fontWeight: '700',
     fill: '#E8A75D',
   },
+  footer: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginTop: '20px',
+    flexWrap: 'wrap',
+    gap: '16px',
+  },
   legend: {
     display: 'flex',
-    justifyContent: 'center',
     gap: '32px',
-    marginTop: '20px',
     fontFamily: "'Inter', sans-serif",
     fontSize: '14px',
     color: '#6B6554',
@@ -738,8 +724,6 @@ const styles = {
     boxShadow: '0 2px 4px rgba(0,0,0,0.15)',
   },
   hint: {
-    textAlign: 'center',
-    marginTop: '16px',
     fontSize: '13px',
     color: '#6B6554',
     fontFamily: "'Inter', sans-serif",
