@@ -4235,6 +4235,29 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                   <textarea
                                     value={execSummaryDraft}
                                     onChange={(e) => setExecSummaryDraft(e.target.value)}
+                                    onKeyDown={(e) => {
+                                      if (e.ctrlKey && e.key === 'Enter') {
+                                        e.preventDefault();
+                                        // Save changes
+                                        setProjects(prevProjects =>
+                                          prevProjects.map(project =>
+                                            project.id === slideProject.id
+                                              ? { ...project, executiveUpdate: execSummaryDraft }
+                                              : project
+                                          )
+                                        );
+                                        // Exit edit mode
+                                        setIsEditingSlide(false);
+                                        setEditingExecSummary(null);
+                                        setExecSummaryDraft('');
+                                      } else if (e.key === 'Escape') {
+                                        e.preventDefault();
+                                        // Cancel edit mode without saving
+                                        setIsEditingSlide(false);
+                                        setEditingExecSummary(null);
+                                        setExecSummaryDraft('');
+                                      }
+                                    }}
                                     style={styles.execSummaryInput}
                                     placeholder="Write executive update..."
                                     autoFocus

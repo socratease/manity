@@ -44,13 +44,15 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
 
   const physics = {
     springStrength: 0.015,
-    repulsion: 15000,
+    repulsion: 5000, // Reduced from 15000 to allow boxes to float more freely
     damping: 0.68,
     verticalSpring: 0.02,
-    verticalRepulsion: 10000,
+    verticalRepulsion: 3000, // Reduced from 10000 for gentler separation
     settleTreshold: 0.25,
     boundaryForce: 0.8,
-    dotTug: 0.025, // Force pulling box toward its connected dot
+    dotTug: 0.008, // Reduced from 0.025 to reduce pull toward dots
+    dotRepulsion: 8000, // New: repulsion force from timeline dots
+    dotRepulsionRadius: 50, // New: radius around dots where repulsion applies
   };
 
   const getTimelineX = useCallback((date) => {
@@ -118,13 +120,24 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
           const dy = node.targetY - node.y;
           fy += dy * physics.verticalSpring;
 
-          // Tug force toward the connected dot on timeline
+          // Tug force toward the connected dot on timeline (reduced)
           const dotX = node.targetX;
           const dotY = timelineConfig.lineY;
           const dotDx = dotX - node.x;
           const dotDy = dotY - node.y;
           fx += dotDx * physics.dotTug;
           fy += dotDy * physics.dotTug;
+
+          // Repulsion from the dot to prevent overlap
+          const dotDistX = node.x - dotX;
+          const dotDistY = node.y - dotY;
+          const dotDist = Math.sqrt(dotDistX * dotDistX + dotDistY * dotDistY);
+
+          if (dotDist < physics.dotRepulsionRadius && dotDist > 0) {
+            const dotForce = physics.dotRepulsion / (dotDist * dotDist);
+            fx += (dotDistX / dotDist) * dotForce;
+            fy += (dotDistY / dotDist) * dotForce;
+          }
 
           prevNodes.forEach((other, j) => {
             if (i === j) return;
@@ -325,6 +338,17 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
           {/* Background */}
           <rect width="100%" height="100%" fill="#FDFCFA" />
           <rect width="100%" height="100%" fill="url(#dots)" />
+
+          {/* HORIZONTAL BASELINE */}
+          <line
+            x1={timelineConfig.padding.left - 20}
+            y1={dimensions.height - timelineConfig.padding.bottom}
+            x2={dimensions.width - timelineConfig.padding.right + 20}
+            y2={dimensions.height - timelineConfig.padding.bottom}
+            stroke="#E8E3D8"
+            strokeWidth="2"
+            opacity="0.5"
+          />
 
           {/* PROMINENT TIMELINE LINE */}
           <g filter="url(#lineShadow)">
