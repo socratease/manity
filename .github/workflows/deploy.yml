@@ -27,6 +27,8 @@ jobs:
 
       - name: Build
         run: npm run build
+        env:
+          VITE_API_BASE: ${{ secrets.VITE_API_BASE }}
 
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v4
