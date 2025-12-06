@@ -50,7 +50,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     verticalRepulsion: 10000,
     settleTreshold: 0.25,
     boundaryForce: 0.8,
-    dotTug: 0.008, // Force pulling box toward its connected dot
+    dotTug: 0.025, // Force pulling box toward its connected dot
   };
 
   const getTimelineX = useCallback((date) => {
@@ -73,10 +73,10 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     const initialNodes = visibleTasks.map((task, index) => {
       const targetX = getTimelineX(task.dueDate);
       const isAbove = index % 2 === 0;
-      const baseOffset = 45;
+      const baseOffset = 35;
       const targetY = isAbove
-        ? timelineConfig.lineY - baseOffset - Math.random() * 20
-        : timelineConfig.lineY + baseOffset + Math.random() * 20;
+        ? timelineConfig.lineY - baseOffset - Math.random() * 15
+        : timelineConfig.lineY + baseOffset + Math.random() * 15;
 
       const estimatedWidth = Math.min(220, Math.max(160, task.title.length * 6 + 50));
 
