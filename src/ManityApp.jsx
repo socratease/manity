@@ -2517,6 +2517,10 @@ Keep tool calls granular (one discrete change per action), explain each action c
       <div style={styles.timelineSection}>
         <div style={styles.timelineHeader}>
           <h3 style={styles.timelineSectionTitle}>Project Timeline</h3>
+        </div>
+
+        <div style={styles.timelineContainer}>
+          {/* Zoom control inside timeline */}
           <div style={styles.timelineZoomControl}>
             <span style={styles.timelineZoomLabel}>
               {timelineView === 1 ? '1 Month' : timelineView === 12 ? '1 Year' : `${timelineView} Months`}
@@ -2534,9 +2538,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
               <span style={styles.timelineZoomTick}>24M</span>
             </div>
           </div>
-        </div>
-
-        <div style={styles.timelineContainer}>
           {/* Timeline bar */}
           <div style={styles.timelineBar}>
             <div style={styles.timelineBarFill} />
@@ -2568,9 +2569,16 @@ Keep tool calls granular (one discrete change per action), explain each action c
               const { items, position, isAbove, id, isGrouped } = group;
               const firstItem = items[0];
               const isCompleted = items.every(item => item.task.status === 'completed');
-              const lineHeight = 20 + (firstItem.verticalOffset * 12);
               const isHovered = hoveredTimelineGroup === id;
-              const maxItemsBeforeGrouping = 2;
+
+              // Calculate repulsion for overlapping tasks when hovering on dot
+              const getRepulsionOffset = (itemIdx, totalItems) => {
+                if (!isHovered || totalItems === 1) return 0;
+                // Spread items vertically when hovered
+                const spacing = 20; // pixels between items
+                const centerOffset = ((totalItems - 1) * spacing) / 2;
+                return (itemIdx * spacing) - centerOffset;
+              };
 
               return (
                 <div
@@ -2585,88 +2593,115 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   <div
                     style={{
                       ...styles.timelineMarkerDot,
-                      backgroundColor: isCompleted ? 'var(--earth)' : 'var(--amber)'
+                      backgroundColor: isCompleted ? 'var(--earth)' : 'var(--amber)',
+                      transform: isHovered ? 'scale(1.3)' : 'scale(1)',
+                      transition: 'transform 0.2s ease'
                     }}
                   />
 
-                  {/* Connector line - positioned above or below, pointing to left edge */}
-                  <div style={{
-                    position: 'absolute',
-                    left: '0',
-                    width: '1px',
-                    height: `${lineHeight}px`,
-                    backgroundColor: isCompleted ? 'var(--earth)' : 'var(--amber)',
-                    opacity: 0.3,
-                    ...(isAbove
-                      ? { bottom: '6px' }
-                      : { top: '6px' }
-                    )
-                  }} />
+                  {/* Render each task separately when hovered, otherwise show compact */}
+                  {items.map((item, itemIdx) => {
+                    const showAll = isHovered;
+                    if (!showAll && itemIdx > 0) return null; // Only show first item when not hovered
 
-                  {/* Callout text - with overflow handling and grouping */}
-                  <div style={{
-                    position: 'absolute',
-                    left: '0',
-                    fontSize: '11px',
-                    fontFamily: "'Inter', sans-serif",
-                    padding: '2px 0',
-                    cursor: isGrouped ? 'pointer' : 'default',
-                    transition: 'all 0.2s ease',
-                    zIndex: isHovered ? 10 : 1,
-                    whiteSpace: 'nowrap',
-                    ...(isAbove
-                      ? { bottom: `${lineHeight + 6}px` }
-                      : { top: `${lineHeight + 6}px` }
-                    )
-                  }}>
-                    {isHovered && isGrouped ? (
-                      // Show all items on hover
-                      <div>
-                        {items.map((item, itemIdx) => (
-                          <div key={itemIdx} style={{ marginBottom: itemIdx < items.length - 1 ? '4px' : '0' }}>
-                            <span style={{
-                              color: 'var(--charcoal)',
-                              fontWeight: '600',
-                              display: 'block'
-                            }}>
-                              {item.task.title}
-                            </span>
-                            <span style={{
-                              color: 'var(--stone)',
-                              fontWeight: '400',
-                              fontSize: '10px'
-                            }}>
-                              {item.task.dueDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                            </span>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      // Show summary or individual items
-                      <div>
-                        {items.slice(0, maxItemsBeforeGrouping).map((item, itemIdx) => (
-                          <span key={itemIdx}>
-                            <span style={{
-                              color: 'var(--charcoal)',
-                              fontWeight: '600',
-                            }}>
-                              {item.task.title}
-                            </span>
-                            {itemIdx < Math.min(maxItemsBeforeGrouping, items.length) - 1 && ', '}
-                          </span>
-                        ))}
-                        {isGrouped && (
+                    const repulsionOffset = getRepulsionOffset(itemIdx, items.length);
+                    const lineHeight = 15;
+                    const taskTitle = item.task.title;
+
+                    // Calculate tooltip position to avoid overflow
+                    const getTooltipStyle = () => {
+                      const baseStyle = {
+                        position: 'absolute',
+                        left: '0',
+                        fontSize: '11px',
+                        fontFamily: "'Inter', sans-serif",
+                        padding: '4px 8px',
+                        backgroundColor: 'rgba(0, 0, 0, 0.85)',
+                        color: 'white',
+                        borderRadius: '4px',
+                        whiteSpace: 'nowrap',
+                        pointerEvents: 'none',
+                        zIndex: isHovered ? 100 : (showAll ? 10 : 1),
+                        transition: 'all 0.2s ease',
+                        opacity: isHovered ? 1 : 0,
+                        transform: isHovered ? 'translateY(0)' : 'translateY(5px)'
+                      };
+
+                      // Position based on whether task is above or below
+                      if (isAbove) {
+                        baseStyle.bottom = `${lineHeight + 10 + Math.abs(repulsionOffset)}px`;
+                      } else {
+                        baseStyle.top = `${lineHeight + 10 + Math.abs(repulsionOffset)}px`;
+                      }
+
+                      // Shift left if near right edge (position > 70%)
+                      if (position > 70) {
+                        baseStyle.left = 'auto';
+                        baseStyle.right = '0';
+                      }
+
+                      return baseStyle;
+                    };
+
+                    return (
+                      <React.Fragment key={itemIdx}>
+                        {/* Connector line */}
+                        <div style={{
+                          position: 'absolute',
+                          left: '0',
+                          width: '1px',
+                          height: `${lineHeight + Math.abs(repulsionOffset)}px`,
+                          backgroundColor: isCompleted ? 'var(--earth)' : 'var(--amber)',
+                          opacity: 0.3,
+                          transition: 'all 0.2s ease',
+                          ...(isAbove
+                            ? { bottom: '6px', transform: `translateY(-${repulsionOffset}px)` }
+                            : { top: '6px', transform: `translateY(${repulsionOffset}px)` }
+                          )
+                        }} />
+
+                        {/* Task bubble - single line */}
+                        <div
+                          style={{
+                            position: 'absolute',
+                            left: '0',
+                            fontSize: '11px',
+                            fontFamily: "'Inter', sans-serif",
+                            padding: '2px 6px',
+                            backgroundColor: showAll ? 'white' : 'transparent',
+                            borderRadius: '3px',
+                            border: showAll ? '1px solid var(--cloud)' : 'none',
+                            boxShadow: showAll ? '0 2px 4px rgba(0,0,0,0.1)' : 'none',
+                            cursor: 'default',
+                            transition: 'all 0.2s ease',
+                            zIndex: isHovered ? 100 : 1,
+                            whiteSpace: 'nowrap',
+                            maxWidth: '150px',
+                            overflow: 'hidden',
+                            textOverflow: 'ellipsis',
+                            ...(isAbove
+                              ? { bottom: `${lineHeight + 6}px`, transform: `translateY(-${repulsionOffset}px)` }
+                              : { top: `${lineHeight + 6}px`, transform: `translateY(${repulsionOffset}px)` }
+                            )
+                          }}
+                        >
                           <span style={{
-                            color: 'var(--earth)',
+                            color: 'var(--charcoal)',
                             fontWeight: '600',
-                            marginLeft: '4px'
                           }}>
-                            +{items.length - maxItemsBeforeGrouping} more
+                            {!showAll && items.length > 1 ? `${items.length} tasks` : taskTitle}
                           </span>
+                        </div>
+
+                        {/* Tooltip with full name */}
+                        {isHovered && (
+                          <div style={getTooltipStyle()}>
+                            {taskTitle}
+                          </div>
                         )}
-                      </div>
-                    )}
-                  </div>
+                      </React.Fragment>
+                    );
+                  })}
                 </div>
               );
             })}
@@ -5411,7 +5446,7 @@ const styles = {
     display: 'flex',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: '24px',
+    marginBottom: '8px',
   },
 
   timelineSectionTitle: {
@@ -5424,23 +5459,32 @@ const styles = {
 
   timelineZoomControl: {
     display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'flex-end',
-    gap: '4px',
-    minWidth: '200px',
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: '8px',
+    position: 'absolute',
+    top: '8px',
+    right: '8px',
+    zIndex: 5,
+    backgroundColor: 'white',
+    padding: '4px 8px',
+    borderRadius: '6px',
+    border: '1px solid var(--cloud)',
+    minWidth: '180px',
   },
 
   timelineZoomLabel: {
-    fontSize: '13px',
+    fontSize: '11px',
     fontFamily: "'Inter', sans-serif",
     fontWeight: '600',
     color: 'var(--charcoal)',
+    whiteSpace: 'nowrap',
   },
 
   timelineZoomSlider: {
-    width: '100%',
-    height: '6px',
-    borderRadius: '3px',
+    width: '80px',
+    height: '4px',
+    borderRadius: '2px',
     outline: 'none',
     appearance: 'none',
     WebkitAppearance: 'none',
@@ -5449,10 +5493,7 @@ const styles = {
   },
 
   timelineZoomTicks: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    width: '100%',
-    marginTop: '-2px',
+    display: 'none',
   },
 
   timelineZoomTick: {
@@ -5465,8 +5506,8 @@ const styles = {
 
   timelineContainer: {
     position: 'relative',
-    paddingTop: '80px',
-    paddingBottom: '80px',
+    paddingTop: '35px',
+    paddingBottom: '35px',
     overflow: 'hidden',
   },
 
