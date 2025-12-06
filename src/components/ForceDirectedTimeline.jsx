@@ -48,7 +48,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     damping: 0.68,
     verticalSpring: 0.02,
     verticalRepulsion: 3000, // Reduced from 10000 for gentler separation
-    settleTreshold: 0.25,
+    settleThreshold: 0.05, // Fixed typo and reduced for better settling
     boundaryForce: 0.8,
     dotTug: 0.008, // Reduced from 0.025 to reduce pull toward dots
     dotRepulsion: 8000, // New: repulsion force from timeline dots
@@ -176,8 +176,15 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
             fy += (maxY - (node.y + node.height / 2)) * physics.boundaryForce;
           }
 
-          const newVx = (node.vx + fx) * physics.damping;
-          const newVy = (node.vy + fy) * physics.damping;
+          let newVx = (node.vx + fx) * physics.damping;
+          let newVy = (node.vy + fy) * physics.damping;
+
+          // Stop jittering: if velocity is very small, set to zero
+          const speed = Math.sqrt(newVx * newVx + newVy * newVy);
+          if (speed < physics.settleThreshold) {
+            newVx = 0;
+            newVy = 0;
+          }
 
           return {
             ...node,
