@@ -1,3 +1,9 @@
+const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const resolveUrl = (path) => {
+  if (API_BASE.startsWith('http')) return `${API_BASE}${path}`;
+  return `${window.location.origin}${API_BASE}${path}`;
+};
+
 export async function callOpenAIChat({ messages, model = "gpt-5.1", responseFormat = null }) {
   const requestBody = {
     model,
@@ -8,7 +14,7 @@ export async function callOpenAIChat({ messages, model = "gpt-5.1", responseForm
     requestBody.response_format = responseFormat;
   }
 
-  const res = await fetch("/api/llm/chat", {
+  const res = await fetch(resolveUrl("/api/llm/chat"), {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
