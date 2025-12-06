@@ -4,9 +4,10 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }) {
   const containerRef = useRef(null);
   const animationRef = useRef(null);
-  const [dimensions, setDimensions] = useState({ width: 900, height: 500 });
+  const [dimensions, setDimensions] = useState({ width: 900, height: 250 });
   const [nodes, setNodes] = useState([]);
   const [hoveredNode, setHoveredNode] = useState(null);
+  const [hoveredDot, setHoveredDot] = useState(null);
   const [draggedNode, setDraggedNode] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [timelineZoom, setTimelineZoom] = useState(3);
@@ -32,16 +33,14 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
   const getTimelineRange = useCallback(() => {
     const now = startDate ? new Date(startDate) : new Date('2025-01-01');
     const rangeStart = new Date(now);
-    const rangeEnd = endDate ? new Date(endDate) : new Date(now);
-    if (!endDate) {
-      rangeEnd.setMonth(rangeEnd.getMonth() + timelineZoom);
-    }
+    const rangeEnd = new Date(now);
+    rangeEnd.setMonth(rangeEnd.getMonth() + timelineZoom);
     return { startDate: rangeStart, endDate: rangeEnd };
-  }, [timelineZoom, startDate, endDate]);
+  }, [timelineZoom, startDate]);
 
   const timelineConfig = {
-    padding: { left: 80, right: 80, top: 60, bottom: 60 },
-    lineY: 250,
+    padding: { left: 80, right: 80, top: 30, bottom: 30 },
+    lineY: 125,
   };
 
   const physics = {
@@ -61,7 +60,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     const totalMs = rangeEnd - rangeStart;
     const dateMs = new Date(date) - rangeStart;
     return padding.left + (dateMs / totalMs) * timelineWidth;
-  }, [dimensions.width, timelineZoom, startDate, endDate]);
+  }, [dimensions.width, timelineZoom, startDate]);
 
   // Initialize nodes
   useEffect(() => {
@@ -91,7 +90,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         vx: (Math.random() - 0.5) * 10,
         vy: (Math.random() - 0.5) * 10,
         width: estimatedWidth,
-        height: 56,
+        height: 28,
       };
     });
     setNodes(initialNodes);
@@ -103,6 +102,11 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
 
     const simulate = () => {
       setNodes(prevNodes => {
+        // Find nodes sharing the hovered dot
+        const hoveredDotNodes = hoveredDot !== null
+          ? prevNodes.filter(n => Math.abs(n.targetX - hoveredDot) < 1)
+          : [];
+
         const newNodes = prevNodes.map((node, i) => {
           // Skip physics for dragged node
           if (draggedNode === node.id) {
@@ -126,11 +130,17 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
             const dist = Math.sqrt(distX * distX + distY * distY);
 
             const minDist = (node.width + other.width) / 2 + 30;
+
+            // Apply extra repulsion if both nodes share the hovered dot
+            const isNodeHoveredDot = hoveredDotNodes.some(n => n.id === node.id);
+            const isOtherHoveredDot = hoveredDotNodes.some(n => n.id === other.id);
+            const repulsionMultiplier = (isNodeHoveredDot && isOtherHoveredDot) ? 3 : 1;
+
             if (dist < minDist * 1.5 && dist > 0) {
-              const hForce = physics.repulsion / (dist * dist);
+              const hForce = (physics.repulsion * repulsionMultiplier) / (dist * dist);
               fx += (distX / dist) * hForce;
 
-              const vForce = physics.verticalRepulsion / (dist * dist);
+              const vForce = (physics.verticalRepulsion * repulsionMultiplier) / (dist * dist);
               fy += (distY / dist) * vForce;
             }
           });
@@ -187,7 +197,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [nodes.length, dimensions.width, draggedNode]);
+  }, [nodes.length, dimensions.width, draggedNode, hoveredDot]);
 
   // Handle resize
   useEffect(() => {
@@ -195,7 +205,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
       if (containerRef.current) {
         setDimensions({
           width: Math.min(containerRef.current.offsetWidth, 1400),
-          height: 500,
+          height: 250,
         });
       }
     };
@@ -291,22 +301,6 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
 
   return (
     <div style={styles.wrapper}>
-      <div style={styles.controls}>
-        <div style={styles.zoomControl}>
-          <label style={styles.controlLabel}>🔍 Zoom:</label>
-          <input
-            type="range"
-            min="1"
-            max="12"
-            step="1"
-            value={timelineZoom}
-            onChange={(e) => setTimelineZoom(parseInt(e.target.value))}
-            style={styles.slider}
-          />
-          <span style={styles.controlValue}>{getZoomLabel()}</span>
-        </div>
-      </div>
-
       <div ref={containerRef} style={styles.container}>
         <svg width={dimensions.width} height={dimensions.height} style={styles.svg}>
           <defs>
@@ -418,21 +412,30 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
           {nodes.map((node) => {
             const dotX = node.targetX;
             const dotY = timelineConfig.lineY;
-            const isHovered = hoveredNode === node.id;
+            const isDotHovered = hoveredDot !== null && Math.abs(dotX - hoveredDot) < 1;
+            const isNodeHovered = hoveredNode === node.id;
+            const isHovered = isNodeHovered || isDotHovered;
             const controlY = node.isAbove
-              ? Math.min(node.y + 30, dotY - 25)
-              : Math.max(node.y - 30, dotY + 25);
+              ? Math.min(node.y + 14, dotY - 25)
+              : Math.max(node.y - 14, dotY + 25);
 
             return (
               <g key={`conn-${node.id}`}>
                 <path
-                  d={`M ${node.x} ${node.y + (node.isAbove ? 28 : -28)}
+                  d={`M ${node.x} ${node.y + (node.isAbove ? 14 : -14)}
                       Q ${node.x} ${controlY} ${dotX} ${dotY}`}
                   fill="none"
                   stroke={getStatusColor(node.status)}
                   strokeWidth={isHovered ? 3 : 2}
                   opacity={isHovered ? 1 : 0.6}
-                  style={{ transition: 'stroke-width 0.15s, opacity 0.15s' }}
+                  style={{
+                    transition: 'stroke-width 0.15s, opacity 0.15s',
+                    cursor: 'pointer',
+                    pointerEvents: 'stroke'
+                  }}
+                  strokeLinecap="round"
+                  onMouseEnter={() => setHoveredDot(dotX)}
+                  onMouseLeave={() => setHoveredDot(null)}
                 />
                 <circle
                   cx={dotX}
@@ -442,7 +445,12 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
                   stroke="#FFFFFF"
                   strokeWidth="3"
                   filter={isHovered ? "url(#glow)" : "none"}
-                  style={{ transition: 'r 0.15s' }}
+                  style={{
+                    transition: 'r 0.15s',
+                    cursor: 'pointer'
+                  }}
+                  onMouseEnter={() => setHoveredDot(dotX)}
+                  onMouseLeave={() => setHoveredDot(null)}
                 />
               </g>
             );
@@ -453,18 +461,50 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
             .sort((a, b) => {
               if (a.id === draggedNode) return 1;
               if (b.id === draggedNode) return -1;
+              // Prioritize nodes with hovered dots
+              const aDotHovered = hoveredDot !== null && Math.abs(a.targetX - hoveredDot) < 1;
+              const bDotHovered = hoveredDot !== null && Math.abs(b.targetX - hoveredDot) < 1;
+              if (aDotHovered && !bDotHovered) return 1;
+              if (bDotHovered && !aDotHovered) return -1;
               if (a.id === hoveredNode) return 1;
               if (b.id === hoveredNode) return -1;
               return 0;
             })
             .map((node) => {
-              const isHovered = hoveredNode === node.id;
+              const isDotHovered = hoveredDot !== null && Math.abs(node.targetX - hoveredDot) < 1;
+              const isNodeHovered = hoveredNode === node.id;
+              const isHovered = isNodeHovered || isDotHovered;
               const isDragged = draggedNode === node.id;
               const scale = isHovered || isDragged ? 1.03 : 1;
               const maxTitleChars = Math.floor((node.width - 50) / 7);
               const displayTitle = node.title.length > maxTitleChars
                 ? node.title.slice(0, maxTitleChars) + '…'
                 : node.title;
+
+              // Calculate tooltip position to prevent overflow
+              const tooltipWidth = Math.min(node.width + 40, 300);
+              const tooltipHeight = 36;
+              let tooltipX = -tooltipWidth / 2;
+              let tooltipY = -50;
+
+              // Check if tooltip would overflow boundaries
+              const nodeScreenX = node.x;
+              const nodeScreenY = node.y;
+              const tooltipLeft = nodeScreenX + tooltipX;
+              const tooltipRight = nodeScreenX + tooltipX + tooltipWidth;
+              const tooltipTop = nodeScreenY + tooltipY;
+
+              // Adjust horizontal position if overflow
+              if (tooltipLeft < timelineConfig.padding.left) {
+                tooltipX = timelineConfig.padding.left - nodeScreenX;
+              } else if (tooltipRight > dimensions.width - timelineConfig.padding.right) {
+                tooltipX = (dimensions.width - timelineConfig.padding.right) - nodeScreenX - tooltipWidth;
+              }
+
+              // Adjust vertical position if overflow at top
+              if (tooltipTop < 10) {
+                tooltipY = 42; // Show below the node instead
+              }
 
               return (
                 <g
@@ -481,9 +521,9 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
                 >
                   <rect
                     x={-node.width / 2}
-                    y={-28}
+                    y={-14}
                     width={node.width}
-                    height={56}
+                    height={28}
                     rx="12"
                     fill={isHovered || isDragged ? '#FFFFFF' : '#FAF8F3'}
                     stroke={getStatusColor(node.status)}
@@ -501,42 +541,34 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
 
                   <text
                     x={-node.width / 2 + 34}
-                    y={-6}
+                    y={4}
                     style={{...styles.taskTitle, pointerEvents: 'none'}}
                   >
                     {displayTitle}
                   </text>
 
-                  <text
-                    x={-node.width / 2 + 34}
-                    y={12}
-                    style={{...styles.taskCategory, pointerEvents: 'none'}}
-                  >
-                    {node.taskTitle}
-                  </text>
-
                   {isHovered && !isDragged && (
                     <g>
                       <rect
-                        x={-node.width / 2}
-                        y={-70}
-                        width={node.width}
-                        height={36}
+                        x={tooltipX}
+                        y={tooltipY}
+                        width={tooltipWidth}
+                        height={tooltipHeight}
                         rx="8"
                         fill="#3A3631"
                         opacity="0.95"
                       />
                       <text
-                        x={0}
-                        y={-56}
+                        x={tooltipX + tooltipWidth / 2}
+                        y={tooltipY + 14}
                         textAnchor="middle"
                         style={{...styles.tooltipTitle, pointerEvents: 'none'}}
                       >
-                        {node.title.length > 28 ? node.title.slice(0, 28) + '…' : node.title}
+                        {node.title}
                       </text>
                       <text
-                        x={0}
-                        y={-42}
+                        x={tooltipX + tooltipWidth / 2}
+                        y={tooltipY + 28}
                         textAnchor="middle"
                         style={{...styles.tooltipDate, pointerEvents: 'none'}}
                       >
@@ -547,6 +579,28 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
                 </g>
               );
             })}
+
+          {/* Zoom slider inside timeline */}
+          <foreignObject
+            x={dimensions.width - 250}
+            y={dimensions.height - 50}
+            width="230"
+            height="40"
+          >
+            <div style={styles.zoomControl}>
+              <label style={styles.controlLabel}>🔍</label>
+              <input
+                type="range"
+                min="1"
+                max="12"
+                step="1"
+                value={timelineZoom}
+                onChange={(e) => setTimelineZoom(parseInt(e.target.value))}
+                style={styles.slider}
+              />
+              <span style={styles.controlValue}>{getZoomLabel()}</span>
+            </div>
+          </foreignObject>
         </svg>
       </div>
 
