@@ -72,10 +72,10 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     const initialNodes = visibleTasks.map((task, index) => {
       const targetX = getTimelineX(task.dueDate);
       const isAbove = index % 2 === 0;
-      const baseOffset = 90;
+      const baseOffset = 45;
       const targetY = isAbove
-        ? timelineConfig.lineY - baseOffset - Math.random() * 40
-        : timelineConfig.lineY + baseOffset + Math.random() * 40;
+        ? timelineConfig.lineY - baseOffset - Math.random() * 20
+        : timelineConfig.lineY + baseOffset + Math.random() * 20;
 
       const estimatedWidth = Math.min(220, Math.max(160, task.title.length * 6 + 50));
 
@@ -151,14 +151,6 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
           }
           if (node.y + node.height / 2 > maxY) {
             fy += (maxY - (node.y + node.height / 2)) * physics.boundaryForce;
-          }
-
-          const lineBuffer = 30;
-          if (node.isAbove && node.y + node.height / 2 > timelineConfig.lineY - lineBuffer) {
-            fy -= (node.y + node.height / 2 - (timelineConfig.lineY - lineBuffer)) * 0.3;
-          }
-          if (!node.isAbove && node.y - node.height / 2 < timelineConfig.lineY + lineBuffer) {
-            fy += (timelineConfig.lineY + lineBuffer - (node.y - node.height / 2)) * 0.3;
           }
 
           const newVx = (node.vx + fx) * physics.damping;
@@ -464,7 +456,9 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
               const tooltipWidth = Math.max(titleWidth, dateWidth, 200);
               const tooltipHeight = 36;
               let tooltipX = -tooltipWidth / 2;
-              let tooltipY = -50;
+
+              // For boxes above timeline, show tooltip above; for boxes below, show tooltip below
+              let tooltipY = node.isAbove ? -50 : 42;
 
               // Check if tooltip would overflow boundaries
               const nodeScreenX = node.x;
@@ -472,6 +466,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
               const tooltipLeft = nodeScreenX + tooltipX;
               const tooltipRight = nodeScreenX + tooltipX + tooltipWidth;
               const tooltipTop = nodeScreenY + tooltipY;
+              const tooltipBottom = nodeScreenY + tooltipY + tooltipHeight;
 
               // Adjust horizontal position if overflow
               if (tooltipLeft < timelineConfig.padding.left) {
@@ -480,9 +475,13 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
                 tooltipX = (dimensions.width - timelineConfig.padding.right) - nodeScreenX - tooltipWidth;
               }
 
-              // Adjust vertical position if overflow at top
-              if (tooltipTop < 10) {
-                tooltipY = 42; // Show below the node instead
+              // Adjust vertical position if overflow
+              if (node.isAbove && tooltipTop < 10) {
+                // For boxes above timeline that would overflow at top, position tooltip just below top edge
+                tooltipY = 10 - nodeScreenY;
+              } else if (!node.isAbove && tooltipBottom > dimensions.height - 10) {
+                // For boxes below timeline that would overflow at bottom, show above instead
+                tooltipY = -50;
               }
 
               return (
@@ -614,6 +613,7 @@ const styles = {
     padding: '28px',
     border: '1px solid #E8E3D8',
     boxShadow: '0 20px 60px rgba(139, 111, 71, 0.1)',
+    marginBottom: '32px',
   },
   controls: {
     display: 'flex',
