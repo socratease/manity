@@ -3,3 +3,4 @@ uvicorn
 sqlmodel
 httpx
 python-multipart
+pytest

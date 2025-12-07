@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import os
 import uuid
 from datetime import datetime
@@ -39,7 +37,7 @@ class SubtaskBase(SQLModel):
 class Subtask(SubtaskBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     task_id: Optional[str] = Field(default=None, foreign_key="task.id")
-    task: "Task | None" = Relationship(back_populates="subtasks")
+    task: "Task" = Relationship(back_populates="subtasks")
 
 
 class TaskBase(SQLModel):
@@ -52,7 +50,7 @@ class TaskBase(SQLModel):
 class Task(TaskBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     project_id: Optional[str] = Field(default=None, foreign_key="project.id")
-    project: "Project | None" = Relationship(back_populates="plan")
+    project: "Project" = Relationship(back_populates="plan")
     subtasks: list[Subtask] = Relationship(
         back_populates="task",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
@@ -68,7 +66,7 @@ class ActivityBase(SQLModel):
 class Activity(ActivityBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     project_id: Optional[str] = Field(default=None, foreign_key="project.id")
-    project: "Project | None" = Relationship(back_populates="recentActivity")
+    project: "Project" = Relationship(back_populates="recentActivity")
 
 
 class ProjectBase(SQLModel):
