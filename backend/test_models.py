@@ -28,3 +28,37 @@ def test_models_can_be_mapped_and_related(tmp_path):
         assert refreshed_project is not None
         assert refreshed_project.plan[0].subtasks[0].title == "Test Subtask"
         assert refreshed_project.recentActivity[0].note == "note"
+
+
+def test_stakeholders_are_normalized_to_json(tmp_path):
+    db_path = tmp_path / "test.db"
+    main.engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+
+    SQLModel.metadata.create_all(main.engine)
+
+    payload = main.ProjectPayload(
+        name="Stakeholder Project",
+        status="active",
+        priority="high",
+        progress=10,
+        stakeholders=[
+            main.Stakeholder(name="Alice", team="Product"),
+            main.Stakeholder(name="Bob", team="Engineering"),
+        ],
+    )
+
+    with Session(main.engine) as session:
+        project = main.upsert_project(session, payload)
+
+        expected = [
+            {"name": "Alice", "team": "Product"},
+            {"name": "Bob", "team": "Engineering"},
+        ]
+
+        assert project.stakeholders == expected
+
+        serialized = main.serialize_project(project)
+        assert serialized["stakeholders"] == expected
+
+        refreshed_project = session.get(main.Project, project.id)
+        assert refreshed_project.stakeholders == expected
