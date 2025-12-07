@@ -27,6 +27,23 @@ class Stakeholder(BaseModel):
     team: str
 
 
+def normalize_stakeholders(stakeholders: Optional[List[Stakeholder | dict]]) -> list[dict]:
+    normalized: list[dict] = []
+    for stakeholder in stakeholders or []:
+        if isinstance(stakeholder, Stakeholder):
+            normalized.append(stakeholder.model_dump())
+        elif isinstance(stakeholder, dict):
+            normalized.append(
+                {
+                    "name": stakeholder.get("name", ""),
+                    "team": stakeholder.get("team", ""),
+                }
+            )
+        else:  # pragma: no cover - defensive
+            raise TypeError("Unsupported stakeholder type")
+    return normalized
+
+
 class SubtaskBase(SQLModel):
     title: str
     status: str = "todo"
@@ -197,7 +214,7 @@ def serialize_project(project: Project) -> dict:
         "executiveUpdate": project.executiveUpdate,
         "startDate": project.startDate,
         "targetDate": project.targetDate,
-        "stakeholders": project.stakeholders or [],
+        "stakeholders": normalize_stakeholders(project.stakeholders),
         "plan": [serialize_task(task) for task in project.plan],
         "recentActivity": [serialize_activity(activity) for activity in project.recentActivity],
     }
@@ -239,7 +256,7 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     project.executiveUpdate = payload.executiveUpdate
     project.startDate = payload.startDate
     project.targetDate = payload.targetDate
-    project.stakeholders = payload.stakeholders
+    project.stakeholders = normalize_stakeholders(payload.stakeholders)
 
     if project.plan is None:
         project.plan = []
