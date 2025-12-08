@@ -22,6 +22,32 @@ logger = logging.getLogger(__name__)
 # Configure database path with persistent storage
 # Default to persistent directory outside of application folder
 DEFAULT_DB_PATH = "/home/user/c17420g/projects/manity-data/portfolio.db"
+PERSISTENT_SQLITE_ROOTS = [Path("/var/data"), Path(DEFAULT_DB_PATH).parent]
+
+
+def validate_sqlite_database_path(db_path: str | None) -> Path:
+    if not db_path or db_path == ":memory:":
+        logger.error(
+            "DATABASE_URL cannot point to an in-memory SQLite database; configure a persistent path"
+        )
+        raise ValueError("DATABASE_URL must reference a persistent SQLite file")
+
+    resolved_path = Path(db_path).expanduser()
+    if not resolved_path.is_absolute():
+        logger.error(
+            "DATABASE_URL must use an absolute path for persistence (got %s)", resolved_path
+        )
+        raise ValueError("DATABASE_URL must be an absolute path for SQLite")
+
+    if not any(resolved_path.is_relative_to(root) for root in PERSISTENT_SQLITE_ROOTS):
+        logger.warning(
+            "SQLite database path %s is outside known persistent mounts; data may not survive restarts",
+            resolved_path,
+        )
+
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Using SQLite database at %s", resolved_path)
+    return resolved_path
 
 
 def create_engine_from_env(database_url: str | None = None):
@@ -30,13 +56,8 @@ def create_engine_from_env(database_url: str | None = None):
 
     if url.get_backend_name() == "sqlite":
         connect_args = {"check_same_thread": False}
-        db_path = url.database
-        if db_path and db_path != ":memory:":
-            resolved_path = Path(db_path).expanduser()
-            resolved_path.parent.mkdir(parents=True, exist_ok=True)
-            logger.info("Using SQLite database at %s", resolved_path)
-        else:
-            logger.info("Using in-memory SQLite database")
+        resolved_path = validate_sqlite_database_path(url.database)
+        url = url.set(database=str(resolved_path))
     else:
         connect_args = {}
         logger.info(
