@@ -1,7 +1,9 @@
+import logging
 import os
 import uuid
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import List, Optional
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, UploadFile, status
@@ -11,14 +13,40 @@ from pydantic import BaseModel, Field as PydanticField
 import httpx
 from sqlalchemy import Column, delete
 from sqlalchemy.dialects.sqlite import JSON
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import selectinload
 from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, select
+
+logger = logging.getLogger(__name__)
 
 # Configure database path with persistent storage
 # Default to persistent directory outside of application folder
 DEFAULT_DB_PATH = "/home/user/c17420g/projects/manity-data/portfolio.db"
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+
+
+def create_engine_from_env(database_url: str | None = None):
+    resolved_url = database_url or os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
+    url = make_url(resolved_url)
+
+    if url.get_backend_name() == "sqlite":
+        connect_args = {"check_same_thread": False}
+        db_path = url.database
+        if db_path and db_path != ":memory:":
+            resolved_path = Path(db_path).expanduser()
+            resolved_path.parent.mkdir(parents=True, exist_ok=True)
+            logger.info("Using SQLite database at %s", resolved_path)
+        else:
+            logger.info("Using in-memory SQLite database")
+    else:
+        connect_args = {}
+        logger.info(
+            "Using database URL %s", url.render_as_string(hide_password=False)
+        )
+
+    return create_engine(url, connect_args=connect_args)
+
+
+engine = create_engine_from_env()
 
 
 def generate_id(prefix: str) -> str:

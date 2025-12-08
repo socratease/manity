@@ -2,14 +2,14 @@ import os
 import tempfile
 
 import pytest
-from sqlmodel import Session, SQLModel, create_engine
+from sqlmodel import Session, SQLModel
 
 import backend.main as main
 
 
 def test_models_can_be_mapped_and_related(tmp_path):
     db_path = tmp_path / "test.db"
-    main.engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
 
     # Ensure we start from a clean metadata state
     SQLModel.metadata.create_all(main.engine)
@@ -32,7 +32,7 @@ def test_models_can_be_mapped_and_related(tmp_path):
 
 def test_stakeholders_are_normalized_to_json(tmp_path):
     db_path = tmp_path / "test.db"
-    main.engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
 
     SQLModel.metadata.create_all(main.engine)
 
@@ -67,7 +67,7 @@ def test_stakeholders_are_normalized_to_json(tmp_path):
 def test_upsert_project_loads_relationships(tmp_path):
     """Test that upsert_project properly loads all relationships (subtasks, activities)"""
     db_path = tmp_path / "test.db"
-    main.engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+    main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
 
     SQLModel.metadata.create_all(main.engine)
 
