@@ -1361,6 +1361,7 @@ Write a professional executive summary that highlights the project's current sta
 
     setProjects(prevProjects => {
       const workingProjects = prevProjects.map(cloneProjectDeep);
+      const projectLookup = new Map();
 
       const appendActionResult = (label, detail, deltas = []) => {
         result.actionResults.push({
@@ -1373,8 +1374,11 @@ Write a professional executive summary that highlights the project's current sta
 
       const resolveProject = (target) => {
         if (!target) return null;
-        const lowerTarget = `${target}`.toLowerCase();
-        return workingProjects.find(p => `${p.id}` === `${target}` || p.name.toLowerCase() === lowerTarget);
+        const normalizedTarget = `${target}`.toLowerCase();
+        const mappedId = projectLookup.get(normalizedTarget);
+        const lookupTarget = mappedId || target;
+        const lowerTarget = `${lookupTarget}`.toLowerCase();
+        return workingProjects.find(p => `${p.id}` === `${lookupTarget}` || p.name.toLowerCase() === lowerTarget);
       };
 
       const resolveTask = (project, target) => {
@@ -1386,10 +1390,55 @@ Write a professional executive summary that highlights the project's current sta
       const describeDueDate = (date) => date ? `due ${new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'no due date set';
 
       actions.forEach(action => {
-        const project = resolveProject(action.projectId || action.projectName);
         const actionDeltas = [];
         let label = '';
         let detail = '';
+
+        if (action.type === 'create_project') {
+          const projectName = (action.name || action.projectName || '').trim();
+          if (!projectName) {
+            label = 'Skipped action: missing project name';
+            detail = 'Skipped create_project because no name was provided.';
+            appendActionResult(label, detail, actionDeltas);
+            return;
+          }
+
+          const stakeholderEntries = action.stakeholders
+            ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean).map(name => ({ name, team: 'Contributor' }))
+            : [{ name: loggedInUser || 'Momentum', team: 'Owner' }];
+          const createdAt = new Date().toISOString();
+          const newId = action.projectId || action.id || `ai-project-${Math.random().toString(36).slice(2, 7)}`;
+          const newProject = {
+            id: newId,
+            name: projectName,
+            priority: action.priority || 'medium',
+            status: action.status || 'in_progress',
+            progress: typeof action.progress === 'number' ? action.progress : 0,
+            stakeholders: stakeholderEntries,
+            description: action.description || '',
+            startDate: createdAt.split('T')[0],
+            targetDate: action.targetDate || '',
+            plan: [],
+            recentActivity: action.description
+              ? [{ id: generateActivityId(), date: createdAt, note: action.description, author: 'Momentum' }]
+              : []
+          };
+
+          workingProjects.push(newProject);
+          projectLookup.set(`${projectName}`.toLowerCase(), newId);
+          projectLookup.set(`${newId}`.toLowerCase(), newId);
+          if (action.projectId || action.id) {
+            projectLookup.set(`${action.projectId || action.id}`.toLowerCase(), newId);
+          }
+
+          actionDeltas.push({ type: 'remove_project', projectId: newId });
+          label = `Created new project "${projectName}"`;
+          detail = `Created new project "${projectName}" with status ${newProject.status} and priority ${newProject.priority}`;
+          appendActionResult(label, detail, actionDeltas);
+          return;
+        }
+
+        const project = resolveProject(action.projectId || action.projectName);
 
         if (!project) {
           appendActionResult('Skipped action: unknown project', 'Skipped action because the project was not found.', actionDeltas);
@@ -1554,43 +1603,6 @@ Write a professional executive summary that highlights the project's current sta
             actionDeltas.push({ type: 'restore_project', projectId: project.id, previous });
             label = `Updated ${project.name}`;
             detail = `Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`;
-            break;
-          }
-          case 'create_project': {
-            const projectName = action.name || action.projectName;
-            if (!projectName) {
-              label = 'Skipped action: missing project name';
-              detail = 'Skipped create_project because no name was provided.';
-              break;
-            }
-
-            const stakeholderEntries = action.stakeholders
-              ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean).map(name => ({ name, team: 'Contributor' }))
-              : [{ name: loggedInUser || 'Momentum', team: 'Owner' }];
-
-            const createdAt = new Date().toISOString();
-            const newId = `proj-${Date.now()}`;
-            const newProject = {
-              id: newId,
-              name: projectName.trim(),
-              stakeholders: stakeholderEntries,
-              status: action.status || 'planning',
-              priority: action.priority || 'medium',
-              progress: 0,
-              lastUpdate: action.description ? action.description.slice(0, 120) : 'New project created by Momentum',
-              description: action.description || '',
-              startDate: createdAt.split('T')[0],
-              targetDate: action.targetDate || '',
-              plan: [],
-              recentActivity: action.description
-                ? [{ id: generateActivityId(), date: createdAt, note: action.description, author: 'Momentum' }]
-                : []
-            };
-
-            workingProjects.push(newProject);
-            actionDeltas.push({ type: 'remove_project', projectId: newId });
-            label = `Created new project "${projectName}"`;
-            detail = `Created new project "${projectName}" with status ${newProject.status} and priority ${newProject.priority}`;
             break;
           }
           default:
@@ -2294,15 +2306,27 @@ Keep tool calls granular (one discrete change per action), explain each action c
   );
 
   const renderProjectTimeline = (project) => {
-    // Gather all tasks with due dates
     const tasksWithDueDates = [];
+    const dueDates = [];
+
+    const addDueDate = (dateValue) => {
+      if (!dateValue) return null;
+      const parsed = new Date(dateValue);
+      if (Number.isNaN(parsed.getTime())) return null;
+      dueDates.push(parsed);
+      return parsed;
+    };
+
     project.plan.forEach(task => {
+      addDueDate(task.dueDate);
+
       task.subtasks.forEach(subtask => {
-        if (subtask.dueDate) {
+        const parsedDueDate = addDueDate(subtask.dueDate);
+        if (parsedDueDate) {
           tasksWithDueDates.push({
             id: subtask.id || `${task.id}-${subtask.title}`,
             title: subtask.title,
-            dueDate: typeof subtask.dueDate === 'string' ? subtask.dueDate : subtask.dueDate.toISOString(),
+            dueDate: parsedDueDate.toISOString(),
             status: subtask.status,
             taskTitle: task.title
           });
@@ -2310,17 +2334,36 @@ Keep tool calls granular (one discrete change per action), explain each action c
       });
     });
 
-    // Calculate timeline range
-    const now = new Date();
-    const startDate = new Date(now);
-    const endDate = new Date(now);
-    endDate.setMonth(endDate.getMonth() + timelineView);
+    const candidates = [...dueDates];
+    const rangeEndCandidates = [...dueDates];
+    const addCandidate = (dateValue, target) => {
+      const parsed = new Date(dateValue);
+      if (!Number.isNaN(parsed.getTime())) {
+        target.push(parsed);
+      }
+    };
+
+    addCandidate(project.startDate, candidates);
+    addCandidate(project.targetDate, candidates);
+    addCandidate(project.targetDate, rangeEndCandidates);
+
+    const earliestDate = candidates.length > 0
+      ? new Date(Math.min(...candidates.map(date => date.getTime())))
+      : new Date();
+
+    const latestDate = rangeEndCandidates.length > 0
+      ? new Date(Math.max(...rangeEndCandidates.map(date => date.getTime())))
+      : new Date(earliestDate);
+
+    const bufferDays = 7;
+    const endDate = new Date(latestDate);
+    endDate.setDate(endDate.getDate() + bufferDays);
 
     return (
       <div style={{ marginTop: '24px' }}>
         <ForceDirectedTimeline
           tasks={tasksWithDueDates}
-          startDate={startDate.toISOString()}
+          startDate={earliestDate.toISOString()}
           endDate={endDate.toISOString()}
         />
       </div>
