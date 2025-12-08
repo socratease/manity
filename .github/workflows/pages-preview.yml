@@ -11,6 +11,7 @@ permissions:
 
 jobs:
   build:
+    if: ${{ false }} # Temporarily disabled
     runs-on: ubuntu-latest
 
     steps:
@@ -39,6 +40,7 @@ jobs:
           path: ./dist
 
   deploy:
+    if: ${{ false }} # Temporarily disabled
     needs: build
     runs-on: ubuntu-latest
     environment:
