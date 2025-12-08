@@ -7,3 +7,9 @@ services:
     envVars:
       - key: OPENAI_API_KEY
         sync: false
+      - key: DATABASE_URL
+        value: sqlite:////var/data/portfolio.db
+    disk:
+      name: manity-data
+      mountPath: /var/data
+      sizeGB: 1

@@ -14,7 +14,10 @@ from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.orm import selectinload
 from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, select
 
-DATABASE_URL = "sqlite:///./portfolio.db"
+# Configure database path with persistent storage
+# Default to persistent directory outside of application folder
+DEFAULT_DB_PATH = "/home/user/c17420g/projects/manity-data/portfolio.db"
+DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 
 
@@ -294,10 +297,8 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
 
     session.add(project)
     session.commit()
-    session.refresh(project)
-    session.exec(select(Project).options(selectinload(Project.plan).selectinload(Task.subtasks))).all()
-    session.exec(select(Project).options(selectinload(Project.recentActivity))).all()
-    return project
+    # Reload project with all relationships properly loaded
+    return load_project(session, project.id)
 
 
 @app.on_event("startup")

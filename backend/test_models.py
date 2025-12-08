@@ -62,3 +62,72 @@ def test_stakeholders_are_normalized_to_json(tmp_path):
 
         refreshed_project = session.get(main.Project, project.id)
         assert refreshed_project.stakeholders == expected
+
+
+def test_upsert_project_loads_relationships(tmp_path):
+    """Test that upsert_project properly loads all relationships (subtasks, activities)"""
+    db_path = tmp_path / "test.db"
+    main.engine = create_engine(f"sqlite:///{db_path}", connect_args={"check_same_thread": False})
+
+    SQLModel.metadata.create_all(main.engine)
+
+    # Create a project with tasks, subtasks, and activities
+    payload = main.ProjectPayload(
+        name="Full Project",
+        status="active",
+        priority="high",
+        progress=50,
+        plan=[
+            main.TaskPayload(
+                title="Task 1",
+                status="in-progress",
+                subtasks=[
+                    main.SubtaskPayload(title="Subtask 1.1", status="completed"),
+                    main.SubtaskPayload(title="Subtask 1.2", status="in-progress"),
+                ]
+            ),
+            main.TaskPayload(
+                title="Task 2",
+                status="todo",
+                subtasks=[
+                    main.SubtaskPayload(title="Subtask 2.1", status="todo"),
+                ]
+            ),
+        ],
+        recentActivity=[
+            main.ActivityPayload(date="2025-01-01", note="Started project", author="Alice"),
+            main.ActivityPayload(date="2025-01-02", note="Made progress", author="Bob"),
+        ]
+    )
+
+    with Session(main.engine) as session:
+        project = main.upsert_project(session, payload)
+
+        # Verify that all relationships are loaded (not lazy-loaded)
+        assert project.plan is not None
+        assert len(project.plan) == 2
+        assert project.plan[0].title == "Task 1"
+        assert project.plan[1].title == "Task 2"
+
+        # Verify subtasks are loaded
+        assert project.plan[0].subtasks is not None
+        assert len(project.plan[0].subtasks) == 2
+        assert project.plan[0].subtasks[0].title == "Subtask 1.1"
+        assert project.plan[0].subtasks[1].title == "Subtask 1.2"
+
+        assert project.plan[1].subtasks is not None
+        assert len(project.plan[1].subtasks) == 1
+        assert project.plan[1].subtasks[0].title == "Subtask 2.1"
+
+        # Verify activities are loaded
+        assert project.recentActivity is not None
+        assert len(project.recentActivity) == 2
+        assert project.recentActivity[0].note == "Started project"
+        assert project.recentActivity[1].note == "Made progress"
+
+        # Verify serialization includes all relationships
+        serialized = main.serialize_project(project)
+        assert len(serialized["plan"]) == 2
+        assert len(serialized["plan"][0]["subtasks"]) == 2
+        assert len(serialized["plan"][1]["subtasks"]) == 1
+        assert len(serialized["recentActivity"]) == 2
