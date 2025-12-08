@@ -6,7 +6,7 @@ from enum import Enum
 from pathlib import Path
 from typing import List, Optional
 
-from fastapi import Body, Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field as PydanticField
@@ -609,24 +609,44 @@ def export_portfolio(project_id: Optional[str] = None, session: Session = Depend
 
 
 @app.post("/import")
-def import_portfolio(
+async def import_portfolio(
+    request: Request,
     payload: ImportPayload | None = Body(None),
     file: UploadFile | None = File(None),
     mode: str = "replace",
     session: Session = Depends(get_session),
 ):
-    if payload is None:
-        if file is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No import payload provided")
-        try:
-            import json
+    resolved_mode = mode
 
-            data = json.loads(file.file.read())
-            if "mode" not in data:
-                data["mode"] = mode
-            payload = ImportPayload(**data)
-        except Exception as exc:  # pragma: no cover - defensive
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid import file: {exc}")
+    if payload is None:
+        if file is not None:
+            try:
+                import json
+
+                data = json.loads(file.file.read())
+                if "mode" not in data:
+                    data["mode"] = resolved_mode
+                payload = ImportPayload(**data)
+            except Exception as exc:  # pragma: no cover - defensive
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid import file: {exc}")
+        else:
+            try:
+                import json
+
+                raw_body = await request.body()
+                if raw_body:
+                    data = json.loads(raw_body)
+                    if "mode" not in data:
+                        data["mode"] = resolved_mode
+                    payload = ImportPayload(**data)
+            except Exception as exc:  # pragma: no cover - defensive
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid import file: {exc}")
+
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No import payload provided")
+
+    if "mode" not in payload.model_fields_set:
+        payload = payload.model_copy(update={"mode": resolved_mode})
 
     if payload.mode not in {"replace", "merge"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid import mode")

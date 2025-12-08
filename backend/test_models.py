@@ -1,10 +1,19 @@
+import json
 import os
 import tempfile
 
 import pytest
-from sqlmodel import Session, SQLModel
+from fastapi.testclient import TestClient
+from sqlmodel import Session, SQLModel, select
 
 import backend.main as main
+
+
+def _create_test_client(tmp_path):
+    db_path = tmp_path / "test.db"
+    main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
+    SQLModel.metadata.create_all(main.engine)
+    return TestClient(main.app)
 
 
 def test_models_can_be_mapped_and_related(tmp_path):
@@ -131,3 +140,77 @@ def test_upsert_project_loads_relationships(tmp_path):
         assert len(serialized["plan"][0]["subtasks"]) == 2
         assert len(serialized["plan"][1]["subtasks"]) == 1
         assert len(serialized["recentActivity"]) == 2
+
+
+def test_import_portfolio_honors_query_mode_for_json_payload(tmp_path):
+    client = _create_test_client(tmp_path)
+
+    with Session(main.engine) as session:
+        session.add(main.Project(id="existing", name="Existing Project"))
+        session.commit()
+
+    payload = {"projects": [{"id": "new-project", "name": "New Project"}]}
+    response = client.post("/import?mode=merge", json=payload)
+
+    assert response.status_code == 200
+
+    with Session(main.engine) as session:
+        project_ids = {project.id for project in session.exec(select(main.Project)).all()}
+        assert project_ids == {"existing", "new-project"}
+
+
+def test_import_portfolio_honors_query_mode_for_json_replace(tmp_path):
+    client = _create_test_client(tmp_path)
+
+    with Session(main.engine) as session:
+        session.add(main.Project(id="existing", name="Existing Project"))
+        session.commit()
+
+    payload = {"projects": [{"id": "replacement", "name": "Replacement Project"}]}
+    response = client.post("/import?mode=replace", json=payload)
+
+    assert response.status_code == 200
+
+    with Session(main.engine) as session:
+        project_ids = {project.id for project in session.exec(select(main.Project)).all()}
+        assert project_ids == {"replacement"}
+
+
+def test_import_portfolio_honors_query_mode_for_file_merge(tmp_path):
+    client = _create_test_client(tmp_path)
+
+    with Session(main.engine) as session:
+        session.add(main.Project(id="existing", name="Existing Project"))
+        session.commit()
+
+    file_content = json.dumps({"projects": [{"id": "merged", "name": "Merged Project"}]})
+    response = client.post(
+        "/import?mode=merge",
+        files={"file": ("import.json", file_content, "application/json")},
+    )
+
+    assert response.status_code == 200
+
+    with Session(main.engine) as session:
+        project_ids = {project.id for project in session.exec(select(main.Project)).all()}
+        assert project_ids == {"existing", "merged"}
+
+
+def test_import_portfolio_honors_query_mode_for_file_replace(tmp_path):
+    client = _create_test_client(tmp_path)
+
+    with Session(main.engine) as session:
+        session.add(main.Project(id="existing", name="Existing Project"))
+        session.commit()
+
+    file_content = json.dumps({"projects": [{"id": "replacement", "name": "Replacement Project"}]})
+    response = client.post(
+        "/import?mode=replace",
+        files={"file": ("import.json", file_content, "application/json")},
+    )
+
+    assert response.status_code == 200
+
+    with Session(main.engine) as session:
+        project_ids = {project.id for project in session.exec(select(main.Project)).all()}
+        assert project_ids == {"replacement"}
