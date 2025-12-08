@@ -82,7 +82,7 @@ Before deploying, manually test:
 
 ### Local Deployment
 
-The application stores data in `/home/user/c17420g/projects/manity-data/portfolio.db` by default.
+The application stores data in `/home/c17420g/projects/manity-data/portfolio.db` by default.
 
 **Important**: This directory must exist and be writable by the backend process.
 
@@ -176,13 +176,13 @@ Set up a cron job to backup the database:
 
 ```bash
 # Add to crontab (crontab -e)
-0 2 * * * cp /home/user/c17420g/projects/manity-data/portfolio.db /home/user/c17420g/projects/manity-data/backups/portfolio-$(date +\%Y\%m\%d).db
+0 2 * * * cp /home/c17420g/projects/manity-data/portfolio.db /home/c17420g/projects/manity-data/backups/portfolio-$(date +\%Y\%m\%d).db
 ```
 
 ### Manual Backup
 
 ```bash
-cp /home/user/c17420g/projects/manity-data/portfolio.db portfolio.db.backup
+cp /home/c17420g/projects/manity-data/portfolio.db portfolio.db.backup
 ```
 
 ### Export via API

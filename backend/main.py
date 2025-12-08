@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 # Configure database path with persistent storage
 # Default to persistent directory outside of application folder
-DEFAULT_DB_PATH = "/home/user/c17420g/projects/manity-data/portfolio.db"
+DEFAULT_DB_PATH = "/home/c17420g/projects/manity-data/portfolio.db"
 PERSISTENT_SQLITE_ROOTS = [Path("/var/data"), Path(DEFAULT_DB_PATH).parent]
 
 
