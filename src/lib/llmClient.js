@@ -1,6 +1,6 @@
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
-const LLM_PROVIDER = (import.meta.env.VITE_LLM_PROVIDER || 'openai').toLowerCase();
-const LLM_MODEL = import.meta.env.VITE_LLM_MODEL || 'gpt-5.1';
+const LLM_PROVIDER = (import.meta.env.VITE_LLM_PROVIDER || 'azure').toLowerCase();
+const LLM_MODEL = import.meta.env.VITE_LLM_MODEL || 'gpt-4.1';
 const DEFAULT_RESPONSE_FORMAT = import.meta.env.VITE_LLM_RESPONSE_FORMAT
   ? JSON.parse(import.meta.env.VITE_LLM_RESPONSE_FORMAT)
   : null;

@@ -16,7 +16,7 @@ from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, sele
 
 # Configure database path with persistent storage
 # Default to persistent directory outside of application folder
-DEFAULT_DB_PATH = "/home/user/c17420g/projects/manity-data/portfolio.db"
+DEFAULT_DB_PATH = "/home/c17420g/projects/manity-data/portfolio.db"
 DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
 engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
 

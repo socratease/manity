@@ -3,23 +3,26 @@
 set -euo pipefail
 
 ##############################################
-# Configuration (adjust to your repo layout) #
+# Dotenv loader (+ overlay .env.local)
 ##############################################
-BACKEND_DIR="backend"         # path to FastAPI project (has requirements.txt)
-BACKEND_APP="app.main:app"    # ASGI path for uvicorn, e.g., "app.main:app"
-BACKEND_PORT="${BACKEND_PORT:-8111}"
+load_env_file() {
+  local f="$1"
+  if [[ -f "$f" ]]; then
+    # Export all variables defined in the file (simple VAR=VALUE lines)
+    # Note: 'source' allows quotes and escapes commonly used in .env
+    set -o allexport
+    # shellcheck disable=SC1090
+    source "$f"
+    set +o allexport
+    echo "[deploy] Loaded env: $f"
+  fi
+}
 
-FRONTEND_DIR="src"       # path to React project (has package.json)
-FRONTEND_PORT="${FRONTEND_PORT:-8112}"
-
-PYTHON_BIN="${PYTHON_BIN:-python3}"  # python interpreter
-NODE_BIN="${NODE_BIN:-node}"         # node interpreter
-NPM_BIN="${NPM_BIN:-npm}"            # npm
-SERVE_CMD="${SERVE_CMD:-npx serve}"  # SPA server (no sudo; uses npx)
-
-LOG_DIR="${LOG_DIR:-$HOME/.local/app-logs}"
-VENV_DIR="${VENV_DIR:-$HOME/.local/venvs/fastapi-react}"
-RUN_DIR="${RUN_DIR:-$HOME/.local/app-run}"  # pid files, etc.
+load_dotenv() {
+  # Load base .env, then overlay .env.local (if present)
+  load_env_file ".env"
+  load_env_file ".env.local"
+}
 
 ##############################################
 # Helpers
@@ -34,16 +37,56 @@ require_cmd() {
   fi
 }
 
-ensure_dir() {
-  mkdir -p "$1"
+ensure_dir() { mkdir -p "$1"; }
+
+validate_port() {
+  local name="$1"; local value="$2"
+  if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+    err "$name ($value) is not a valid positive integer. Use 0–65535."
+    exit 1
+  fi
+  if (( value < 0 || value > 65535 )); then
+    err "$name ($value) out of range. Use 0–65535."
+    exit 1
+  fi
+}
+
+validate_path_exists() {
+  local kind="$1"; local p="$2"
+  if [[ ! -d "$p" ]]; then
+    err "$kind directory not found: $p"
+    exit 1
+  fi
+}
+
+mask_env() {
+  # Mask values that look sensitive when echoing config
+  local k="$1"; local v="$2"
+  if [[ "$k" =~ (SECRET|TOKEN|PASS|PWD|KEY|CRED|AUTH|API_KEY) ]]; then
+    echo "***"
+  else
+    echo "$v"
+  fi
+}
+
+print_config_summary() {
+  msg "Configuration:"
+  for k in BACKEND_DIR BACKEND_APP BACKEND_PORT FRONTEND_DIR FRONTEND_PORT LOG_DIR VENV_DIR RUN_DIR; do
+    # shellcheck disable=SC2154
+    v="${!k}"
+    printf "  %-14s = %s\n" "$k" "$(mask_env "$k" "$v")"
+  done
+  # Optional frontend variables commonly used by React
+  for k in REACT_APP_API_BASE NODE_ENV; do
+    v="${!k-}"
+    [[ -n "${v:-}" ]] && printf "  %-14s = %s\n" "$k" "$(mask_env "$k" "$v")"
+  done
 }
 
 kill_if_running() {
-  local name="$1"
-  local pid_file="$RUN_DIR/$name.pid"
+  local name="$1"; local pid_file="$RUN_DIR/$name.pid"
   if [[ -f "$pid_file" ]]; then
-    local pid
-    pid=$(cat "$pid_file" || true)
+    local pid; pid=$(cat "$pid_file" || true)
     if [[ -n "${pid:-}" ]] && ps -p "$pid" >/dev/null 2>&1; then
       msg "Stopping $name (pid $pid)"
       kill "$pid" || true
@@ -54,12 +97,8 @@ kill_if_running() {
 }
 
 start_bg() {
-  # $1: command (string), $2: log file, $3: pid name
-  local cmd="$1"
-  local log_file="$2"
-  local name="$3"
-  local pid_file="$RUN_DIR/$name.pid"
-
+  # $1: command string, $2: log file, $3: pid name
+  local cmd="$1"; local log_file="$2"; local name="$3"; local pid_file="$RUN_DIR/$name.pid"
   msg "Starting $name -> $cmd"
   nohup bash -lc "$cmd" >"$log_file" 2>&1 &
   echo $! >"$pid_file"
@@ -73,29 +112,56 @@ start_bg() {
 }
 
 ##############################################
-# Preflight checks
+# Load .env before computing defaults
+##############################################
+load_dotenv
+
+##############################################
+# Configuration (env-driven with sane defaults)
+##############################################
+BACKEND_DIR="${BACKEND_DIR:-backend}"           # path to FastAPI project (has requirements.txt)
+BACKEND_APP="${BACKEND_APP:-app.main:app}"      # ASGI path for uvicorn, e.g., "app.main:app"
+BACKEND_PORT="${BACKEND_PORT:-8000}"
+
+FRONTEND_DIR="${FRONTEND_DIR:-frontend}"        # path to React project (has package.json)
+FRONTEND_PORT="${FRONTEND_PORT:-3000}"
+
+PYTHON_BIN="${PYTHON_BIN:-python3}"             # python interpreter
+NODE_BIN="${NODE_BIN:-node}"                    # node interpreter
+NPM_BIN="${NPM_BIN:-npm}"                       # npm
+SERVE_CMD="${SERVE_CMD:-npx --yes serve}"       # SPA server via npx (no sudo)
+
+LOG_DIR="${LOG_DIR:-$HOME/.local/app-logs}"
+VENV_DIR="${VENV_DIR:-$HOME/.local/venvs/fastapi-react}"
+RUN_DIR="${RUN_DIR:-$HOME/.local/app-run}"
+
+# Optional: React API base (picked up by CRA if prefixed REACT_APP_)
+REACT_APP_API_BASE="${REACT_APP_API_BASE:-http://localhost:$BACKEND_PORT}"
+NODE_ENV="${NODE_ENV:-production}"
+
+##############################################
+# Preflight checks & validation
 ##############################################
 require_cmd "$PYTHON_BIN"
 require_cmd "$NODE_BIN"
 require_cmd "$NPM_BIN"
 
-if [[ ! -d "$BACKEND_DIR" ]]; then
-  err "Backend directory not found: $BACKEND_DIR"
-  exit 1
-fi
-if [[ ! -d "$FRONTEND_DIR" ]]; then
-  err "Frontend directory not found: $FRONTEND_DIR"
-  exit 1
-fi
+validate_port "BACKEND_PORT" "$BACKEND_PORT"
+validate_port "FRONTEND_PORT" "$FRONTEND_PORT"
+
+validate_path_exists "Backend" "$BACKEND_DIR"
+validate_path_exists "Frontend" "$FRONTEND_DIR"
 
 ensure_dir "$LOG_DIR"
 ensure_dir "$RUN_DIR"
+ensure_dir "$(dirname "$VENV_DIR")"
+
+print_config_summary
 
 ##############################################
 # Python venv and backend dependencies
 ##############################################
-msg "Creating Python virtual environment: $VENV_DIR"
-ensure_dir "$(dirname "$VENV_DIR")"
+msg "Creating/using Python virtual environment: $VENV_DIR"
 if [[ ! -d "$VENV_DIR" ]]; then
   "$PYTHON_BIN" -m venv "$VENV_DIR"
 fi
@@ -109,25 +175,90 @@ if [[ -f "$BACKEND_DIR/requirements.txt" ]]; then
   msg "Installing backend dependencies from requirements.txt"
   pip install -r "$BACKEND_DIR/requirements.txt"
 else
-  msg "No requirements.txt found. Installing uvicorn and fastapi just in case."
+  msg "No requirements.txt found. Installing uvicorn and fastapi."
   pip install fastapi uvicorn
 fi
 
+
+
+
+
 ##############################################
-# Build frontend
+# Build frontend (root has package.json + index.html)
 ##############################################
 msg "Installing frontend dependencies"
 pushd "$FRONTEND_DIR" >/dev/null
-# prefer clean, reproducible installs if package-lock.json present
-if [[ -f package-lock.json ]]; then
-  "$NPM_BIN" ci
-else
-  "$NPM_BIN" install
+
+# Build-time env vars (React/Vite)
+export REACT_APP_API_BASE NODE_ENV
+
+# Detect package manager
+PKG="npm"
+INSTALL_CMD="$NPM_BIN ci --include=dev"   # ensure devDependencies installed
+RUN_CMD="$NPM_BIN run"
+
+if [[ -f pnpm-lock.yaml ]] && command -v pnpm >/dev/null 2>&1; then
+  PKG="pnpm"
+  INSTALL_CMD="pnpm install --dev"
+  RUN_CMD="pnpm run"
+elif [[ -f yarn.lock ]] && command -v yarn >/dev/null 2>&1; then
+  PKG="yarn"
+  INSTALL_CMD="yarn install --frozen-lockfile || yarn install"
+  RUN_CMD="yarn"
+elif [[ ! -f package-lock.json ]]; then
+  # No lockfile → fall back to npm install incl. dev deps
+  INSTALL_CMD="$NPM_BIN install --include=dev"
 fi
 
+msg "Using package manager: $PKG"
+
+# If npm and an older version that doesn't support --include=dev, fall back via npm_config_production=false
+if [[ "$PKG" == "npm" ]]; then
+  if ! $INSTALL_CMD >/dev/null 2>&1; then
+    msg "npm --include=dev not supported; retrying install with npm_config_production=false"
+    npm_config_production=false $NPM_BIN ci || npm_config_production=false $NPM_BIN install
+  else
+    # rerun to show logs
+    bash -lc "$INSTALL_CMD"
+  fi
+else
+  bash -lc "$INSTALL_CMD"
+fi
+
+# Sanity: ensure vite is available after install
+if [[ ! -x node_modules/.bin/vite ]]; then
+  msg "vite not found in node_modules/.bin; adding devDependency"
+  if [[ "$PKG" == "pnpm" ]]; then
+    pnpm add -D vite @vitejs/plugin-react
+  elif [[ "$PKG" == "yarn" ]]; then
+    yarn add -D vite @vitejs/plugin-react
+  else
+    $NPM_BIN i -D vite @vitejs/plugin-react
+  fi
+fi
+
+# Confirm index.html exists in VITE_ROOT (your case: repo root)
+[[ -f "$VITE_ROOT/index.html" ]] || {
+  err "Expected index.html at VITE_ROOT=$VITE_ROOT, but not found."
+  exit 1
+}
+
+# Build (prefer package.json script; otherwise run vite explicitly)
 msg "Building React app"
-"$NPM_BIN" run build
+BUILD_SCRIPT="$(node -e 'const p=require("./package.json"); console.log((p.scripts&&p.scripts.build)||"");' || true)"
+if [[ -n "$BUILD_SCRIPT" ]]; then
+  bash -lc "$RUN_CMD build"
+else
+  # Fallback: run vite and pass the root explicitly
+  if command -v npx >/dev/null 2>&1; then
+    npx --yes vite build "$VITE_ROOT"
+  else
+    node_modules/.bin/vite build "$VITE_ROOT"
+  fi
+fi
+
 popd >/dev/null
+
 
 ##############################################
 # Stop previous processes if any
@@ -145,15 +276,14 @@ start_bg "$BACKEND_CMD" "$BACKEND_LOG" "backend"
 ##############################################
 # Start frontend (serve SPA build)
 ##############################################
+FRONTEND_BUILD_DIR="${FRONTEND_BUILD_DIR:-$FRONTEND_DIR/dist}"  # Vite default
 FRONTEND_LOG="$LOG_DIR/frontend.log"
-FRONTEND_BUILD_DIR="$FRONTEND_DIR/build"
 
-if [[ ! -d "$FRONTEND_BUILD_DIR" ]]; then
+[[ -d "$FRONTEND_BUILD_DIR" ]] || {
   err "Frontend build directory not found: $FRONTEND_BUILD_DIR"
   exit 1
-fi
+}
 
-# Use 'serve -s build' to handle SPA routing fallback (no sudo; via npx)
 FRONTEND_CMD="cd \"$FRONTEND_DIR\" && $SERVE_CMD -s \"$FRONTEND_BUILD_DIR\" -l $FRONTEND_PORT"
 start_bg "$FRONTEND_CMD" "$FRONTEND_LOG" "frontend"
 
@@ -161,7 +291,7 @@ start_bg "$FRONTEND_CMD" "$FRONTEND_LOG" "frontend"
 # Summary
 ##############################################
 msg "Deployment complete."
-echo "Backend: http://localhost:$BACKEND_PORT"
+echo "Backend:  http://localhost:$BACKEND_PORT"
 echo "Frontend: http://localhost:$FRONTEND_PORT"
 echo "Logs:"
 echo "  $BACKEND_LOG"
