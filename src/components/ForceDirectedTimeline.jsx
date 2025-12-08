@@ -28,14 +28,26 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     { id: 13, title: 'Go Live & Monitoring Setup', dueDate: '2025-03-20', status: 'todo', taskTitle: 'Release' },
   ], [tasks]);
 
-  // Calculate timeline range based on zoom
+  // Calculate timeline range based on provided dates or zoom
   const getTimelineRange = useCallback(() => {
     const now = startDate ? new Date(startDate) : new Date('2025-01-01');
     const rangeStart = new Date(now);
-    const rangeEnd = new Date(now);
-    rangeEnd.setMonth(rangeEnd.getMonth() + timelineZoom);
+    let rangeEnd;
+
+    if (endDate) {
+      rangeEnd = new Date(endDate);
+    } else {
+      rangeEnd = new Date(rangeStart);
+      rangeEnd.setMonth(rangeEnd.getMonth() + timelineZoom);
+    }
+
+    if (rangeEnd <= rangeStart) {
+      rangeEnd = new Date(rangeStart);
+      rangeEnd.setDate(rangeEnd.getDate() + 1);
+    }
+
     return { startDate: rangeStart, endDate: rangeEnd };
-  }, [timelineZoom, startDate]);
+  }, [timelineZoom, startDate, endDate]);
 
   const timelineConfig = {
     padding: { left: 80, right: 80, top: 30, bottom: 30 },
@@ -62,7 +74,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     const totalMs = rangeEnd - rangeStart;
     const dateMs = new Date(date) - rangeStart;
     return padding.left + (dateMs / totalMs) * timelineWidth;
-  }, [dimensions.width, timelineZoom, startDate]);
+  }, [dimensions.width, timelineZoom, startDate, endDate]);
 
   // Initialize nodes
   useEffect(() => {
@@ -96,7 +108,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
       };
     });
     setNodes(initialNodes);
-  }, [getTimelineX, timelineZoom]);
+  }, [getTimelineX, timelineZoom, startDate, endDate]);
 
   // Physics simulation
   useEffect(() => {

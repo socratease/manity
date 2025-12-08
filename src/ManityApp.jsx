@@ -2294,15 +2294,27 @@ Keep tool calls granular (one discrete change per action), explain each action c
   );
 
   const renderProjectTimeline = (project) => {
-    // Gather all tasks with due dates
     const tasksWithDueDates = [];
+    const dueDates = [];
+
+    const addDueDate = (dateValue) => {
+      if (!dateValue) return null;
+      const parsed = new Date(dateValue);
+      if (Number.isNaN(parsed.getTime())) return null;
+      dueDates.push(parsed);
+      return parsed;
+    };
+
     project.plan.forEach(task => {
+      addDueDate(task.dueDate);
+
       task.subtasks.forEach(subtask => {
-        if (subtask.dueDate) {
+        const parsedDueDate = addDueDate(subtask.dueDate);
+        if (parsedDueDate) {
           tasksWithDueDates.push({
             id: subtask.id || `${task.id}-${subtask.title}`,
             title: subtask.title,
-            dueDate: typeof subtask.dueDate === 'string' ? subtask.dueDate : subtask.dueDate.toISOString(),
+            dueDate: parsedDueDate.toISOString(),
             status: subtask.status,
             taskTitle: task.title
           });
@@ -2310,17 +2322,36 @@ Keep tool calls granular (one discrete change per action), explain each action c
       });
     });
 
-    // Calculate timeline range
-    const now = new Date();
-    const startDate = new Date(now);
-    const endDate = new Date(now);
-    endDate.setMonth(endDate.getMonth() + timelineView);
+    const candidates = [...dueDates];
+    const rangeEndCandidates = [...dueDates];
+    const addCandidate = (dateValue, target) => {
+      const parsed = new Date(dateValue);
+      if (!Number.isNaN(parsed.getTime())) {
+        target.push(parsed);
+      }
+    };
+
+    addCandidate(project.startDate, candidates);
+    addCandidate(project.targetDate, candidates);
+    addCandidate(project.targetDate, rangeEndCandidates);
+
+    const earliestDate = candidates.length > 0
+      ? new Date(Math.min(...candidates.map(date => date.getTime())))
+      : new Date();
+
+    const latestDate = rangeEndCandidates.length > 0
+      ? new Date(Math.max(...rangeEndCandidates.map(date => date.getTime())))
+      : new Date(earliestDate);
+
+    const bufferDays = 7;
+    const endDate = new Date(latestDate);
+    endDate.setDate(endDate.getDate() + bufferDays);
 
     return (
       <div style={{ marginTop: '24px' }}>
         <ForceDirectedTimeline
           tasks={tasksWithDueDates}
-          startDate={startDate.toISOString()}
+          startDate={earliestDate.toISOString()}
           endDate={endDate.toISOString()}
         />
       </div>
