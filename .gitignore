@@ -19,7 +19,7 @@ eggs/
 .eggs/
 backend/lib/
 backend/lib64/
-backend/venv
+backend/venv/
 parts/
 sdist/
 var/

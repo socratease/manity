@@ -93,7 +93,7 @@ export DATABASE_URL=sqlite:////path/to/your/database.db
 
 ### Cloud Deployment (Render.com)
 
-The `render.yaml` configuration includes:
+The `render.yaml` configuration includes a **persistent disk**:
 
 ```yaml
 disk:
@@ -106,9 +106,16 @@ envVars:
     value: sqlite:////var/data/portfolio.db
 ```
 
-This creates a **persistent disk** that survives redeployments.
+On startup, the backend will log the resolved SQLite path. During deployment,
+check Render logs and confirm you see:
 
-**Data will NOT be lost** when you redeploy the backend.
+```
+Using SQLite database at /var/data/portfolio.db
+```
+
+If the path is missing or shows an in-memory database, fix the mount and
+environment variables before proceeding. The disk mount ensures data survives
+redeployments.
 
 ### Other Cloud Platforms
 

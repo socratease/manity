@@ -1,24 +1,73 @@
+import logging
 import os
 import uuid
 from datetime import datetime
 from enum import Enum
+from pathlib import Path
 from typing import List, Optional
 
-from fastapi import Body, Depends, FastAPI, File, HTTPException, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field as PydanticField
 import httpx
 from sqlalchemy import Column, delete
 from sqlalchemy.dialects.sqlite import JSON
+from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import selectinload
 from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, select
 
+logger = logging.getLogger(__name__)
+
 # Configure database path with persistent storage
 # Default to persistent directory outside of application folder
-DEFAULT_DB_PATH = "/home/c17420g/projects/manity-data/portfolio.db"
-DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
-engine = create_engine(DATABASE_URL, connect_args={"check_same_thread": False})
+DEFAULT_DB_PATH = "/home/user/c17420g/projects/manity-data/portfolio.db"
+PERSISTENT_SQLITE_ROOTS = [Path("/var/data"), Path(DEFAULT_DB_PATH).parent]
+
+
+def validate_sqlite_database_path(db_path: str | None) -> Path:
+    if not db_path or db_path == ":memory:":
+        logger.error(
+            "DATABASE_URL cannot point to an in-memory SQLite database; configure a persistent path"
+        )
+        raise ValueError("DATABASE_URL must reference a persistent SQLite file")
+
+    resolved_path = Path(db_path).expanduser()
+    if not resolved_path.is_absolute():
+        logger.error(
+            "DATABASE_URL must use an absolute path for persistence (got %s)", resolved_path
+        )
+        raise ValueError("DATABASE_URL must be an absolute path for SQLite")
+
+    if not any(resolved_path.is_relative_to(root) for root in PERSISTENT_SQLITE_ROOTS):
+        logger.warning(
+            "SQLite database path %s is outside known persistent mounts; data may not survive restarts",
+            resolved_path,
+        )
+
+    resolved_path.parent.mkdir(parents=True, exist_ok=True)
+    logger.info("Using SQLite database at %s", resolved_path)
+    return resolved_path
+
+
+def create_engine_from_env(database_url: str | None = None):
+    resolved_url = database_url or os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
+    url = make_url(resolved_url)
+
+    if url.get_backend_name() == "sqlite":
+        connect_args = {"check_same_thread": False}
+        resolved_path = validate_sqlite_database_path(url.database)
+        url = url.set(database=str(resolved_path))
+    else:
+        connect_args = {}
+        logger.info(
+            "Using database URL %s", url.render_as_string(hide_password=False)
+        )
+
+    return create_engine(url, connect_args=connect_args)
+
+
+engine = create_engine_from_env()
 
 
 def generate_id(prefix: str) -> str:
@@ -581,24 +630,44 @@ def export_portfolio(project_id: Optional[str] = None, session: Session = Depend
 
 
 @app.post("/import")
-def import_portfolio(
+async def import_portfolio(
+    request: Request,
     payload: ImportPayload | None = Body(None),
     file: UploadFile | None = File(None),
     mode: str = "replace",
     session: Session = Depends(get_session),
 ):
-    if payload is None:
-        if file is None:
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No import payload provided")
-        try:
-            import json
+    resolved_mode = mode
 
-            data = json.loads(file.file.read())
-            if "mode" not in data:
-                data["mode"] = mode
-            payload = ImportPayload(**data)
-        except Exception as exc:  # pragma: no cover - defensive
-            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid import file: {exc}")
+    if payload is None:
+        if file is not None:
+            try:
+                import json
+
+                data = json.loads(file.file.read())
+                if "mode" not in data:
+                    data["mode"] = resolved_mode
+                payload = ImportPayload(**data)
+            except Exception as exc:  # pragma: no cover - defensive
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid import file: {exc}")
+        else:
+            try:
+                import json
+
+                raw_body = await request.body()
+                if raw_body:
+                    data = json.loads(raw_body)
+                    if "mode" not in data:
+                        data["mode"] = resolved_mode
+                    payload = ImportPayload(**data)
+            except Exception as exc:  # pragma: no cover - defensive
+                raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=f"Invalid import file: {exc}")
+
+    if payload is None:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No import payload provided")
+
+    if "mode" not in payload.model_fields_set:
+        payload = payload.model_copy(update={"mode": resolved_mode})
 
     if payload.mode not in {"replace", "merge"}:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid import mode")
