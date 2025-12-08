@@ -3,6 +3,7 @@ import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, Chev
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
 import ForceDirectedTimeline from './components/ForceDirectedTimeline';
+import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -88,7 +89,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     recentlyCompleted: 3,
     nextUp: 3
   });
-  const supportedMomentumActions = ['comment', 'add_task', 'update_task', 'add_subtask', 'update_subtask', 'update_project', 'create_project'];
 
   // JSON Schema for structured output - ensures LLM returns properly formatted actions
   const momentumResponseSchema = {
@@ -1280,68 +1280,13 @@ Write a professional executive summary that highlights the project's current sta
     }
   };
 
+  // Wrapper functions to provide projects context to imported validation utilities
   const resolveMomentumProjectRef = (target) => {
-    if (!target) return null;
-    const lowerTarget = `${target}`.toLowerCase();
-    return projects.find(project => `${project.id}` === `${target}` || project.name.toLowerCase() === lowerTarget) || null;
+    return resolveMomentumProjectRefUtil(target, projects);
   };
 
   const validateThrustActions = (actions = []) => {
-    const errors = [];
-
-    if (!Array.isArray(actions)) {
-      return { validActions: [], errors: ['Momentum returned an invalid actions payload (not an array).'] };
-    }
-
-    const validActions = [];
-
-    actions.forEach((action, idx) => {
-      if (!action || typeof action !== 'object') {
-        errors.push(`Action ${idx + 1} was not an object.`);
-        return;
-      }
-
-      if (!action.type) {
-        errors.push(`Action ${idx + 1} is missing a type.`);
-        return;
-      }
-
-      if (!supportedMomentumActions.includes(action.type)) {
-        errors.push(`Action ${idx + 1} uses unsupported type "${action.type}".`);
-        return;
-      }
-
-      // create_project doesn't need a projectId - it creates a new project
-      if (action.type === 'create_project') {
-        const projectName = action.name || action.projectName;
-        if (!projectName) {
-          errors.push(`Action ${idx + 1} (create_project) is missing a name or projectName.`);
-          return;
-        }
-        validActions.push(action);
-        return;
-      }
-
-      const projectRef = action.projectId ?? action.projectName;
-      if (!projectRef) {
-        errors.push(`Action ${idx + 1} (${action.type}) is missing a projectId or projectName.`);
-        return;
-      }
-
-      const resolvedProject = resolveMomentumProjectRef(projectRef);
-      if (!resolvedProject) {
-        errors.push(`Action ${idx + 1} (${action.type}) references unknown project "${projectRef}".`);
-        return;
-      }
-
-      validActions.push({
-        ...action,
-        projectId: resolvedProject.id,
-        projectName: resolvedProject.name
-      });
-    });
-
-    return { validActions, errors };
+    return validateThrustActionsUtil(actions, projects);
   };
 
   const rollbackDeltas = (deltas) => {
