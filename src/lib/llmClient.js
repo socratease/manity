@@ -1,12 +1,23 @@
 const API_BASE = import.meta.env.VITE_API_BASE || 'http://localhost:8000';
+const LLM_PROVIDER = (import.meta.env.VITE_LLM_PROVIDER || 'openai').toLowerCase();
+const LLM_MODEL = import.meta.env.VITE_LLM_MODEL || 'gpt-5.1';
+const DEFAULT_RESPONSE_FORMAT = import.meta.env.VITE_LLM_RESPONSE_FORMAT
+  ? JSON.parse(import.meta.env.VITE_LLM_RESPONSE_FORMAT)
+  : null;
 const resolveUrl = (path) => {
   if (API_BASE.startsWith('http')) return `${API_BASE}${path}`;
   return `${window.location.origin}${API_BASE}${path}`;
 };
 
-export async function callOpenAIChat({ messages, model = "gpt-5.1", responseFormat = null }) {
+export async function callOpenAIChat({
+  messages,
+  model = LLM_MODEL,
+  responseFormat = DEFAULT_RESPONSE_FORMAT,
+  provider = LLM_PROVIDER,
+} = {}) {
   const requestBody = {
     model,
+    provider,
     messages,
   };
 
@@ -24,7 +35,7 @@ export async function callOpenAIChat({ messages, model = "gpt-5.1", responseForm
 
   if (!res.ok) {
     const text = await res.text();
-    throw new Error(`OpenAI error: ${text}`);
+    throw new Error(`LLM error: ${text}`);
   }
 
   const json = await res.json();

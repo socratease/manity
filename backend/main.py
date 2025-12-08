@@ -146,8 +146,14 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class ChatProvider(str, Enum):
+    OPENAI = "openai"
+    AZURE_OPENAI = "azure"
+
+
 class ChatRequest(BaseModel):
-    model: str = "gpt-5.1"
+    model: str = os.getenv("LLM_MODEL", "gpt-5.1")
+    provider: Optional[ChatProvider] = None
     messages: List[ChatMessage] = PydanticField(..., min_items=1)
     response_format: Optional[dict] = None
 
@@ -616,14 +622,22 @@ def import_portfolio(
     return {"projects": projects}
 
 
-@app.post("/api/llm/chat")
-async def proxy_llm_chat(payload: ChatRequest):
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
+def _resolve_provider(provider_override: ChatProvider | None) -> ChatProvider:
+    if provider_override:
+        return provider_override
+
+    env_provider = os.getenv("LLM_PROVIDER", ChatProvider.OPENAI.value)
+    try:
+        return ChatProvider(env_provider.lower())
+    except ValueError as exc:  # pragma: no cover - defensive
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="OpenAI API key not configured on server",
-        )
+            detail=f"Unsupported LLM provider configured: {env_provider}",
+        ) from exc
+
+
+def _build_llm_request(payload: ChatRequest) -> tuple[str, dict, dict]:
+    provider = _resolve_provider(payload.provider)
 
     request_body = {
         "model": payload.model,
@@ -633,16 +647,51 @@ async def proxy_llm_chat(payload: ChatRequest):
     if payload.response_format is not None:
         request_body["response_format"] = payload.response_format
 
+    if provider is ChatProvider.OPENAI:
+        api_key = os.getenv("OPENAI_API_KEY")
+        if not api_key:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="OpenAI API key not configured on server",
+            )
+
+        base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1").rstrip("/")
+        url = f"{base_url}/chat/completions"
+        headers = {
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {api_key}",
+        }
+        return url, headers, request_body
+
+    api_key = os.getenv("AZURE_OPENAI_API_KEY")
+    endpoint = os.getenv("AZURE_OPENAI_ENDPOINT", "").rstrip("/")
+    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
+    api_version = os.getenv("AZURE_OPENAI_API_VERSION", "2024-02-15-preview")
+
+    if not api_key or not endpoint or not deployment:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Azure OpenAI configuration is incomplete",
+        )
+
+    url = (
+        f"{endpoint}/openai/deployments/{deployment}/chat/completions"
+        f"?api-version={api_version}"
+    )
+    headers = {
+        "Content-Type": "application/json",
+        "api-key": api_key,
+    }
+    return url, headers, request_body
+
+
+@app.post("/api/llm/chat")
+async def proxy_llm_chat(payload: ChatRequest):
+    url, headers, request_body = _build_llm_request(payload)
+
     try:
         async with httpx.AsyncClient(timeout=30) as client:
-            response = await client.post(
-                "https://api.openai.com/v1/chat/completions",
-                headers={
-                    "Content-Type": "application/json",
-                    "Authorization": f"Bearer {api_key}",
-                },
-                json=request_body,
-            )
+            response = await client.post(url, headers=headers, json=request_body)
     except httpx.HTTPError as exc:  # pragma: no cover - network safeguard
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
