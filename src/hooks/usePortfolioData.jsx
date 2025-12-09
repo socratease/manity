@@ -11,6 +11,7 @@ const resolveUrl = (path) => {
 
 export const PortfolioProvider = ({ children }) => {
   const [projects, setProjectsState] = useState([]);
+  const [people, setPeopleState] = useState([]);
   const hasInitializedRef = useRef(false);
 
   const apiRequest = useCallback(async (path, options = {}) => {
@@ -31,17 +32,17 @@ export const PortfolioProvider = ({ children }) => {
     return response.json();
   }, []);
 
-  const persistPortfolio = useCallback(async (nextProjects) => {
+  const persistPortfolio = useCallback(async (nextProjects, nextPeople) => {
     if (!hasInitializedRef.current) return;
     try {
       await apiRequest('/import', {
         method: 'POST',
-        body: JSON.stringify({ projects: nextProjects, mode: 'replace' })
+        body: JSON.stringify({ projects: nextProjects, people: nextPeople || people, mode: 'replace' })
       });
     } catch (error) {
       console.error('Unable to persist portfolio to API', error);
     }
-  }, [apiRequest]);
+  }, [apiRequest, people]);
 
   const refreshProjects = useCallback(async () => {
     try {
@@ -69,9 +70,22 @@ export const PortfolioProvider = ({ children }) => {
     }
   }, [apiRequest]);
 
+  const refreshPeople = useCallback(async () => {
+    try {
+      const data = await apiRequest('/people');
+      if (Array.isArray(data)) {
+        setPeopleState(data);
+      }
+    } catch (error) {
+      console.error('Failed to load people', error);
+      setPeopleState([]);
+    }
+  }, [apiRequest]);
+
   useEffect(() => {
     refreshProjects();
-  }, [refreshProjects]);
+    refreshPeople();
+  }, [refreshProjects, refreshPeople]);
 
   const updateProjects = useCallback((updater) => {
     setProjectsState(prevProjects => {
@@ -230,6 +244,29 @@ export const PortfolioProvider = ({ children }) => {
     } : project));
   }, [apiRequest, updateProjects]);
 
+  const createPerson = useCallback(async (person) => {
+    const created = await apiRequest('/people', {
+      method: 'POST',
+      body: JSON.stringify(person)
+    });
+    setPeopleState(prev => [...prev, created]);
+    return created;
+  }, [apiRequest]);
+
+  const updatePerson = useCallback(async (personId, updates) => {
+    const updated = await apiRequest(`/people/${personId}`, {
+      method: 'PUT',
+      body: JSON.stringify({ ...updates, id: personId })
+    });
+    setPeopleState(prev => prev.map(person => person.id === personId ? updated : person));
+    return updated;
+  }, [apiRequest]);
+
+  const deletePerson = useCallback(async (personId) => {
+    await apiRequest(`/people/${personId}`, { method: 'DELETE' });
+    setPeopleState(prev => prev.filter(person => person.id !== personId));
+  }, [apiRequest]);
+
   const value = useMemo(() => ({
     projects,
     setProjects: updateProjects,
@@ -247,7 +284,12 @@ export const PortfolioProvider = ({ children }) => {
     addActivity,
     updateActivity,
     deleteActivity,
-    refreshProjects
+    refreshProjects,
+    people,
+    createPerson,
+    updatePerson,
+    deletePerson,
+    refreshPeople
   }), [
     projects,
     updateProjects,
@@ -265,7 +307,12 @@ export const PortfolioProvider = ({ children }) => {
     addActivity,
     updateActivity,
     deleteActivity,
-    refreshProjects
+    refreshProjects,
+    people,
+    createPerson,
+    updatePerson,
+    deletePerson,
+    refreshPeople
   ]);
 
   return <PortfolioContext.Provider value={value}>{children}</PortfolioContext.Provider>;
