@@ -163,6 +163,16 @@ class Project(ProjectBase, table=True):
     )
 
 
+class PersonBase(SQLModel):
+    name: str
+    team: str
+    email: Optional[str] = None
+
+
+class Person(PersonBase, table=True):
+    id: Optional[str] = Field(default=None, primary_key=True)
+
+
 class SubtaskPayload(SubtaskBase):
     id: Optional[str] = None
 
@@ -176,6 +186,10 @@ class ActivityPayload(ActivityBase):
     id: Optional[str] = None
 
 
+class PersonPayload(PersonBase):
+    id: Optional[str] = None
+
+
 class ProjectPayload(ProjectBase):
     id: Optional[str] = None
     plan: List[TaskPayload] = Field(default_factory=list)
@@ -184,6 +198,7 @@ class ProjectPayload(ProjectBase):
 
 class ImportPayload(BaseModel):
     projects: List[ProjectPayload]
+    people: List[PersonPayload] = Field(default_factory=list)
     mode: str = "replace"
 
 
@@ -444,6 +459,59 @@ def load_project(session: Session, project_id: str) -> Project:
     return project
 
 
+@app.get("/people")
+def list_people(session: Session = Depends(get_session)):
+    statement = select(Person)
+    people = session.exec(statement).all()
+    return [{"id": p.id, "name": p.name, "team": p.team, "email": p.email} for p in people]
+
+
+@app.post("/people", status_code=status.HTTP_201_CREATED)
+def create_person(payload: PersonPayload, session: Session = Depends(get_session)):
+    person = Person(
+        id=payload.id or generate_id("person"),
+        name=payload.name,
+        team=payload.team,
+        email=payload.email,
+    )
+    session.add(person)
+    session.commit()
+    session.refresh(person)
+    return {"id": person.id, "name": person.name, "team": person.team, "email": person.email}
+
+
+@app.get("/people/{person_id}")
+def get_person(person_id: str, session: Session = Depends(get_session)):
+    person = session.exec(select(Person).where(Person.id == person_id)).first()
+    if not person:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
+    return {"id": person.id, "name": person.name, "team": person.team, "email": person.email}
+
+
+@app.put("/people/{person_id}")
+def update_person(person_id: str, payload: PersonPayload, session: Session = Depends(get_session)):
+    person = session.exec(select(Person).where(Person.id == person_id)).first()
+    if not person:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
+    person.name = payload.name
+    person.team = payload.team
+    person.email = payload.email
+    session.add(person)
+    session.commit()
+    session.refresh(person)
+    return {"id": person.id, "name": person.name, "team": person.team, "email": person.email}
+
+
+@app.delete("/people/{person_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_person(person_id: str, session: Session = Depends(get_session)):
+    person = session.exec(select(Person).where(Person.id == person_id)).first()
+    if not person:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
+    session.delete(person)
+    session.commit()
+    return None
+
+
 @app.get("/projects")
 def list_projects(session: Session = Depends(get_session)):
     statement = select(Project).options(
@@ -617,6 +685,8 @@ def export_portfolio(project_id: Optional[str] = None, session: Session = Depend
     else:
         projects = list_projects(session)
 
+    people = list_people(session)
+
     def iter_payload():
         yield "{\n"
         yield f"  \"version\": 1,\n"
@@ -624,6 +694,9 @@ def export_portfolio(project_id: Optional[str] = None, session: Session = Depend
         yield "  \"projects\": "
         import json
         yield json.dumps(projects, indent=2)
+        yield ",\n"
+        yield "  \"people\": "
+        yield json.dumps(people, indent=2)
         yield "\n}"
 
     return StreamingResponse(iter_payload(), media_type="application/json")
@@ -673,14 +746,17 @@ async def import_portfolio(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid import mode")
 
     existing_projects = {project.id: project for project in session.exec(select(Project)).all()}
+    existing_people = {person.id: person for person in session.exec(select(Person)).all()}
 
     if payload.mode == "replace":
         session.exec(delete(Subtask))
         session.exec(delete(Task))
         session.exec(delete(Activity))
         session.exec(delete(Project))
+        session.exec(delete(Person))
         session.commit()
         existing_projects = {}
+        existing_people = {}
 
     for project_payload in payload.projects:
         if payload.mode == "merge" and project_payload.id in existing_projects:
@@ -688,8 +764,22 @@ async def import_portfolio(
             session.commit()
         upsert_project(session, project_payload)
 
+    for person_payload in payload.people:
+        if payload.mode == "merge" and person_payload.id in existing_people:
+            session.delete(existing_people[person_payload.id])
+            session.commit()
+        person = Person(
+            id=person_payload.id or generate_id("person"),
+            name=person_payload.name,
+            team=person_payload.team,
+            email=person_payload.email,
+        )
+        session.add(person)
+        session.commit()
+
     projects = list_projects(session)
-    return {"projects": projects}
+    people = list_people(session)
+    return {"projects": projects, "people": people}
 
 
 def _resolve_provider(provider_override: ChatProvider | None) -> ChatProvider:

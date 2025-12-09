@@ -14,7 +14,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const recentlyCompletedRef = useRef(null);
   const nextUpRef = useRef(null);
 
-  const { projects, setProjects } = usePortfolioData();
+  const { projects, setProjects, people, createPerson, updatePerson, deletePerson } = usePortfolioData();
 
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
@@ -43,6 +43,12 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [showProjectTagSuggestions, setShowProjectTagSuggestions] = useState(false);
   const [projectTagSearchTerm, setProjectTagSearchTerm] = useState('');
   const [projectUpdateCursorPosition, setProjectUpdateCursorPosition] = useState(0);
+  const [showThrustTagSuggestions, setShowThrustTagSuggestions] = useState(false);
+  const [thrustTagSearchTerm, setThrustTagSearchTerm] = useState('');
+  const [thrustCursorPosition, setThrustCursorPosition] = useState(0);
+  const [showCheckinTagSuggestions, setShowCheckinTagSuggestions] = useState(false);
+  const [checkinTagSearchTerm, setCheckinTagSearchTerm] = useState('');
+  const [checkinCursorPosition, setCheckinCursorPosition] = useState(0);
   const [activityEditEnabled, setActivityEditEnabled] = useState(false);
   const [activityEdits, setActivityEdits] = useState({});
   const [projectDeletionEnabled, setProjectDeletionEnabled] = useState(false);
@@ -78,6 +84,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [editingExecSummary, setEditingExecSummary] = useState(null);
   const [execSummaryDraft, setExecSummaryDraft] = useState('');
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
+  const [editingPerson, setEditingPerson] = useState(null);
+  const [newPersonName, setNewPersonName] = useState('');
+  const [newPersonTeam, setNewPersonTeam] = useState('');
+  const [newPersonEmail, setNewPersonEmail] = useState('');
   const [isEditingSlide, setIsEditingSlide] = useState(false);
   const [hiddenSlideItems, setHiddenSlideItems] = useState({
     recentUpdates: [],
@@ -1061,18 +1071,26 @@ Write a professional executive summary that highlights the project's current sta
   const getAllTags = () => {
     const tags = [];
 
-    // Add all unique stakeholders
+    // Add all people from the database
+    people.forEach(person => {
+      const personString = `${person.name} (${person.team})`;
+      tags.push({ type: 'person', value: person.id, display: personString });
+    });
+
+    // Also add unique stakeholders from projects (for backwards compatibility)
     const allStakeholders = new Set();
     visibleProjects.forEach(p => {
       p.stakeholders.forEach(s => {
         const stakeholderString = `${s.name} (${s.team})`;
-        allStakeholders.add(stakeholderString);
+        if (!people.find(person => person.name === s.name && person.team === s.team)) {
+          allStakeholders.add(stakeholderString);
+        }
       });
     });
     allStakeholders.forEach(name => {
       tags.push({ type: 'person', value: name, display: name });
     });
-    
+
     // Add all projects
     visibleProjects.forEach(p => {
       tags.push({ type: 'project', value: p.id, display: p.name });
@@ -1125,19 +1143,95 @@ Write a professional executive summary that highlights the project's current sta
     const textBeforeCursor = timelineUpdate.substring(0, cursorPosition);
     const textAfterCursor = timelineUpdate.substring(cursorPosition);
     const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
-    
+
     const beforeAt = timelineUpdate.substring(0, lastAtSymbol);
     const tagText = `@[${tag.display}](${tag.type}:${tag.value})`;
     const newText = beforeAt + tagText + ' ' + textAfterCursor;
-    
+
     setTimelineUpdate(newText);
     setShowTagSuggestions(false);
     setTagSearchTerm('');
-    
+
     // Focus back on input
     if (inputRef && inputRef.current) {
       inputRef.current.focus();
     }
+  };
+
+  const handleThrustDraftChange = (e) => {
+    const text = e.target.value;
+    const cursorPos = e.target.selectionStart;
+
+    setThrustDraft(text);
+    setThrustCursorPosition(cursorPos);
+
+    // Check if we should show tag suggestions
+    const textUpToCursor = text.substring(0, cursorPos);
+    const lastAtSymbol = textUpToCursor.lastIndexOf('@');
+
+    if (lastAtSymbol !== -1) {
+      const textAfterAt = textUpToCursor.substring(lastAtSymbol + 1);
+      if (!textAfterAt.includes(' ')) {
+        setThrustTagSearchTerm(textAfterAt);
+        setShowThrustTagSuggestions(true);
+      } else {
+        setShowThrustTagSuggestions(false);
+      }
+    } else {
+      setShowThrustTagSuggestions(false);
+    }
+  };
+
+  const insertThrustTag = (tag) => {
+    const textBeforeCursor = thrustDraft.substring(0, thrustCursorPosition);
+    const textAfterCursor = thrustDraft.substring(thrustCursorPosition);
+    const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
+
+    const beforeAt = thrustDraft.substring(0, lastAtSymbol);
+    const tagText = `@[${tag.display}](${tag.type}:${tag.value})`;
+    const newText = beforeAt + tagText + ' ' + textAfterCursor;
+
+    setThrustDraft(newText);
+    setShowThrustTagSuggestions(false);
+    setThrustTagSearchTerm('');
+  };
+
+  const handleCheckinNoteChange = (e) => {
+    const text = e.target.value;
+    const cursorPos = e.target.selectionStart;
+
+    setCheckinNote(text);
+    setCheckinCursorPosition(cursorPos);
+
+    // Check if we should show tag suggestions
+    const textUpToCursor = text.substring(0, cursorPos);
+    const lastAtSymbol = textUpToCursor.lastIndexOf('@');
+
+    if (lastAtSymbol !== -1) {
+      const textAfterAt = textUpToCursor.substring(lastAtSymbol + 1);
+      if (!textAfterAt.includes(' ')) {
+        setCheckinTagSearchTerm(textAfterAt);
+        setShowCheckinTagSuggestions(true);
+      } else {
+        setShowCheckinTagSuggestions(false);
+      }
+    } else {
+      setShowCheckinTagSuggestions(false);
+    }
+  };
+
+  const insertCheckinTag = (tag) => {
+    const textBeforeCursor = checkinNote.substring(0, checkinCursorPosition);
+    const textAfterCursor = checkinNote.substring(checkinCursorPosition);
+    const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
+
+    const beforeAt = checkinNote.substring(0, lastAtSymbol);
+    const tagText = `@[${tag.display}](${tag.type}:${tag.value})`;
+    const newText = beforeAt + tagText + ' ' + textAfterCursor;
+
+    setCheckinNote(newText);
+    setShowCheckinTagSuggestions(false);
+    setCheckinTagSearchTerm('');
   };
 
   const parseTaggedText = (text) => {
@@ -2503,23 +2597,62 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 return null;
               })()}
 
-              <textarea
-                value={checkinNote}
-                onChange={(e) => setCheckinNote(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.ctrlKey && e.key === 'Enter') {
-                    e.preventDefault();
-                    handleDailyCheckin(selectedProject.id);
-                  }
-                }}
-                onFocus={() => setFocusedField('daily-checkin')}
-                onBlur={() => setFocusedField(null)}
-                placeholder="Share any updates, blockers, or progress made..."
-                style={styles.textarea}
-                autoFocus
-              />
+              <div style={{ position: 'relative' }}>
+                <textarea
+                  value={checkinNote}
+                  onChange={handleCheckinNoteChange}
+                  onKeyDown={(e) => {
+                    if (e.ctrlKey && e.key === 'Enter') {
+                      e.preventDefault();
+                      handleDailyCheckin(selectedProject.id);
+                    }
+                  }}
+                  onFocus={() => setFocusedField('daily-checkin')}
+                  onBlur={() => setFocusedField(null)}
+                  placeholder="Share any updates, blockers, or progress made... Use @ to tag people, projects, or tasks"
+                  style={styles.textarea}
+                  autoFocus
+                />
 
-              {renderEditingHint('daily-checkin')}
+                {/* Tag Suggestions Dropdown for Daily Check-in */}
+                {showCheckinTagSuggestions && (
+                  <div style={styles.tagSuggestions}>
+                    {getAllTags()
+                      .filter(tag =>
+                        tag.display.toLowerCase().includes(checkinTagSearchTerm.toLowerCase())
+                      )
+                      .slice(0, 8)
+                      .map((tag, idx) => (
+                        <div
+                          key={idx}
+                          style={styles.tagSuggestionItem}
+                          onClick={() => insertCheckinTag(tag)}
+                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--cream)'}
+                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#FFFFFF'}
+                        >
+                          <span style={{
+                            ...styles.tagTypeLabel,
+                            backgroundColor:
+                              tag.type === 'person' ? 'var(--sage)' + '20' :
+                              tag.type === 'project' ? 'var(--earth)' + '20' :
+                              tag.type === 'task' ? 'var(--amber)' + '20' :
+                              'var(--coral)' + '20',
+                            color:
+                              tag.type === 'person' ? 'var(--sage)' :
+                              tag.type === 'project' ? 'var(--earth)' :
+                              tag.type === 'task' ? 'var(--amber)' :
+                              'var(--coral)'
+                          }}>
+                            {tag.type}
+                          </span>
+                          <span style={styles.tagSuggestionDisplay}>{tag.display}</span>
+                        </div>
+                      ))}
+                  </div>
+                )}
+
+                {renderEditingHint('daily-checkin')}
+              </div>
 
               <div style={styles.modalActions}>
                 <button
@@ -2740,6 +2873,18 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 }}
               >
                 Timeline
+              </button>
+              <button
+                onClick={() => {
+                  setActiveView('people');
+                  setViewingProjectId(null);
+                }}
+                style={{
+                  ...styles.navItem,
+                  ...(activeView === 'people' && !viewingProjectId ? styles.navItemActive : {})
+                }}
+              >
+                People
               </button>
             </nav>
           </div>
@@ -3927,7 +4072,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 <div style={styles.timelineInputWrapper}>
                   <textarea
                     value={thrustDraft}
-                    onChange={(e) => setThrustDraft(e.target.value)}
+                    onChange={handleThrustDraftChange}
                     onFocus={() => setFocusedField('thrust-draft')}
                     onBlur={() => setFocusedField(null)}
                     onKeyDown={(e) => {
@@ -3936,10 +4081,47 @@ Keep tool calls granular (one discrete change per action), explain each action c
                         handleSendThrustMessage();
                       }
                     }}
-                    placeholder="share a work update..."
+                    placeholder="share a work update... Use @ to tag people, projects, or tasks"
                     style={{ ...styles.timelineInput, minHeight: '96px' }}
                   />
                   {renderEditingHint('thrust-draft')}
+
+                  {/* Tag Suggestions Dropdown for Momentum */}
+                  {showThrustTagSuggestions && (
+                    <div style={styles.tagSuggestions}>
+                      {getAllTags()
+                        .filter(tag =>
+                          tag.display.toLowerCase().includes(thrustTagSearchTerm.toLowerCase())
+                        )
+                        .slice(0, 8)
+                        .map((tag, idx) => (
+                          <div
+                            key={idx}
+                            style={styles.tagSuggestionItem}
+                            onClick={() => insertThrustTag(tag)}
+                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--cream)'}
+                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#FFFFFF'}
+                          >
+                            <span style={{
+                              ...styles.tagTypeLabel,
+                              backgroundColor:
+                                tag.type === 'person' ? 'var(--sage)' + '20' :
+                                tag.type === 'project' ? 'var(--earth)' + '20' :
+                                tag.type === 'task' ? 'var(--amber)' + '20' :
+                                'var(--coral)' + '20',
+                              color:
+                                tag.type === 'person' ? 'var(--sage)' :
+                                tag.type === 'project' ? 'var(--earth)' :
+                                tag.type === 'task' ? 'var(--amber)' :
+                                'var(--coral)'
+                            }}>
+                              {tag.type}
+                            </span>
+                            <span style={styles.tagSuggestionDisplay}>{tag.display}</span>
+                          </div>
+                        ))}
+                    </div>
+                  )}
                   {renderCtrlEnterHint('send to Momentum')}
                   <button
                     onClick={handleSendThrustMessage}
@@ -4553,6 +4735,187 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 </>
               )}
             </div>
+          </>
+        ) : activeView === 'people' ? (
+          // People View
+          <>
+            <header style={styles.header}>
+              <div>
+                <h2 style={styles.pageTitle}>People</h2>
+                <p style={styles.pageSubtitle}>
+                  Manage people in your portfolio
+                </p>
+              </div>
+              <button
+                onClick={() => setEditingPerson({})}
+                style={styles.addProjectButton}
+              >
+                <Plus size={18} />
+                Add Person
+              </button>
+            </header>
+
+            <div style={styles.peopleGrid}>
+              {people.map((person) => (
+                <div key={person.id} style={styles.personCard}>
+                  {editingPerson?.id === person.id ? (
+                    <div style={styles.personEditForm}>
+                      <input
+                        type="text"
+                        value={newPersonName}
+                        onChange={(e) => setNewPersonName(e.target.value)}
+                        placeholder="Name"
+                        style={styles.input}
+                      />
+                      <input
+                        type="text"
+                        value={newPersonTeam}
+                        onChange={(e) => setNewPersonTeam(e.target.value)}
+                        placeholder="Team"
+                        style={styles.input}
+                      />
+                      <input
+                        type="email"
+                        value={newPersonEmail}
+                        onChange={(e) => setNewPersonEmail(e.target.value)}
+                        placeholder="Email"
+                        style={styles.input}
+                      />
+                      <div style={styles.personActions}>
+                        <button
+                          onClick={async () => {
+                            await updatePerson(person.id, {
+                              name: newPersonName,
+                              team: newPersonTeam,
+                              email: newPersonEmail
+                            });
+                            setEditingPerson(null);
+                            setNewPersonName('');
+                            setNewPersonTeam('');
+                            setNewPersonEmail('');
+                          }}
+                          style={styles.saveButtonPerson}
+                        >
+                          <Check size={16} />
+                          Save
+                        </button>
+                        <button
+                          onClick={() => {
+                            setEditingPerson(null);
+                            setNewPersonName('');
+                            setNewPersonTeam('');
+                            setNewPersonEmail('');
+                          }}
+                          style={styles.cancelButtonPerson}
+                        >
+                          <X size={16} />
+                          Cancel
+                        </button>
+                      </div>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={styles.personInfo}>
+                        <h3 style={styles.personName}>{person.name}</h3>
+                        <p style={styles.personTeam}>{person.team}</p>
+                        {person.email && (
+                          <p style={styles.personEmail}>{person.email}</p>
+                        )}
+                      </div>
+                      <div style={styles.personActions}>
+                        <button
+                          onClick={() => {
+                            setEditingPerson(person);
+                            setNewPersonName(person.name);
+                            setNewPersonTeam(person.team);
+                            setNewPersonEmail(person.email || '');
+                          }}
+                          style={styles.editButtonPerson}
+                        >
+                          <Edit2 size={16} />
+                          Edit
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (confirm(`Delete ${person.name}?`)) {
+                              await deletePerson(person.id);
+                            }
+                          }}
+                          style={styles.deleteButtonPerson}
+                        >
+                          <Trash2 size={16} />
+                          Delete
+                        </button>
+                      </div>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
+
+            {/* Add New Person Modal */}
+            {editingPerson && !editingPerson.id && (
+              <div style={styles.modalBackdrop} onClick={() => setEditingPerson(null)}>
+                <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+                  <h3 style={styles.modalTitle}>Add New Person</h3>
+                  <input
+                    type="text"
+                    value={newPersonName}
+                    onChange={(e) => setNewPersonName(e.target.value)}
+                    placeholder="Name"
+                    style={styles.input}
+                  />
+                  <input
+                    type="text"
+                    value={newPersonTeam}
+                    onChange={(e) => setNewPersonTeam(e.target.value)}
+                    placeholder="Team"
+                    style={styles.input}
+                  />
+                  <input
+                    type="email"
+                    value={newPersonEmail}
+                    onChange={(e) => setNewPersonEmail(e.target.value)}
+                    placeholder="Email (optional)"
+                    style={styles.input}
+                  />
+                  <div style={styles.modalActions}>
+                    <button
+                      onClick={async () => {
+                        if (newPersonName && newPersonTeam) {
+                          await createPerson({
+                            name: newPersonName,
+                            team: newPersonTeam,
+                            email: newPersonEmail || null
+                          });
+                          setEditingPerson(null);
+                          setNewPersonName('');
+                          setNewPersonTeam('');
+                          setNewPersonEmail('');
+                        }
+                      }}
+                      style={styles.saveButtonPerson}
+                      disabled={!newPersonName || !newPersonTeam}
+                    >
+                      <Check size={16} />
+                      Add Person
+                    </button>
+                    <button
+                      onClick={() => {
+                        setEditingPerson(null);
+                        setNewPersonName('');
+                        setNewPersonTeam('');
+                        setNewPersonEmail('');
+                      }}
+                      style={styles.cancelButtonPerson}
+                    >
+                      <X size={16} />
+                      Cancel
+                    </button>
+                  </div>
+                </div>
+              </div>
+            )}
           </>
         )}
       </main>
@@ -7675,5 +8038,119 @@ const styles = {
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
     marginTop: '6px',
+  },
+
+  peopleGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
+    gap: '24px',
+    padding: '24px',
+  },
+
+  personCard: {
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '12px',
+    padding: '24px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+  },
+
+  personInfo: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+
+  personName: {
+    fontSize: '20px',
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+    margin: 0,
+  },
+
+  personTeam: {
+    fontSize: '14px',
+    color: 'var(--stone)',
+    margin: 0,
+  },
+
+  personEmail: {
+    fontSize: '14px',
+    color: 'var(--sage)',
+    margin: 0,
+  },
+
+  personActions: {
+    display: 'flex',
+    gap: '8px',
+    marginTop: 'auto',
+  },
+
+  personEditForm: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+
+  editButtonPerson: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '8px 16px',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '500',
+    color: 'var(--earth)',
+    backgroundColor: 'transparent',
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    cursor: 'pointer',
+  },
+
+  deleteButtonPerson: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '8px 16px',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '500',
+    color: 'var(--coral)',
+    backgroundColor: 'transparent',
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    cursor: 'pointer',
+  },
+
+  saveButtonPerson: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '8px 16px',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '500',
+    color: '#FFFFFF',
+    backgroundColor: 'var(--sage)',
+    border: 'none',
+    borderRadius: '8px',
+    cursor: 'pointer',
+  },
+
+  cancelButtonPerson: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '8px 16px',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '500',
+    color: 'var(--stone)',
+    backgroundColor: 'transparent',
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    cursor: 'pointer',
   },
 };
