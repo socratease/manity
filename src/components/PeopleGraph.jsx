@@ -144,6 +144,37 @@ const PeopleGraph = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', team: '', email: '' });
 
+  const teamColors = useMemo(() => {
+    const baseColors = new Map([
+      ['Admin', '#8B6F47'],
+      ['Engineering', '#7A9B76'],
+      ['Design', '#D67C5C'],
+      ['Product', '#E8A75D'],
+      ['Marketing', '#9B7AB7'],
+      ['Sales', '#5BA3B0'],
+      ['Operations', '#B08B7A'],
+      ['Contributor', '#6B6554']
+    ]);
+
+    const palette = ['#5BA3B0', '#7A9B76', '#D67C5C', '#E8A75D', '#9B7AB7', '#B08B7A', '#4C7A9F', '#A3B65C', '#C45C9B'];
+
+    const teamsInData = Array.from(new Set(people.map(person => person.team || 'Contributor')));
+    let paletteIndex = 0;
+
+    const colorMap = new Map();
+
+    teamsInData.forEach(team => {
+      if (baseColors.has(team)) {
+        colorMap.set(team, baseColors.get(team));
+      } else {
+        colorMap.set(team, palette[paletteIndex % palette.length]);
+        paletteIndex += 1;
+      }
+    });
+
+    return colorMap;
+  }, [people]);
+
   useEffect(() => {
     const styleId = 'people-graph-animations';
     if (!document.getElementById(styleId)) {
@@ -455,17 +486,7 @@ const PeopleGraph = ({
   };
 
   const getTeamColor = (team) => {
-    const colors = {
-      Admin: '#8B6F47',
-      Engineering: '#7A9B76',
-      Design: '#D67C5C',
-      Product: '#E8A75D',
-      Marketing: '#9B7AB7',
-      Sales: '#5BA3B0',
-      Operations: '#B08B7A',
-      Contributor: '#6B6554'
-    };
-    return colors[team] || colors.Contributor;
+    return teamColors.get(team) || '#6B6554';
   };
 
   const handleMouseDown = useCallback((e, node) => {
@@ -678,31 +699,6 @@ const PeopleGraph = ({
                     onClick={(e) => handleNodeClick(e, node)}
                     style={{ cursor: draggedNode?.id === node.id ? 'grabbing' : 'pointer' }}
                   />
-
-                  <circle
-                    r={node.radius + 12}
-                    fill="none"
-                    stroke={teamColor}
-                    strokeWidth="3"
-                    strokeDasharray="6 4"
-                    style={{
-                      opacity: (isHovered || isConnected) && !selectedNode ? 0.5 : 0,
-                      transform: isHovered ? 'scale(1.3)' : 'scale(1)',
-                      transformOrigin: 'center',
-                      transition: 'opacity 0.3s ease, transform 0.3s ease',
-                      pointerEvents: 'none'
-                    }}
-                  >
-                    <animateTransform
-                      attributeName="transform"
-                      type="rotate"
-                      from="0"
-                      to="360"
-                      dur="8s"
-                      repeatCount="indefinite"
-                      additive="sum"
-                    />
-                  </circle>
 
                   <circle
                     r={node.radius + 6}
@@ -1263,12 +1259,12 @@ const PeopleGraph = ({
       <div style={styles.legend}>
         <div style={styles.legendTitle}>Teams</div>
         <div style={styles.legendItems}>
-          {['Admin', 'Engineering', 'Design', 'Product', 'Contributor'].map(team => (
+          {Array.from(teamColors.entries()).sort((a, b) => a[0].localeCompare(b[0])).map(([team, color]) => (
             <div key={team} style={styles.legendItem}>
               <span
                 style={{
                   ...styles.legendDot,
-                  backgroundColor: getTeamColor(team)
+                  backgroundColor: color
                 }}
               />
               <span style={styles.legendLabel}>{team}</span>
@@ -1797,11 +1793,11 @@ const styles = {
     position: 'absolute',
     bottom: '20px',
     left: '20px',
-    backgroundColor: 'rgba(255, 255, 255, 0.95)',
+    backgroundColor: 'rgba(255, 255, 255, 0.45)',
     borderRadius: '12px',
     padding: '14px 18px',
     boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
-    border: '1px solid #E8E3D8'
+    border: '1px solid rgba(232, 227, 216, 0.6)'
   },
 
   legendTitle: {

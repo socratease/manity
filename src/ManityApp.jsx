@@ -75,7 +75,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [newProjectPriority, setNewProjectPriority] = useState('medium');
   const [newProjectStatus, setNewProjectStatus] = useState('planning');
   const [newProjectTargetDate, setNewProjectTargetDate] = useState('');
-  const [newProjectStakeholders, setNewProjectStakeholders] = useState('');
+  const [newProjectStakeholders, setNewProjectStakeholders] = useState([]);
+  const [stakeholderSelectionTarget, setStakeholderSelectionTarget] = useState(null);
   const adminUsers = [
     { name: 'Chris Graves', team: 'Admin' }
   ];
@@ -621,7 +622,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       setEditValues({
         status: project.status,
         priority: project.priority,
-        stakeholders: project.stakeholders.map(s => `${s.name}, ${s.team}`).join('\n'),
+        stakeholders: project.stakeholders.map(s => s.name),
         description: project.description
       });
       setEditMode(true);
@@ -629,16 +630,19 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   };
 
   const saveEdits = async () => {
-    const stakeholdersArray = editValues.stakeholders
-      .split('\n')
-      .filter(line => line.trim())
-      .map(line => {
-        const parts = line.split(',').map(p => p.trim());
-        return { name: parts[0] || '', team: parts[1] || '' };
+    const stakeholdersArray = (editValues.stakeholders || [])
+      .filter(Boolean)
+      .map(name => {
+        const match = getAllStakeholders().find(person => person.name === name);
+        return { name, team: match?.team || 'Contributor' };
       });
 
+    const finalStakeholders = stakeholdersArray.length > 0
+      ? stakeholdersArray
+      : [{ name: loggedInUser || 'You', team: 'Owner' }];
+
     // Sync stakeholders to People database
-    await syncStakeholdersToPeople(stakeholdersArray);
+    await syncStakeholdersToPeople(finalStakeholders);
 
     setProjects(projects.map(p =>
       p.id === viewingProjectId
@@ -646,7 +650,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
             ...p,
             status: editValues.status,
             priority: editValues.priority,
-            stakeholders: stakeholdersArray,
+            stakeholders: finalStakeholders,
             description: editValues.description,
             recentActivity: [
               { id: generateActivityId(), date: new Date().toISOString(), note: 'Updated project details', author: loggedInUser },
@@ -1384,17 +1388,18 @@ Write a professional executive summary that highlights the project's current sta
     setNewProjectPriority('medium');
     setNewProjectStatus('planning');
     setNewProjectTargetDate('');
-    setNewProjectStakeholders('');
+    setNewProjectStakeholders([]);
   };
 
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
 
     const stakeholderEntries = newProjectStakeholders
-      .split(',')
-      .map(name => name.trim())
       .filter(Boolean)
-      .map(name => ({ name, team: 'Contributor' }));
+      .map(name => {
+        const match = getAllStakeholders().find(person => person.name === name);
+        return { name, team: match?.team || 'Contributor' };
+      });
 
     const createdAt = new Date().toISOString();
     const newId = `proj-${Date.now()}`;
@@ -1425,6 +1430,49 @@ Write a professional executive summary that highlights the project's current sta
     resetNewProjectForm();
     setViewingProjectId(newProject.id);
     setActiveView('overview');
+  };
+
+  const handleStakeholderSelection = (event) => {
+    const selected = Array.from(event.target.selectedOptions || []).map(option => option.value);
+    setNewProjectStakeholders(selected);
+  };
+
+  const handleEditStakeholderSelection = (event) => {
+    const selected = Array.from(event.target.selectedOptions || []).map(option => option.value);
+    setEditValues(prev => ({ ...prev, stakeholders: selected }));
+  };
+
+  const handleCreateNewPerson = async () => {
+    if (newPersonName && newPersonTeam) {
+      const created = await createPerson({
+        name: newPersonName,
+        team: newPersonTeam,
+        email: newPersonEmail || null
+      });
+
+      if (stakeholderSelectionTarget === 'newProject') {
+        setNewProjectStakeholders(prev => Array.from(new Set([...prev, created.name])));
+      } else if (stakeholderSelectionTarget === 'editProject') {
+        setEditValues(prev => ({
+          ...prev,
+          stakeholders: Array.from(new Set([...(prev.stakeholders || []), created.name]))
+        }));
+      }
+
+      setEditingPerson(null);
+      setStakeholderSelectionTarget(null);
+      setNewPersonName('');
+      setNewPersonTeam('');
+      setNewPersonEmail('');
+    }
+  };
+
+  const handleClosePersonModal = () => {
+    setEditingPerson(null);
+    setStakeholderSelectionTarget(null);
+    setNewPersonName('');
+    setNewPersonTeam('');
+    setNewPersonEmail('');
   };
 
   const buildThrustContext = () => {
@@ -3280,15 +3328,32 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 <h4 style={styles.compactCardTitle}>Stakeholders</h4>
                 {editMode ? (
                   <>
-                    <textarea
-                      value={editValues.stakeholders}
-                      onChange={(e) => setEditValues({...editValues, stakeholders: e.target.value})}
-                      onFocus={() => setFocusedField('stakeholders')}
-                      onBlur={() => setFocusedField(null)}
-                      style={{...styles.editTextarea, minHeight: '60px', fontSize: '13px'}}
-                      placeholder="Name, Team (one per line)"
-                    />
-                    {renderEditingHint('stakeholders')}
+                    <div style={styles.stakeholderPicker}>
+                      <select
+                        multiple
+                        value={editValues.stakeholders || []}
+                        onChange={handleEditStakeholderSelection}
+                        style={styles.multiSelect}
+                      >
+                        {getAllStakeholders().map(stakeholder => (
+                          <option key={stakeholder.name} value={stakeholder.name}>
+                            {stakeholder.name} ({stakeholder.team})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStakeholderSelectionTarget('editProject');
+                          setEditingPerson({});
+                        }}
+                        style={styles.addStakeholderButton}
+                      >
+                        <Plus size={14} />
+                        Add person
+                      </button>
+                    </div>
+                    <div style={styles.helperText}>Pick stakeholders from your saved people. Use Cmd/Ctrl+Click to select multiple.</div>
                   </>
                 ) : (
                   <div style={styles.stakeholderCompactList}>
@@ -4787,7 +4852,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
               </div>
               <button
                 onClick={() => setEditingPerson({})}
-                style={styles.addProjectButton}
+                style={styles.newProjectButton}
               >
                 <Plus size={18} />
                 Add Person
@@ -4806,70 +4871,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 }}
               />
             </div>
-
-            {/* Add New Person Modal */}
-            {editingPerson && !editingPerson.id && (
-              <div style={styles.modalBackdrop} onClick={() => setEditingPerson(null)}>
-                <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-                  <h3 style={styles.modalTitle}>Add New Person</h3>
-                  <input
-                    type="text"
-                    value={newPersonName}
-                    onChange={(e) => setNewPersonName(e.target.value)}
-                    placeholder="Name"
-                    style={styles.input}
-                  />
-                  <input
-                    type="text"
-                    value={newPersonTeam}
-                    onChange={(e) => setNewPersonTeam(e.target.value)}
-                    placeholder="Team"
-                    style={styles.input}
-                  />
-                  <input
-                    type="email"
-                    value={newPersonEmail}
-                    onChange={(e) => setNewPersonEmail(e.target.value)}
-                    placeholder="Email (optional)"
-                    style={styles.input}
-                  />
-                  <div style={styles.modalActions}>
-                    <button
-                      onClick={async () => {
-                        if (newPersonName && newPersonTeam) {
-                          await createPerson({
-                            name: newPersonName,
-                            team: newPersonTeam,
-                            email: newPersonEmail || null
-                          });
-                          setEditingPerson(null);
-                          setNewPersonName('');
-                          setNewPersonTeam('');
-                          setNewPersonEmail('');
-                        }
-                      }}
-                      style={styles.saveButtonPerson}
-                      disabled={!newPersonName || !newPersonTeam}
-                    >
-                      <Check size={16} />
-                      Add Person
-                    </button>
-                    <button
-                      onClick={() => {
-                        setEditingPerson(null);
-                        setNewPersonName('');
-                        setNewPersonTeam('');
-                        setNewPersonEmail('');
-                      }}
-                      style={styles.cancelButtonPerson}
-                    >
-                      <X size={16} />
-                      Cancel
-                    </button>
-                  </div>
-                </div>
-              </div>
-            )}
           </>
         ) : (
           // Projects Overview
@@ -4988,13 +4989,32 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   </div>
                   <div style={styles.formField}>
                     <label style={styles.formLabel}>Stakeholders</label>
-                    <input
-                      type="text"
-                      value={newProjectStakeholders}
-                      onChange={(e) => setNewProjectStakeholders(e.target.value)}
-                      placeholder="Comma-separated names"
-                      style={styles.input}
-                    />
+                    <div style={styles.stakeholderPicker}>
+                      <select
+                        multiple
+                        value={newProjectStakeholders}
+                        onChange={handleStakeholderSelection}
+                        style={styles.multiSelect}
+                      >
+                        {getAllStakeholders().map(stakeholder => (
+                          <option key={stakeholder.name} value={stakeholder.name}>
+                            {stakeholder.name} ({stakeholder.team})
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setStakeholderSelectionTarget('newProject');
+                          setEditingPerson({});
+                        }}
+                        style={styles.addStakeholderButton}
+                      >
+                        <Plus size={14} />
+                        Add person
+                      </button>
+                    </div>
+                    <div style={styles.helperText}>Select people from your People dataset. Use Cmd/Ctrl+Click to choose multiple.</div>
                   </div>
                 </div>
                 <div style={styles.newProjectActions}>
@@ -5065,6 +5085,53 @@ Keep tool calls granular (one discrete change per action), explain each action c
           </>
         )}
       </main>
+
+      {/* Add New Person Modal */}
+      {editingPerson && !editingPerson.id && (
+        <div style={styles.modalBackdrop} onClick={handleClosePersonModal}>
+          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
+            <h3 style={styles.modalTitle}>Add New Person</h3>
+            <input
+              type="text"
+              value={newPersonName}
+              onChange={(e) => setNewPersonName(e.target.value)}
+              placeholder="Name"
+              style={styles.input}
+            />
+            <input
+              type="text"
+              value={newPersonTeam}
+              onChange={(e) => setNewPersonTeam(e.target.value)}
+              placeholder="Team"
+              style={styles.input}
+            />
+            <input
+              type="email"
+              value={newPersonEmail}
+              onChange={(e) => setNewPersonEmail(e.target.value)}
+              placeholder="Email (optional)"
+              style={styles.input}
+            />
+            <div style={styles.modalActions}>
+              <button
+                onClick={handleCreateNewPerson}
+                style={styles.saveButtonPerson}
+                disabled={!newPersonName || !newPersonTeam}
+              >
+                <Check size={16} />
+                Add Person
+              </button>
+              <button
+                onClick={handleClosePersonModal}
+                style={styles.cancelButtonPerson}
+              >
+                <X size={16} />
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
     </>
   );
@@ -5482,6 +5549,47 @@ const styles = {
     fontFamily: "'Inter', sans-serif",
     color: 'var(--charcoal)',
     boxShadow: '0 6px 18px rgba(0,0,0,0.03)',
+  },
+
+  multiSelect: {
+    flex: 1,
+    minHeight: '120px',
+    padding: '10px 12px',
+    borderRadius: '10px',
+    border: '1px solid var(--cloud)',
+    backgroundColor: '#FFFFFF',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    boxShadow: '0 6px 18px rgba(0,0,0,0.03)',
+  },
+
+  stakeholderPicker: {
+    display: 'flex',
+    gap: '10px',
+    alignItems: 'stretch',
+  },
+
+  helperText: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    marginTop: '6px',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  addStakeholderButton: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '10px 12px',
+    backgroundColor: 'var(--earth)',
+    color: '#fff',
+    border: '1px solid var(--earth)',
+    borderRadius: '10px',
+    cursor: 'pointer',
+    fontWeight: '700',
+    fontFamily: "'Inter', sans-serif",
+    boxShadow: '0 6px 18px rgba(139, 111, 71, 0.25)',
   },
 
   newProjectActions: {
