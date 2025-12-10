@@ -40,15 +40,19 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [showTagSuggestions, setShowTagSuggestions] = useState(false);
   const [tagSearchTerm, setTagSearchTerm] = useState('');
   const [cursorPosition, setCursorPosition] = useState(0);
+  const [selectedTagIndex, setSelectedTagIndex] = useState(0);
   const [showProjectTagSuggestions, setShowProjectTagSuggestions] = useState(false);
   const [projectTagSearchTerm, setProjectTagSearchTerm] = useState('');
   const [projectUpdateCursorPosition, setProjectUpdateCursorPosition] = useState(0);
+  const [selectedProjectTagIndex, setSelectedProjectTagIndex] = useState(0);
   const [showThrustTagSuggestions, setShowThrustTagSuggestions] = useState(false);
   const [thrustTagSearchTerm, setThrustTagSearchTerm] = useState('');
   const [thrustCursorPosition, setThrustCursorPosition] = useState(0);
+  const [selectedThrustTagIndex, setSelectedThrustTagIndex] = useState(0);
   const [showCheckinTagSuggestions, setShowCheckinTagSuggestions] = useState(false);
   const [checkinTagSearchTerm, setCheckinTagSearchTerm] = useState('');
   const [checkinCursorPosition, setCheckinCursorPosition] = useState(0);
+  const [selectedCheckinTagIndex, setSelectedCheckinTagIndex] = useState(0);
   const [activityEditEnabled, setActivityEditEnabled] = useState(false);
   const [activityEdits, setActivityEdits] = useState({});
   const [projectDeletionEnabled, setProjectDeletionEnabled] = useState(false);
@@ -488,20 +492,21 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const handleProjectUpdateChange = (e) => {
     const text = e.target.value;
     const cursorPos = e.target.selectionStart;
-    
+
     setNewUpdate(text);
     setProjectUpdateCursorPosition(cursorPos);
-    
+
     // Check if we should show tag suggestions
     const textUpToCursor = text.substring(0, cursorPos);
     const lastAtSymbol = textUpToCursor.lastIndexOf('@');
-    
+
     if (lastAtSymbol !== -1) {
       const textAfterAt = textUpToCursor.substring(lastAtSymbol + 1);
       // Only show if there's no space after @ (we're still in the tag)
       if (!textAfterAt.includes(' ')) {
         setProjectTagSearchTerm(textAfterAt);
         setShowProjectTagSuggestions(true);
+        setSelectedProjectTagIndex(0); // Reset selection when typing
       } else {
         setShowProjectTagSuggestions(false);
       }
@@ -514,15 +519,15 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     const textBeforeCursor = newUpdate.substring(0, projectUpdateCursorPosition);
     const textAfterCursor = newUpdate.substring(projectUpdateCursorPosition);
     const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
-    
+
     const beforeAt = newUpdate.substring(0, lastAtSymbol);
-    const tagText = `@[${tag.display}](${tag.type}:${tag.value})`;
+    const tagText = `@${tag.display}`;
     const newText = beforeAt + tagText + ' ' + textAfterCursor;
-    
+
     setNewUpdate(newText);
     setShowProjectTagSuggestions(false);
     setProjectTagSearchTerm('');
-    
+
     // Focus back on input
     if (projectUpdateInputRef && projectUpdateInputRef.current) {
       projectUpdateInputRef.current.focus();
@@ -1117,20 +1122,21 @@ Write a professional executive summary that highlights the project's current sta
   const handleTimelineUpdateChange = (e) => {
     const text = e.target.value;
     const cursorPos = e.target.selectionStart;
-    
+
     setTimelineUpdate(text);
     setCursorPosition(cursorPos);
-    
+
     // Check if we should show tag suggestions
     const textUpToCursor = text.substring(0, cursorPos);
     const lastAtSymbol = textUpToCursor.lastIndexOf('@');
-    
+
     if (lastAtSymbol !== -1) {
       const textAfterAt = textUpToCursor.substring(lastAtSymbol + 1);
       // Only show if there's no space after @ (we're still in the tag)
       if (!textAfterAt.includes(' ')) {
         setTagSearchTerm(textAfterAt);
         setShowTagSuggestions(true);
+        setSelectedTagIndex(0); // Reset selection when typing
       } else {
         setShowTagSuggestions(false);
       }
@@ -1145,7 +1151,7 @@ Write a professional executive summary that highlights the project's current sta
     const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
 
     const beforeAt = timelineUpdate.substring(0, lastAtSymbol);
-    const tagText = `@[${tag.display}](${tag.type}:${tag.value})`;
+    const tagText = `@${tag.display}`;
     const newText = beforeAt + tagText + ' ' + textAfterCursor;
 
     setTimelineUpdate(newText);
@@ -1174,6 +1180,7 @@ Write a professional executive summary that highlights the project's current sta
       if (!textAfterAt.includes(' ')) {
         setThrustTagSearchTerm(textAfterAt);
         setShowThrustTagSuggestions(true);
+        setSelectedThrustTagIndex(0); // Reset selection when typing
       } else {
         setShowThrustTagSuggestions(false);
       }
@@ -1188,7 +1195,7 @@ Write a professional executive summary that highlights the project's current sta
     const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
 
     const beforeAt = thrustDraft.substring(0, lastAtSymbol);
-    const tagText = `@[${tag.display}](${tag.type}:${tag.value})`;
+    const tagText = `@${tag.display}`;
     const newText = beforeAt + tagText + ' ' + textAfterCursor;
 
     setThrustDraft(newText);
@@ -1212,6 +1219,7 @@ Write a professional executive summary that highlights the project's current sta
       if (!textAfterAt.includes(' ')) {
         setCheckinTagSearchTerm(textAfterAt);
         setShowCheckinTagSuggestions(true);
+        setSelectedCheckinTagIndex(0); // Reset selection when typing
       } else {
         setShowCheckinTagSuggestions(false);
       }
@@ -1226,7 +1234,7 @@ Write a professional executive summary that highlights the project's current sta
     const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
 
     const beforeAt = checkinNote.substring(0, lastAtSymbol);
-    const tagText = `@[${tag.display}](${tag.type}:${tag.value})`;
+    const tagText = `@${tag.display}`;
     const newText = beforeAt + tagText + ' ' + textAfterCursor;
 
     setCheckinNote(newText);
@@ -1236,14 +1244,18 @@ Write a professional executive summary that highlights the project's current sta
 
   const parseTaggedText = (text) => {
     if (!text) return [];
-    
-    // Parse text with tags in format @[Display Name](type:value)
+
+    // Parse text with tags in both old format @[Display Name](type:value) and new format @Display
     const parts = [];
     let currentIndex = 0;
-    const tagRegex = /@\[([^\]]+)\]\(([^:]+):([^)]+)\)/g;
+
+    // Combined regex: match old format or new format
+    // Old format: @[Display Name](type:value)
+    // New format: @DisplayName (word characters, spaces, and parentheses until space or end)
+    const combinedRegex = /@\[([^\]]+)\]\(([^:]+):([^)]+)\)|@([\w\s\(\),→]+?)(?=\s|$|[.!?])/g;
     let match;
-    
-    while ((match = tagRegex.exec(text)) !== null) {
+
+    while ((match = combinedRegex.exec(text)) !== null) {
       // Add text before the tag
       if (match.index > currentIndex) {
         parts.push({
@@ -1251,18 +1263,29 @@ Write a professional executive summary that highlights the project's current sta
           content: text.substring(currentIndex, match.index)
         });
       }
-      
+
       // Add the tag
-      parts.push({
-        type: 'tag',
-        tagType: match[2],
-        display: match[1],
-        value: match[3]
-      });
-      
+      if (match[1]) {
+        // Old format: @[Display](type:value)
+        parts.push({
+          type: 'tag',
+          tagType: match[2],
+          display: match[1],
+          value: match[3]
+        });
+      } else if (match[4]) {
+        // New format: @Display
+        parts.push({
+          type: 'tag',
+          tagType: 'unknown',
+          display: match[4],
+          value: match[4]
+        });
+      }
+
       currentIndex = match.index + match[0].length;
     }
-    
+
     // Add remaining text
     if (currentIndex < text.length) {
       parts.push({
@@ -1270,7 +1293,7 @@ Write a professional executive summary that highlights the project's current sta
         content: text.substring(currentIndex)
       });
     }
-    
+
     return parts.length > 0 ? parts : [{ type: 'text', content: text }];
   };
 
@@ -1740,10 +1763,22 @@ Write a professional executive summary that highlights the project's current sta
   };
 
   const getAllStakeholders = () => {
+    // Return people from the People database
+    // Include admin users for backwards compatibility
     const stakeholderMap = new Map();
+
     adminUsers.forEach(admin => {
       stakeholderMap.set(admin.name, admin);
     });
+
+    people.forEach(person => {
+      if (!stakeholderMap.has(person.name)) {
+        stakeholderMap.set(person.name, { name: person.name, team: person.team });
+      }
+    });
+
+    // Also include any stakeholders from projects that aren't in the People database yet
+    // (for backwards compatibility with existing data)
     projects.forEach(project => {
       project.stakeholders.forEach(stakeholder => {
         if (!stakeholderMap.has(stakeholder.name)) {
@@ -1751,6 +1786,7 @@ Write a professional executive summary that highlights the project's current sta
         }
       });
     });
+
     return Array.from(stakeholderMap.values());
   };
 
@@ -2602,7 +2638,32 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   value={checkinNote}
                   onChange={handleCheckinNoteChange}
                   onKeyDown={(e) => {
-                    if (e.ctrlKey && e.key === 'Enter') {
+                    if (showCheckinTagSuggestions) {
+                      const filteredTags = getAllTags()
+                        .filter(tag =>
+                          tag.display.toLowerCase().includes(checkinTagSearchTerm.toLowerCase())
+                        )
+                        .slice(0, 8);
+
+                      if (e.key === 'ArrowDown') {
+                        e.preventDefault();
+                        setSelectedCheckinTagIndex(prev =>
+                          prev < filteredTags.length - 1 ? prev + 1 : prev
+                        );
+                      } else if (e.key === 'ArrowUp') {
+                        e.preventDefault();
+                        setSelectedCheckinTagIndex(prev => prev > 0 ? prev - 1 : 0);
+                      } else if (e.key === 'Enter') {
+                        e.preventDefault();
+                        if (filteredTags[selectedCheckinTagIndex]) {
+                          insertCheckinTag(filteredTags[selectedCheckinTagIndex]);
+                        }
+                        return;
+                      } else if (e.key === 'Escape') {
+                        e.preventDefault();
+                        setShowCheckinTagSuggestions(false);
+                      }
+                    } else if (e.ctrlKey && e.key === 'Enter') {
                       e.preventDefault();
                       handleDailyCheckin(selectedProject.id);
                     }
@@ -2625,10 +2686,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                       .map((tag, idx) => (
                         <div
                           key={idx}
-                          style={styles.tagSuggestionItem}
+                          style={{
+                            ...styles.tagSuggestionItem,
+                            backgroundColor: idx === selectedCheckinTagIndex ? 'var(--cream)' : '#FFFFFF'
+                          }}
                           onClick={() => insertCheckinTag(tag)}
-                          onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--cream)'}
-                          onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#FFFFFF'}
+                          onMouseEnter={() => setSelectedCheckinTagIndex(idx)}
                         >
                           <span style={{
                             ...styles.tagTypeLabel,
@@ -3636,7 +3699,32 @@ Keep tool calls granular (one discrete change per action), explain each action c
                       onFocus={() => setFocusedField('project-update')}
                       onBlur={() => setFocusedField(null)}
                       onKeyDown={(e) => {
-                        if (e.ctrlKey && e.key === 'Enter') {
+                        if (showProjectTagSuggestions) {
+                          const filteredTags = getAllTags()
+                            .filter(tag =>
+                              tag.display.toLowerCase().includes(projectTagSearchTerm.toLowerCase())
+                            )
+                            .slice(0, 8);
+
+                          if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            setSelectedProjectTagIndex(prev =>
+                              prev < filteredTags.length - 1 ? prev + 1 : prev
+                            );
+                          } else if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            setSelectedProjectTagIndex(prev => prev > 0 ? prev - 1 : 0);
+                          } else if (e.key === 'Enter') {
+                            e.preventDefault();
+                            if (filteredTags[selectedProjectTagIndex]) {
+                              insertProjectTag(filteredTags[selectedProjectTagIndex]);
+                            }
+                            return;
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setShowProjectTagSuggestions(false);
+                          }
+                        } else if (e.ctrlKey && e.key === 'Enter') {
                           e.preventDefault();
                           handleAddUpdate();
                         }
@@ -3651,21 +3739,23 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   {showProjectTagSuggestions && (
                       <div style={styles.tagSuggestions}>
                         {getAllTags()
-                          .filter(tag => 
+                          .filter(tag =>
                             tag.display.toLowerCase().includes(projectTagSearchTerm.toLowerCase())
                           )
                           .slice(0, 8)
                           .map((tag, idx) => (
                             <div
                               key={idx}
-                              style={styles.tagSuggestionItem}
+                              style={{
+                                ...styles.tagSuggestionItem,
+                                backgroundColor: idx === selectedProjectTagIndex ? 'var(--cream)' : '#FFFFFF'
+                              }}
                               onClick={() => insertProjectTag(tag)}
-                              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--cream)'}
-                              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#FFFFFF'}
+                              onMouseEnter={() => setSelectedProjectTagIndex(idx)}
                             >
                               <span style={{
                                 ...styles.tagTypeLabel,
-                                backgroundColor: 
+                                backgroundColor:
                                   tag.type === 'person' ? 'var(--sage)' + '20' :
                                   tag.type === 'project' ? 'var(--earth)' + '20' :
                                   tag.type === 'task' ? 'var(--amber)' + '20' :
@@ -3798,7 +3888,32 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     onFocus={() => setFocusedField('timeline-update')}
                     onBlur={() => setFocusedField(null)}
                     onKeyDown={(e) => {
-                      if (e.ctrlKey && e.key === 'Enter') {
+                      if (showTagSuggestions) {
+                        const filteredTags = getAllTags()
+                          .filter(tag =>
+                            tag.display.toLowerCase().includes(tagSearchTerm.toLowerCase())
+                          )
+                          .slice(0, 8);
+
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setSelectedTagIndex(prev =>
+                            prev < filteredTags.length - 1 ? prev + 1 : prev
+                          );
+                        } else if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          setSelectedTagIndex(prev => prev > 0 ? prev - 1 : 0);
+                        } else if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (filteredTags[selectedTagIndex]) {
+                            insertTag(filteredTags[selectedTagIndex], timelineInputRef);
+                          }
+                          return;
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setShowTagSuggestions(false);
+                        }
+                      } else if (e.ctrlKey && e.key === 'Enter') {
                         e.preventDefault();
                         handleAddTimelineUpdate();
                       }
@@ -3813,21 +3928,23 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   {showTagSuggestions && (
                     <div style={styles.tagSuggestions}>
                       {getAllTags()
-                        .filter(tag => 
+                        .filter(tag =>
                           tag.display.toLowerCase().includes(tagSearchTerm.toLowerCase())
                         )
                         .slice(0, 8)
                         .map((tag, idx) => (
                           <div
                             key={idx}
-                            style={styles.tagSuggestionItem}
+                            style={{
+                              ...styles.tagSuggestionItem,
+                              backgroundColor: idx === selectedTagIndex ? 'var(--cream)' : '#FFFFFF'
+                            }}
                             onClick={() => insertTag(tag, timelineInputRef)}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--cream)'}
-                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#FFFFFF'}
+                            onMouseEnter={() => setSelectedTagIndex(idx)}
                           >
                             <span style={{
                               ...styles.tagTypeLabel,
-                              backgroundColor: 
+                              backgroundColor:
                                 tag.type === 'person' ? 'var(--sage)' + '20' :
                                 tag.type === 'project' ? 'var(--earth)' + '20' :
                                 tag.type === 'task' ? 'var(--amber)' + '20' :
@@ -4076,7 +4193,32 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     onFocus={() => setFocusedField('thrust-draft')}
                     onBlur={() => setFocusedField(null)}
                     onKeyDown={(e) => {
-                      if (e.ctrlKey && e.key === 'Enter') {
+                      if (showThrustTagSuggestions) {
+                        const filteredTags = getAllTags()
+                          .filter(tag =>
+                            tag.display.toLowerCase().includes(thrustTagSearchTerm.toLowerCase())
+                          )
+                          .slice(0, 8);
+
+                        if (e.key === 'ArrowDown') {
+                          e.preventDefault();
+                          setSelectedThrustTagIndex(prev =>
+                            prev < filteredTags.length - 1 ? prev + 1 : prev
+                          );
+                        } else if (e.key === 'ArrowUp') {
+                          e.preventDefault();
+                          setSelectedThrustTagIndex(prev => prev > 0 ? prev - 1 : 0);
+                        } else if (e.key === 'Enter') {
+                          e.preventDefault();
+                          if (filteredTags[selectedThrustTagIndex]) {
+                            insertThrustTag(filteredTags[selectedThrustTagIndex]);
+                          }
+                          return;
+                        } else if (e.key === 'Escape') {
+                          e.preventDefault();
+                          setShowThrustTagSuggestions(false);
+                        }
+                      } else if (e.ctrlKey && e.key === 'Enter') {
                         e.preventDefault();
                         handleSendThrustMessage();
                       }
@@ -4097,10 +4239,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                         .map((tag, idx) => (
                           <div
                             key={idx}
-                            style={styles.tagSuggestionItem}
+                            style={{
+                              ...styles.tagSuggestionItem,
+                              backgroundColor: idx === selectedThrustTagIndex ? 'var(--cream)' : '#FFFFFF'
+                            }}
                             onClick={() => insertThrustTag(tag)}
-                            onMouseEnter={(e) => e.currentTarget.style.backgroundColor = 'var(--cream)'}
-                            onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#FFFFFF'}
+                            onMouseEnter={() => setSelectedThrustTagIndex(idx)}
                           >
                             <span style={{
                               ...styles.tagTypeLabel,
@@ -7110,7 +7254,8 @@ const styles = {
 
   tagSuggestions: {
     position: 'absolute',
-    bottom: '48px',
+    bottom: '100%',
+    marginBottom: '8px',
     left: '0',
     right: '48px',
     backgroundColor: '#FFFFFF',
