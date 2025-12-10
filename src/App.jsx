@@ -6,8 +6,10 @@ import { PortfolioProvider, usePortfolioData } from "./hooks/usePortfolioData";
 function AppContent() {
   const { projects, handleExport, handleImport } = usePortfolioData();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settingsData, setSettingsData] = useState({});
 
-  const openSettings = () => {
+  const openSettings = (data) => {
+    setSettingsData(data || {});
     setIsSettingsOpen(true);
   };
 
@@ -32,6 +34,9 @@ function AppContent() {
         onExport={handleExport}
         onImport={handleImportWrapper}
         projects={projects}
+        loggedInUser={settingsData.loggedInUser}
+        setLoggedInUser={settingsData.setLoggedInUser}
+        allStakeholders={settingsData.allStakeholders}
       />
     </>
   );

@@ -7,6 +7,9 @@ export default function SettingsModal({
   onExport,
   onImport,
   projects,
+  loggedInUser,
+  setLoggedInUser,
+  allStakeholders,
 }) {
   const [exportTarget, setExportTarget] = useState("all");
   const importInputRef = useRef(null);
@@ -54,6 +57,33 @@ export default function SettingsModal({
             ×
           </button>
         </div>
+
+        {/* Logged In User Section */}
+        {loggedInUser !== undefined && allStakeholders && (
+          <div style={styles.section}>
+            <h3 style={styles.sectionTitle}>Logged in as</h3>
+            <p style={styles.description}>
+              Select which person you are to customize your view and track your activities.
+            </p>
+            <div style={styles.dataGroup}>
+              <select
+                value={loggedInUser}
+                onChange={(e) => {
+                  setLoggedInUser(e.target.value);
+                  localStorage.setItem('manity_logged_in_user', e.target.value);
+                }}
+                style={styles.select}
+                aria-label="Select logged in user"
+              >
+                {allStakeholders.map(stakeholder => (
+                  <option key={stakeholder.name} value={stakeholder.name}>
+                    {stakeholder.name} ({stakeholder.team})
+                  </option>
+                ))}
+              </select>
+            </div>
+          </div>
+        )}
 
         {/* Import/Export Section */}
         <div style={styles.section}>
