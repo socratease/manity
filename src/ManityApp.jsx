@@ -255,6 +255,13 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     });
   }, [currentSlideIndex, activeView]);
 
+  // Sync people from projects whenever projects change (handles imports and updates)
+  useEffect(() => {
+    if (projects.length > 0) {
+      syncAllPeopleFromProjects(projects);
+    }
+  }, [projects]);
+
   // Overflow detection for slide panels
   useEffect(() => {
     if (activeView !== 'slides') return;
@@ -620,7 +627,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }
   };
 
-  const saveEdits = () => {
+  const saveEdits = async () => {
     const stakeholdersArray = editValues.stakeholders
       .split('\n')
       .filter(line => line.trim())
@@ -628,6 +635,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         const parts = line.split(',').map(p => p.trim());
         return { name: parts[0] || '', team: parts[1] || '' };
       });
+
+    // Sync stakeholders to People database
+    await syncStakeholdersToPeople(stakeholdersArray);
 
     setProjects(projects.map(p =>
       p.id === viewingProjectId
@@ -1306,6 +1316,67 @@ Write a professional executive summary that highlights the project's current sta
     recentActivity: [...project.recentActivity]
   });
 
+  // Helper function to sync stakeholders to People database
+  const syncStakeholdersToPeople = async (stakeholders) => {
+    if (!stakeholders || stakeholders.length === 0) return;
+
+    for (const stakeholder of stakeholders) {
+      // Check if person already exists in people database
+      const existingPerson = people.find(p =>
+        p.name.toLowerCase() === stakeholder.name.toLowerCase()
+      );
+
+      // If person doesn't exist, create them
+      if (!existingPerson) {
+        try {
+          await createPerson({
+            name: stakeholder.name,
+            team: stakeholder.team || 'Contributor',
+            email: null
+          });
+        } catch (error) {
+          console.error(`Failed to sync stakeholder ${stakeholder.name} to People:`, error);
+        }
+      }
+    }
+  };
+
+  // Helper function to extract and sync all people from projects
+  const syncAllPeopleFromProjects = async (projectsData) => {
+    const peopleToSync = new Map(); // Use Map to avoid duplicates
+
+    projectsData.forEach(project => {
+      // Add stakeholders
+      if (project.stakeholders) {
+        project.stakeholders.forEach(stakeholder => {
+          if (stakeholder.name && stakeholder.name.trim()) {
+            peopleToSync.set(stakeholder.name.toLowerCase(), {
+              name: stakeholder.name,
+              team: stakeholder.team || 'Contributor'
+            });
+          }
+        });
+      }
+
+      // Add authors from activities
+      if (project.recentActivity) {
+        project.recentActivity.forEach(activity => {
+          if (activity.author && activity.author.trim() && activity.author !== 'You') {
+            peopleToSync.set(activity.author.toLowerCase(), {
+              name: activity.author,
+              team: 'Contributor'
+            });
+          }
+        });
+      }
+    });
+
+    // Sync all unique people to database
+    for (const person of peopleToSync.values()) {
+      await syncStakeholdersToPeople([person]);
+    }
+  };
+
   const resetNewProjectForm = () => {
     setNewProjectName('');
     setNewProjectDescription('');
@@ -1315,7 +1386,7 @@ Write a professional executive summary that highlights the project's current sta
     setNewProjectStakeholders('');
   };
 
-  const handleCreateProject = () => {
+  const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
 
     const stakeholderEntries = newProjectStakeholders
@@ -1344,6 +1415,9 @@ Write a professional executive summary that highlights the project's current sta
         ? [{ id: generateActivityId(), date: createdAt, note: newProjectDescription, author: loggedInUser || 'You' }]
         : []
     };
+
+    // Sync stakeholders to People database
+    await syncStakeholdersToPeople(newProject.stakeholders);
 
     setProjects(prev => [...prev, newProject]);
     setShowNewProject(false);
@@ -2448,8 +2522,20 @@ Keep tool calls granular (one discrete change per action), explain each action c
     };
 
     project.plan.forEach(task => {
-      addDueDate(task.dueDate);
+      const parsedTaskDueDate = addDueDate(task.dueDate);
 
+      // Add task itself if it has a due date
+      if (parsedTaskDueDate) {
+        tasksWithDueDates.push({
+          id: task.id,
+          title: task.title,
+          dueDate: parsedTaskDueDate.toISOString(),
+          status: task.status || 'todo',
+          taskTitle: task.title
+        });
+      }
+
+      // Add subtasks with due dates
       task.subtasks.forEach(subtask => {
         const parsedDueDate = addDueDate(subtask.dueDate);
         if (parsedDueDate) {
@@ -2457,7 +2543,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
             id: subtask.id || `${task.id}-${subtask.title}`,
             title: subtask.title,
             dueDate: parsedDueDate.toISOString(),
-            status: subtask.status,
+            status: subtask.status || 'todo',
             taskTitle: task.title
           });
         }
