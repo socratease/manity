@@ -4,6 +4,8 @@ import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
 import ForceDirectedTimeline from './components/ForceDirectedTimeline';
 import PeopleGraph from './components/PeopleGraph';
+import PersonPicker from './components/PersonPicker';
+import AddPersonCallout from './components/AddPersonCallout';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
@@ -91,9 +93,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [execSummaryDraft, setExecSummaryDraft] = useState('');
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [editingPerson, setEditingPerson] = useState(null);
-  const [newPersonName, setNewPersonName] = useState('');
-  const [newPersonTeam, setNewPersonTeam] = useState('');
-  const [newPersonEmail, setNewPersonEmail] = useState('');
   const [isEditingSlide, setIsEditingSlide] = useState(false);
   const [hiddenSlideItems, setHiddenSlideItems] = useState({
     recentUpdates: [],
@@ -622,7 +621,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       setEditValues({
         status: project.status,
         priority: project.priority,
-        stakeholders: project.stakeholders.map(s => s.name),
+        stakeholders: project.stakeholders, // Keep full objects for PersonPicker
         description: project.description
       });
       setEditMode(true);
@@ -630,12 +629,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   };
 
   const saveEdits = async () => {
-    const stakeholdersArray = (editValues.stakeholders || [])
-      .filter(Boolean)
-      .map(name => {
-        const match = getAllStakeholders().find(person => person.name === name);
-        return { name, team: match?.team || 'Contributor' };
-      });
+    // editValues.stakeholders is now an array of {name, team} objects from PersonPicker
+    const stakeholdersArray = (editValues.stakeholders || []).filter(Boolean);
 
     const finalStakeholders = stakeholdersArray.length > 0
       ? stakeholdersArray
@@ -1394,12 +1389,8 @@ Write a professional executive summary that highlights the project's current sta
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
 
-    const stakeholderEntries = newProjectStakeholders
-      .filter(Boolean)
-      .map(name => {
-        const match = getAllStakeholders().find(person => person.name === name);
-        return { name, team: match?.team || 'Contributor' };
-      });
+    // newProjectStakeholders is now an array of {name, team} objects from PersonPicker
+    const stakeholderEntries = newProjectStakeholders.filter(Boolean);
 
     const createdAt = new Date().toISOString();
     const newId = `proj-${Date.now()}`;
@@ -1432,47 +1423,47 @@ Write a professional executive summary that highlights the project's current sta
     setActiveView('overview');
   };
 
-  const handleStakeholderSelection = (event) => {
-    const selected = Array.from(event.target.selectedOptions || []).map(option => option.value);
-    setNewProjectStakeholders(selected);
+  const handleStakeholderSelection = (selectedPeople) => {
+    setNewProjectStakeholders(selectedPeople);
   };
 
-  const handleEditStakeholderSelection = (event) => {
-    const selected = Array.from(event.target.selectedOptions || []).map(option => option.value);
-    setEditValues(prev => ({ ...prev, stakeholders: selected }));
+  const handleEditStakeholderSelection = (selectedPeople) => {
+    setEditValues(prev => ({ ...prev, stakeholders: selectedPeople }));
   };
 
-  const handleCreateNewPerson = async () => {
-    if (newPersonName && newPersonTeam) {
-      const created = await createPerson({
-        name: newPersonName,
-        team: newPersonTeam,
-        email: newPersonEmail || null
+  const handleCreateNewPerson = async (personData) => {
+    const created = await createPerson({
+      name: personData.name,
+      team: personData.team,
+      email: personData.email || null
+    });
+
+    // Add the newly created person to the appropriate stakeholder list
+    const newStakeholder = { name: created.name, team: created.team };
+
+    if (stakeholderSelectionTarget === 'newProject') {
+      setNewProjectStakeholders(prev => {
+        const exists = prev.some(p => p.name === newStakeholder.name);
+        return exists ? prev : [...prev, newStakeholder];
       });
-
-      if (stakeholderSelectionTarget === 'newProject') {
-        setNewProjectStakeholders(prev => Array.from(new Set([...prev, created.name])));
-      } else if (stakeholderSelectionTarget === 'editProject') {
-        setEditValues(prev => ({
+    } else if (stakeholderSelectionTarget === 'editProject') {
+      setEditValues(prev => {
+        const currentStakeholders = prev.stakeholders || [];
+        const exists = currentStakeholders.some(p => p.name === newStakeholder.name);
+        return {
           ...prev,
-          stakeholders: Array.from(new Set([...(prev.stakeholders || []), created.name]))
-        }));
-      }
-
-      setEditingPerson(null);
-      setStakeholderSelectionTarget(null);
-      setNewPersonName('');
-      setNewPersonTeam('');
-      setNewPersonEmail('');
+          stakeholders: exists ? currentStakeholders : [...currentStakeholders, newStakeholder]
+        };
+      });
     }
+
+    setEditingPerson(null);
+    setStakeholderSelectionTarget(null);
   };
 
   const handleClosePersonModal = () => {
     setEditingPerson(null);
     setStakeholderSelectionTarget(null);
-    setNewPersonName('');
-    setNewPersonTeam('');
-    setNewPersonEmail('');
   };
 
   const buildThrustContext = () => {
@@ -3328,32 +3319,17 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 <h4 style={styles.compactCardTitle}>Stakeholders</h4>
                 {editMode ? (
                   <>
-                    <div style={styles.stakeholderPicker}>
-                      <select
-                        multiple
-                        value={editValues.stakeholders || []}
-                        onChange={handleEditStakeholderSelection}
-                        style={styles.multiSelect}
-                      >
-                        {getAllStakeholders().map(stakeholder => (
-                          <option key={stakeholder.name} value={stakeholder.name}>
-                            {stakeholder.name} ({stakeholder.team})
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setStakeholderSelectionTarget('editProject');
-                          setEditingPerson({});
-                        }}
-                        style={styles.addStakeholderButton}
-                      >
-                        <Plus size={14} />
-                        Add person
-                      </button>
-                    </div>
-                    <div style={styles.helperText}>Pick stakeholders from your saved people. Use Cmd/Ctrl+Click to select multiple.</div>
+                    <PersonPicker
+                      allPeople={getAllStakeholders()}
+                      selectedPeople={editValues.stakeholders || []}
+                      onChange={handleEditStakeholderSelection}
+                      onAddNewPerson={(name) => {
+                        setStakeholderSelectionTarget('editProject');
+                        setEditingPerson({});
+                      }}
+                      placeholder="Type @ to tag people..."
+                    />
+                    <div style={styles.helperText}>Type @ to search and tag people. Click the X to remove.</div>
                   </>
                 ) : (
                   <div style={styles.stakeholderCompactList}>
@@ -4989,32 +4965,17 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   </div>
                   <div style={styles.formField}>
                     <label style={styles.formLabel}>Stakeholders</label>
-                    <div style={styles.stakeholderPicker}>
-                      <select
-                        multiple
-                        value={newProjectStakeholders}
-                        onChange={handleStakeholderSelection}
-                        style={styles.multiSelect}
-                      >
-                        {getAllStakeholders().map(stakeholder => (
-                          <option key={stakeholder.name} value={stakeholder.name}>
-                            {stakeholder.name} ({stakeholder.team})
-                          </option>
-                        ))}
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => {
-                          setStakeholderSelectionTarget('newProject');
-                          setEditingPerson({});
-                        }}
-                        style={styles.addStakeholderButton}
-                      >
-                        <Plus size={14} />
-                        Add person
-                      </button>
-                    </div>
-                    <div style={styles.helperText}>Select people from your People dataset. Use Cmd/Ctrl+Click to choose multiple.</div>
+                    <PersonPicker
+                      allPeople={getAllStakeholders()}
+                      selectedPeople={newProjectStakeholders}
+                      onChange={handleStakeholderSelection}
+                      onAddNewPerson={(name) => {
+                        setStakeholderSelectionTarget('newProject');
+                        setEditingPerson({});
+                      }}
+                      placeholder="Type @ to tag people..."
+                    />
+                    <div style={styles.helperText}>Type @ to search and tag people. Click the X to remove.</div>
                   </div>
                 </div>
                 <div style={styles.newProjectActions}>
@@ -5086,52 +5047,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
         )}
       </main>
 
-      {/* Add New Person Modal */}
-      {editingPerson && !editingPerson.id && (
-        <div style={styles.modalBackdrop} onClick={handleClosePersonModal}>
-          <div style={styles.modalContent} onClick={(e) => e.stopPropagation()}>
-            <h3 style={styles.modalTitle}>Add New Person</h3>
-            <input
-              type="text"
-              value={newPersonName}
-              onChange={(e) => setNewPersonName(e.target.value)}
-              placeholder="Name"
-              style={styles.input}
-            />
-            <input
-              type="text"
-              value={newPersonTeam}
-              onChange={(e) => setNewPersonTeam(e.target.value)}
-              placeholder="Team"
-              style={styles.input}
-            />
-            <input
-              type="email"
-              value={newPersonEmail}
-              onChange={(e) => setNewPersonEmail(e.target.value)}
-              placeholder="Email (optional)"
-              style={styles.input}
-            />
-            <div style={styles.modalActions}>
-              <button
-                onClick={handleCreateNewPerson}
-                style={styles.saveButtonPerson}
-                disabled={!newPersonName || !newPersonTeam}
-              >
-                <Check size={16} />
-                Add Person
-              </button>
-              <button
-                onClick={handleClosePersonModal}
-                style={styles.cancelButtonPerson}
-              >
-                <X size={16} />
-                Cancel
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Add New Person Callout */}
+      <AddPersonCallout
+        isOpen={editingPerson && !editingPerson.id}
+        onClose={handleClosePersonModal}
+        onSave={handleCreateNewPerson}
+      />
     </div>
     </>
   );
