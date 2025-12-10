@@ -3,6 +3,7 @@ import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, Chev
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
 import ForceDirectedTimeline from './components/ForceDirectedTimeline';
+import PeopleGraph from './components/PeopleGraph';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
@@ -4793,102 +4794,17 @@ Keep tool calls granular (one discrete change per action), explain each action c
               </button>
             </header>
 
-            <div style={styles.peopleGrid}>
-              {people.map((person) => (
-                <div key={person.id} style={styles.personCard}>
-                  {editingPerson?.id === person.id ? (
-                    <div style={styles.personEditForm}>
-                      <input
-                        type="text"
-                        value={newPersonName}
-                        onChange={(e) => setNewPersonName(e.target.value)}
-                        placeholder="Name"
-                        style={styles.input}
-                      />
-                      <input
-                        type="text"
-                        value={newPersonTeam}
-                        onChange={(e) => setNewPersonTeam(e.target.value)}
-                        placeholder="Team"
-                        style={styles.input}
-                      />
-                      <input
-                        type="email"
-                        value={newPersonEmail}
-                        onChange={(e) => setNewPersonEmail(e.target.value)}
-                        placeholder="Email"
-                        style={styles.input}
-                      />
-                      <div style={styles.personActions}>
-                        <button
-                          onClick={async () => {
-                            await updatePerson(person.id, {
-                              name: newPersonName,
-                              team: newPersonTeam,
-                              email: newPersonEmail
-                            });
-                            setEditingPerson(null);
-                            setNewPersonName('');
-                            setNewPersonTeam('');
-                            setNewPersonEmail('');
-                          }}
-                          style={styles.saveButtonPerson}
-                        >
-                          <Check size={16} />
-                          Save
-                        </button>
-                        <button
-                          onClick={() => {
-                            setEditingPerson(null);
-                            setNewPersonName('');
-                            setNewPersonTeam('');
-                            setNewPersonEmail('');
-                          }}
-                          style={styles.cancelButtonPerson}
-                        >
-                          <X size={16} />
-                          Cancel
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <>
-                      <div style={styles.personInfo}>
-                        <h3 style={styles.personName}>{person.name}</h3>
-                        <p style={styles.personTeam}>{person.team}</p>
-                        {person.email && (
-                          <p style={styles.personEmail}>{person.email}</p>
-                        )}
-                      </div>
-                      <div style={styles.personActions}>
-                        <button
-                          onClick={() => {
-                            setEditingPerson(person);
-                            setNewPersonName(person.name);
-                            setNewPersonTeam(person.team);
-                            setNewPersonEmail(person.email || '');
-                          }}
-                          style={styles.editButtonPerson}
-                        >
-                          <Edit2 size={16} />
-                          Edit
-                        </button>
-                        <button
-                          onClick={async () => {
-                            if (confirm(`Delete ${person.name}?`)) {
-                              await deletePerson(person.id);
-                            }
-                          }}
-                          style={styles.deleteButtonPerson}
-                        >
-                          <Trash2 size={16} />
-                          Delete
-                        </button>
-                      </div>
-                    </>
-                  )}
-                </div>
-              ))}
+            <div style={{ marginTop: '16px' }}>
+              <PeopleGraph
+                people={people}
+                projects={projects}
+                onUpdatePerson={updatePerson}
+                onDeletePerson={deletePerson}
+                onViewProject={(projectId) => {
+                  setActiveView('overview');
+                  setViewingProjectId(projectId);
+                }}
+              />
             </div>
 
             {/* Add New Person Modal */}
