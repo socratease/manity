@@ -55,16 +55,16 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
   };
 
   const physics = {
-    springStrength: 0.015,
-    repulsion: 5000, // Reduced from 15000 to allow boxes to float more freely
-    damping: 0.68,
-    verticalSpring: 0.02,
-    verticalRepulsion: 3000, // Reduced from 10000 for gentler separation
-    settleThreshold: 0.05, // Fixed typo and reduced for better settling
+    springStrength: 0.012,
+    repulsion: 4000, // Reduced to allow smoother settling
+    damping: 0.88, // Increased damping to reduce jitter
+    verticalSpring: 0.015,
+    verticalRepulsion: 2500, // Reduced for smoother separation
+    settleThreshold: 0.15, // Increased to catch micro-movements and stop jitter
     boundaryForce: 0.8,
-    dotTug: 0.008, // Reduced from 0.025 to reduce pull toward dots
-    dotRepulsion: 8000, // New: repulsion force from timeline dots
-    dotRepulsionRadius: 50, // New: radius around dots where repulsion applies
+    dotTug: 0.006, // Further reduced pull toward dots
+    dotRepulsion: 6000, // Reduced repulsion force
+    dotRepulsionRadius: 50,
   };
 
   const getTimelineX = useCallback((date) => {
