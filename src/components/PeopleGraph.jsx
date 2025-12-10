@@ -10,7 +10,8 @@ import {
   Check,
   Trash2,
   Calendar,
-  Clock
+  Clock,
+  LogIn
 } from 'lucide-react';
 
 const SAMPLE_PEOPLE = [
@@ -127,7 +128,9 @@ const PeopleGraph = ({
   projects: propProjects = [],
   onUpdatePerson,
   onDeletePerson,
-  onViewProject
+  onViewProject,
+  onLoginAs,
+  loggedInUser
 }) => {
   const people = propPeople.length > 0 ? propPeople : SAMPLE_PEOPLE;
   const projects = propProjects.length > 0 ? propProjects : SAMPLE_PROJECTS;
@@ -140,6 +143,7 @@ const PeopleGraph = ({
   const [hoveredNode, setHoveredNode] = useState(null);
   const [selectedNode, setSelectedNode] = useState(null);
   const [draggedNode, setDraggedNode] = useState(null);
+  const [isDragging, setIsDragging] = useState(false);
   const [graphOffset, setGraphOffset] = useState({ x: 0, y: 0 });
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', team: '', email: '' });
@@ -492,10 +496,13 @@ const PeopleGraph = ({
   const handleMouseDown = useCallback((e, node) => {
     e.stopPropagation();
     setDraggedNode(node);
+    setIsDragging(false);
   }, []);
 
   const handleMouseMove = useCallback((e) => {
     if (!draggedNode || !svgRef.current) return;
+
+    setIsDragging(true);
 
     const svg = svgRef.current;
     const rect = svg.getBoundingClientRect();
@@ -511,11 +518,13 @@ const PeopleGraph = ({
 
   const handleMouseUp = useCallback(() => {
     setDraggedNode(null);
+    // Reset isDragging after a short delay to prevent click from firing
+    setTimeout(() => setIsDragging(false), 50);
   }, []);
 
   const handleNodeClick = useCallback((e, node) => {
     e.stopPropagation();
-    if (draggedNode) return;
+    if (isDragging) return;
 
     setSelectedNode(node);
     setEditForm({
@@ -524,7 +533,7 @@ const PeopleGraph = ({
       email: node.email || ''
     });
     setIsEditing(false);
-  }, [draggedNode]);
+  }, [isDragging]);
 
   const handleBackgroundClick = useCallback(() => {
     if (!draggedNode) {
@@ -677,6 +686,7 @@ const PeopleGraph = ({
               const isConnected = connectedIds.has(node.id);
               const isSelected = selectedNode?.id === node.id;
               const isDimmed = selectedNode && !isSelected && !selectedNode.connections.has(node.id);
+              const isLoggedIn = loggedInUser && node.name === loggedInUser;
               const teamColor = getTeamColor(node.team);
 
               return (
@@ -803,6 +813,55 @@ const PeopleGraph = ({
                       </text>
                     </g>
                   )}
+
+                  {isLoggedIn && (
+                    <g transform={`translate(${-node.radius * 0.7}, ${-node.radius * 0.7})`}>
+                      <circle
+                        r="12"
+                        fill="#7A9B76"
+                        stroke="#FFFFFF"
+                        strokeWidth="2.5"
+                        style={{
+                          filter: 'drop-shadow(0 2px 4px rgba(0,0,0,0.2))'
+                        }}
+                      />
+                      <circle
+                        r="12"
+                        fill="none"
+                        stroke="#7A9B76"
+                        strokeWidth="2"
+                        opacity="0.3"
+                      >
+                        <animate
+                          attributeName="r"
+                          from="12"
+                          to="18"
+                          dur="1.5s"
+                          repeatCount="indefinite"
+                        />
+                        <animate
+                          attributeName="opacity"
+                          from="0.4"
+                          to="0"
+                          dur="1.5s"
+                          repeatCount="indefinite"
+                        />
+                      </circle>
+                      <text
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        style={{
+                          fontSize: '10px',
+                          fontWeight: '700',
+                          fontFamily: "'Inter', sans-serif",
+                          fill: '#FFFFFF',
+                          pointerEvents: 'none'
+                        }}
+                      >
+                        ✓
+                      </text>
+                    </g>
+                  )}
                 </g>
               );
             })}
@@ -847,7 +906,6 @@ const PeopleGraph = ({
                 <span>{node.connections.size} connection{node.connections.size !== 1 ? 's' : ''}</span>
               </div>
             </div>
-            <div style={styles.tooltipHint}>Click for details</div>
           </div>
         );
       })()}
@@ -1071,11 +1129,26 @@ const PeopleGraph = ({
                       </>
                     ) : (
                       <>
-                        <button style={styles.calloutEditBtn} onClick={() => setIsEditing(true)}>
-                          <Edit2 size={14} />
-                          Edit
+                        <button
+                          style={styles.calloutLoginBtn}
+                          onClick={() => onLoginAs?.(selectedNode.name)}
+                          title="Log in as this person"
+                        >
+                          <LogIn size={14} />
+                          Log in
                         </button>
-                        <button style={styles.calloutDeleteBtn} onClick={handleDelete}>
+                        <button
+                          style={styles.calloutEditBtnIcon}
+                          onClick={() => setIsEditing(true)}
+                          title="Edit person"
+                        >
+                          <Edit2 size={14} />
+                        </button>
+                        <button
+                          style={styles.calloutDeleteBtn}
+                          onClick={handleDelete}
+                          title="Delete person"
+                        >
                           <Trash2 size={14} />
                         </button>
                       </>
@@ -1938,6 +2011,40 @@ const styles = {
     borderRadius: '10px',
     backgroundColor: '#FFFFFF',
     color: '#3A3631',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease'
+  },
+
+  calloutEditBtnIcon: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '10px 12px',
+    border: '1px solid #E8E3D8',
+    borderRadius: '10px',
+    backgroundColor: '#FFFFFF',
+    color: '#3A3631',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease'
+  },
+
+  calloutLoginBtn: {
+    flex: 1,
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '6px',
+    padding: '10px 14px',
+    border: 'none',
+    borderRadius: '10px',
+    backgroundColor: '#7A9B76',
+    color: '#FFFFFF',
     fontSize: '13px',
     fontFamily: "'Inter', sans-serif",
     fontWeight: '600',

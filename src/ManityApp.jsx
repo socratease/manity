@@ -22,7 +22,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
   const [checkinNote, setCheckinNote] = useState('');
-  const [activeView, setActiveView] = useState('overview');
+  const [activeView, setActiveView] = useState('people');
   const [showNewProject, setShowNewProject] = useState(false);
   const [viewingProjectId, setViewingProjectId] = useState(null);
   const [newUpdate, setNewUpdate] = useState('');
@@ -82,7 +82,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const adminUsers = [
     { name: 'Chris Graves', team: 'Admin' }
   ];
-  const [loggedInUser, setLoggedInUser] = useState('');
+  const [loggedInUser, setLoggedInUser] = useState(() => {
+    // Load from localStorage on initial mount
+    return localStorage.getItem('manity_logged_in_user') || '';
+  });
   const [focusedField, setFocusedField] = useState(null);
   const [taskEditEnabled, setTaskEditEnabled] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
@@ -1906,12 +1909,30 @@ Write a professional executive summary that highlights the project's current sta
 
   const isAdminUser = (name) => adminUsers.some(admin => admin.name === name);
 
-  const visibleProjects = projects.filter(project =>
+  // Show all projects, but organize by who is on them
+  const visibleProjects = projects.filter(project => project.status !== 'deleted');
+
+  // Projects the logged-in user is on
+  const userProjects = visibleProjects.filter(project =>
     isAdminUser(loggedInUser) || project.stakeholders.some(stakeholder => stakeholder.name === loggedInUser)
   );
 
-  const activeProjects = visibleProjects.filter(project => !['completed', 'closed'].includes(project.status));
-  const completedProjects = visibleProjects.filter(project => ['completed', 'closed'].includes(project.status));
+  // Split active and completed for user's projects
+  const userActiveProjects = userProjects.filter(project => !['completed', 'closed'].includes(project.status));
+  const userCompletedProjects = userProjects.filter(project => ['completed', 'closed'].includes(project.status));
+
+  // Projects the logged-in user is NOT on
+  const otherProjects = visibleProjects.filter(project =>
+    !isAdminUser(loggedInUser) && !project.stakeholders.some(stakeholder => stakeholder.name === loggedInUser)
+  );
+
+  // Split active and completed for other projects
+  const otherActiveProjects = otherProjects.filter(project => !['completed', 'closed'].includes(project.status));
+  const otherCompletedProjects = otherProjects.filter(project => ['completed', 'closed'].includes(project.status));
+
+  // For backwards compatibility (used in slides, daily update, etc.)
+  const activeProjects = userActiveProjects;
+  const completedProjects = userCompletedProjects;
 
   const handleAddTimelineUpdate = () => {
     if (timelineUpdate.trim()) {
@@ -3017,6 +3038,18 @@ Keep tool calls granular (one discrete change per action), explain each action c
             <nav style={styles.nav}>
               <button
                 onClick={() => {
+                  setActiveView('people');
+                  setViewingProjectId(null);
+                }}
+                style={{
+                  ...styles.navItem,
+                  ...(activeView === 'people' && !viewingProjectId ? styles.navItemActive : {})
+                }}
+              >
+                People
+              </button>
+              <button
+                onClick={() => {
                   setActiveView('overview');
                   setViewingProjectId(null);
                 }}
@@ -3063,18 +3096,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
               >
                 Timeline
               </button>
-              <button
-                onClick={() => {
-                  setActiveView('people');
-                  setViewingProjectId(null);
-                }}
-                style={{
-                  ...styles.navItem,
-                  ...(activeView === 'people' && !viewingProjectId ? styles.navItemActive : {})
-                }}
-              >
-                People
-              </button>
             </nav>
           </div>
         )}
@@ -3085,26 +3106,39 @@ Keep tool calls granular (one discrete change per action), explain each action c
         <div style={styles.topBar}>
           <div />
           <div style={styles.topBarRight}>
-            <div style={styles.userIndicator}>
-              <div style={styles.userAvatar}>{(loggedInUser || '?').split(' ').map(n => n[0]).join('')}</div>
-              <div style={styles.userDetails}>
-                <span style={styles.userLabel}>Logged in</span>
-                <select
-                  value={loggedInUser}
-                  onChange={(e) => setLoggedInUser(e.target.value)}
-                  style={styles.userSelect}
-                  aria-label="Select logged in user"
+            {activeView === 'thrust' && (
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', marginRight: '12px' }}>
+                <button
+                  onClick={() => {
+                    if (visibleProjects.length > 0) {
+                      setSelectedProject(visibleProjects[0]);
+                      setShowDailyCheckin(true);
+                    }
+                  }}
+                  style={{
+                    ...styles.dailyUpdateButton,
+                    opacity: visibleProjects.length === 0 ? 0.5 : 1,
+                    cursor: visibleProjects.length === 0 ? 'not-allowed' : 'pointer'
+                  }}
+                  disabled={visibleProjects.length === 0}
+                  title={visibleProjects.length === 0 ? 'No projects available for check-in' : 'Start a daily check-in'}
                 >
-                  {getAllStakeholders().map(stakeholder => (
-                    <option key={stakeholder.name} value={stakeholder.name}>
-                      {stakeholder.name} ({stakeholder.team})
-                    </option>
-                  ))}
-                </select>
+                  Daily Update
+                </button>
+                <div style={styles.editingAsText}>
+                  editing as <span style={styles.editingAsName}>{loggedInUser || 'Guest'}</span>
+                </div>
               </div>
-            </div>
+            )}
             <button
-              onClick={onOpenSettings}
+              onClick={() => onOpenSettings({
+                loggedInUser,
+                setLoggedInUser: (newUser) => {
+                  setLoggedInUser(newUser);
+                  localStorage.setItem('manity_logged_in_user', newUser);
+                },
+                allStakeholders: getAllStakeholders()
+              })}
               style={styles.settingsIconButton}
               aria-label="Open settings"
             >
@@ -4186,21 +4220,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   dialectic project planning
                 </p>
               </div>
-              <div style={styles.headerActions}>
-                <button
-                  onClick={() => {
-                    if (visibleProjects.length > 0) {
-                      setSelectedProject(visibleProjects[0]);
-                      setShowDailyCheckin(true);
-                    }
-                  }}
-                  style={styles.secondaryButton}
-                  disabled={visibleProjects.length === 0}
-                  title={visibleProjects.length === 0 ? 'No projects available for check-in' : 'Start a daily check-in'}
-                >
-                  Daily check-in
-                </button>
-              </div>
             </header>
 
             <div style={styles.thrustLayout}>
@@ -4448,10 +4467,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
                             <div style={styles.momentumProjectHeader}>
                               <div>
                                 <div style={styles.momentumProjectName}>{project.name}</div>
-                                <div style={styles.momentumProjectMeta}>
-                                  <Calendar size={14} style={{ color: 'var(--stone)' }} />
-                                  Target {new Date(project.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                                </div>
                               </div>
                               <div style={styles.momentumProjectMetaRight}>
                                 <div style={{
@@ -4845,6 +4860,11 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   setActiveView('overview');
                   setViewingProjectId(projectId);
                 }}
+                onLoginAs={(personName) => {
+                  setLoggedInUser(personName);
+                  localStorage.setItem('manity_logged_in_user', personName);
+                }}
+                loggedInUser={loggedInUser}
               />
             </div>
           </>
@@ -5006,37 +5026,69 @@ Keep tool calls granular (one discrete change per action), explain each action c
             <div style={styles.projectsSection}>
               {visibleProjects.length === 0 ? (
                 <div style={styles.emptyState}>
-                  No projects assigned to {loggedInUser}. Select another person to see their work.
+                  No projects found. Create a new project to get started.
                 </div>
               ) : (
                 <>
+                  {/* Your Active Projects */}
                   <div style={styles.sectionHeaderRow}>
                     <div>
-                      <h3 style={styles.sectionTitle}>Active & Upcoming</h3>
-                      <p style={styles.sectionSubtitle}>{activeProjects.length} in progress</p>
+                      <h3 style={styles.sectionTitle}>Your Active Projects</h3>
+                      <p style={styles.sectionSubtitle}>{userActiveProjects.length} in progress</p>
                     </div>
                   </div>
 
-                  {activeProjects.length === 0 ? (
+                  {userActiveProjects.length === 0 ? (
                     <div style={styles.emptyState}>
-                      All projects for {loggedInUser} are finished. Completed and closed work is listed below.
+                      {loggedInUser ? `No active projects for ${loggedInUser}.` : 'No active projects for you.'}
                     </div>
                   ) : (
                     <div style={styles.projectsGrid}>
-                      {activeProjects.map((project, index) => renderProjectCard(project, index))}
+                      {userActiveProjects.map((project, index) => renderProjectCard(project, index))}
                     </div>
                   )}
 
-                  {completedProjects.length > 0 && (
+                  {/* Other Active Projects */}
+                  {otherActiveProjects.length > 0 && (
                     <div style={{ marginTop: '32px' }}>
                       <div style={styles.sectionHeaderRow}>
                         <div>
-                          <h3 style={styles.sectionTitle}>Completed & Closed</h3>
-                          <p style={styles.sectionSubtitle}>{completedProjects.length} wrapped up</p>
+                          <h3 style={styles.sectionTitle}>Other Active Projects</h3>
+                          <p style={styles.sectionSubtitle}>{otherActiveProjects.length} in progress</p>
                         </div>
                       </div>
                       <div style={styles.projectsGrid}>
-                        {completedProjects.map((project, index) => renderProjectCard(project, index + activeProjects.length))}
+                        {otherActiveProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Your Completed Projects */}
+                  {userCompletedProjects.length > 0 && (
+                    <div style={{ marginTop: '32px' }}>
+                      <div style={styles.sectionHeaderRow}>
+                        <div>
+                          <h3 style={styles.sectionTitle}>Your Completed & Closed</h3>
+                          <p style={styles.sectionSubtitle}>{userCompletedProjects.length} wrapped up</p>
+                        </div>
+                      </div>
+                      <div style={styles.projectsGrid}>
+                        {userCompletedProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length + otherActiveProjects.length))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Other Completed Projects */}
+                  {otherCompletedProjects.length > 0 && (
+                    <div style={{ marginTop: '32px' }}>
+                      <div style={styles.sectionHeaderRow}>
+                        <div>
+                          <h3 style={styles.sectionTitle}>Other Completed & Closed</h3>
+                          <p style={styles.sectionSubtitle}>{otherCompletedProjects.length} wrapped up</p>
+                        </div>
+                      </div>
+                      <div style={styles.projectsGrid}>
+                        {otherCompletedProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length + otherActiveProjects.length + userCompletedProjects.length))}
                       </div>
                     </div>
                   )}
@@ -5217,6 +5269,35 @@ const styles = {
     color: 'var(--stone)',
     transition: 'all 0.2s ease',
     alignSelf: 'flex-start',
+  },
+
+  dailyUpdateButton: {
+    height: '44px',
+    padding: '0 20px',
+    borderRadius: '12px',
+    border: 'none',
+    backgroundColor: 'var(--sage)',
+    color: '#fff',
+    fontSize: '14px',
+    fontWeight: '600',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 2px 8px rgba(122, 155, 118, 0.25)',
+  },
+
+  editingAsText: {
+    fontSize: '11px',
+    color: 'var(--stone)',
+    marginTop: '4px',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  editingAsName: {
+    fontWeight: '600',
+    color: 'var(--earth)',
   },
 
   dataButton: {
