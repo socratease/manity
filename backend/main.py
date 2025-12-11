@@ -13,7 +13,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field as PydanticField
 import httpx
-from sqlalchemy import Column, String, delete, func
+from sqlalchemy import Column, String, delete, event, func
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import selectinload
@@ -52,12 +52,25 @@ def validate_sqlite_database_path(db_path: str | None) -> Path:
     return resolved_path
 
 
+def configure_sqlite_engine(engine):
+    """Enable WAL mode so readers don't block writers and vice versa."""
+
+    @event.listens_for(engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):  # pragma: no cover - sqlite specific
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA journal_mode=WAL;")
+        cursor.execute("PRAGMA synchronous=NORMAL;")
+        cursor.execute("PRAGMA busy_timeout=30000;")
+        cursor.execute("PRAGMA foreign_keys=ON;")
+        cursor.close()
+
+
 def create_engine_from_env(database_url: str | None = None):
     resolved_url = database_url or os.getenv("DATABASE_URL", f"sqlite:///{DEFAULT_DB_PATH}")
     url = make_url(resolved_url)
 
     if url.get_backend_name() == "sqlite":
-        connect_args = {"check_same_thread": False}
+        connect_args = {"check_same_thread": False, "timeout": 30}
         resolved_path = validate_sqlite_database_path(url.database)
         url = url.set(database=str(resolved_path))
     else:
@@ -66,7 +79,12 @@ def create_engine_from_env(database_url: str | None = None):
             "Using database URL %s", url.render_as_string(hide_password=False)
         )
 
-    return create_engine(url, connect_args=connect_args)
+    engine = create_engine(url, connect_args=connect_args, pool_pre_ping=True)
+
+    if url.get_backend_name() == "sqlite":
+        configure_sqlite_engine(engine)
+
+    return engine
 
 
 engine = create_engine_from_env()
@@ -401,17 +419,23 @@ def dispatch_email(
 
     try:
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as smtp:
-            # Check initial connection
-            code, resp = smtp.noop()
-            if code != 250:
-                raise smtplib.SMTPException(f"Server not ready: {code} {resp.decode()}")
+            # Check initial connection when supported
+            if hasattr(smtp, "noop"):
+                code, resp = smtp.noop()
+                if code != 250:
+                    raise smtplib.SMTPException(f"Server not ready: {code} {resp.decode()}")
 
             # Use STARTTLS only if explicitly requested
             if use_tls:
                 try:
-                    code, resp = smtp.starttls()
-                    if code != 220:
-                        logger.warning("STARTTLS failed with code %d, continuing without TLS", code)
+                    if hasattr(smtp, "starttls"):
+                        result = smtp.starttls()
+                        if isinstance(result, tuple):
+                            code, resp = result
+                            if code != 220:
+                                logger.warning("STARTTLS failed with code %d, continuing without TLS", code)
+                    else:
+                        logger.info("Server does not support STARTTLS, sending without encryption")
                 except smtplib.SMTPNotSupportedError:
                     logger.info("Server does not support STARTTLS, sending without encryption")
 
@@ -431,9 +455,10 @@ def dispatch_email(
 
             # Verify message was queued by checking server response
             # Issue a NOOP after sending to confirm connection is still good
-            code, resp = smtp.noop()
-            if code != 250:
-                logger.warning("Post-send NOOP returned %d: %s", code, resp.decode())
+            if hasattr(smtp, "noop"):
+                code, resp = smtp.noop()
+                if code != 250:
+                    logger.warning("Post-send NOOP returned %d: %s", code, resp.decode())
 
             successful = [r for r in recipients if r not in (refused or {})]
             logger.info("Email sent successfully to %d recipient(s): %s", len(successful), successful)
@@ -819,7 +844,7 @@ def update_email_settings(payload: EmailSettingsPayload, session: Session = Depe
     return serialize_email_settings(settings)
 
 
-@app.post("/actions/email", status_code=status.HTTP_200_OK)
+@app.post("/actions/email", status_code=status.HTTP_202_ACCEPTED)
 def send_email_action(payload: EmailSendPayload, request: Request, session: Session = Depends(get_session)):
     """
     Send an email and verify server acceptance.
@@ -831,17 +856,26 @@ def send_email_action(payload: EmailSendPayload, request: Request, session: Sess
     """
     recipients = normalize_recipients(payload.recipients)
 
+    settings = get_email_settings(session)
+
+    smtp_server = payload.smtp_server or settings.smtp_server
+    smtp_port = payload.smtp_port or settings.smtp_port
+    from_address = payload.from_address or settings.from_address
+    username = payload.username if payload.username is not None else settings.username
+    password = payload.password if payload.password is not None else settings.password
+    use_tls = payload.use_tls if payload.use_tls is not None else settings.use_tls
+
     try:
         result = dispatch_email(
-            smtp_server=payload.smtp_server or "",
-            smtp_port=payload.smtp_port or 587,
-            from_address=payload.from_address or "",
+            smtp_server=smtp_server or "",
+            smtp_port=smtp_port or 587,
+            from_address=from_address or "",
             recipients=recipients,
             subject=payload.subject,
             body=payload.body,
-            username=payload.username,
-            password=payload.password,
-            use_tls=payload.use_tls if payload.use_tls is not None else True
+            username=username,
+            password=password,
+            use_tls=use_tls if use_tls is not None else True
         )
     except ValueError as exc:
         log_action(session, "send_email_failed", "email", None, {"error": str(exc), "recipient_count": len(recipients)}, request)
