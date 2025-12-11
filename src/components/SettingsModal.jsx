@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Download, Upload } from "lucide-react";
+import { Download, Upload, Mail, User, Database, RefreshCw, Save, X } from "lucide-react";
 
 export default function SettingsModal({
   isOpen,
@@ -113,73 +113,68 @@ export default function SettingsModal({
             Settings
           </h2>
           <button onClick={onClose} style={styles.closeButton} aria-label="Close settings">
-            ×
+            <X size={18} />
           </button>
         </div>
 
         {/* Logged In User Section */}
         {loggedInUser !== undefined && allStakeholders && (
           <div style={styles.section}>
-            <h3 style={styles.sectionTitle}>Logged in as</h3>
-            <p style={styles.description}>
-              Select which person you are to customize your view and track your activities.
-            </p>
-            <div style={styles.dataGroup}>
-              <select
-                value={loggedInUser}
-                onChange={(e) => {
-                  setLoggedInUser(e.target.value);
-                  localStorage.setItem('manity_logged_in_user', e.target.value);
-                }}
-                style={styles.select}
-                aria-label="Select logged in user"
-              >
-                {allStakeholders.map(stakeholder => (
-                  <option key={stakeholder.name} value={stakeholder.name}>
-                    {stakeholder.name} ({stakeholder.team})
-                  </option>
-                ))}
-              </select>
+            <div style={styles.sectionHeader}>
+              <User size={18} style={styles.sectionIcon} />
+              <h3 style={styles.sectionTitle}>Identity</h3>
             </div>
+            <p style={styles.description}>
+              Select who you are to personalize your view.
+            </p>
+            <select
+              value={loggedInUser}
+              onChange={(e) => {
+                setLoggedInUser(e.target.value);
+                localStorage.setItem('manity_logged_in_user', e.target.value);
+              }}
+              style={styles.select}
+              aria-label="Select logged in user"
+            >
+              {allStakeholders.map(stakeholder => (
+                <option key={stakeholder.name} value={stakeholder.name}>
+                  {stakeholder.name} ({stakeholder.team})
+                </option>
+              ))}
+            </select>
           </div>
         )}
 
         {/* Import/Export Section */}
         <div style={styles.section}>
-          <h3 style={styles.sectionTitle}>Portfolio data</h3>
+          <div style={styles.sectionHeader}>
+            <Database size={18} style={styles.sectionIcon} />
+            <h3 style={styles.sectionTitle}>Portfolio Data</h3>
+          </div>
           <p style={styles.description}>
-            Export your portfolio to a JSON file or import data from a previously exported file.
+            Export or import portfolio data as JSON.
           </p>
 
-          {/* Export */}
-          <div style={styles.dataGroup}>
-            <label style={styles.label}>Export</label>
-            <div style={styles.exportControls}>
-              <select
-                value={exportTarget}
-                onChange={(e) => setExportTarget(e.target.value)}
-                style={styles.select}
-              >
-                <option value="all">All projects</option>
-                {projects && projects.map(project => (
-                  <option key={project.id} value={project.id}>
-                    {project.name}
-                  </option>
-                ))}
-              </select>
-              <button onClick={handleExport} style={styles.iconButton}>
-                <Download size={16} />
-                Export
-              </button>
-            </div>
-          </div>
-
-          {/* Import */}
-          <div style={styles.dataGroup}>
-            <label style={styles.label}>Import</label>
-            <button onClick={handleImportClick} style={styles.iconButton}>
-              <Upload size={16} />
-              Import from file
+          <div style={styles.compactRow}>
+            <select
+              value={exportTarget}
+              onChange={(e) => setExportTarget(e.target.value)}
+              style={styles.selectCompact}
+            >
+              <option value="all">All projects</option>
+              {projects && projects.map(project => (
+                <option key={project.id} value={project.id}>
+                  {project.name}
+                </option>
+              ))}
+            </select>
+            <button onClick={handleExport} style={styles.iconButtonCompact}>
+              <Download size={14} />
+              Export
+            </button>
+            <button onClick={handleImportClick} style={styles.iconButtonCompact}>
+              <Upload size={14} />
+              Import
             </button>
             <input
               ref={importInputRef}
@@ -194,99 +189,103 @@ export default function SettingsModal({
         {/* Email Settings */}
         {onSaveEmailSettings && (
           <div style={styles.section}>
-            <h3 style={styles.sectionTitle}>Email server</h3>
+            <div style={styles.sectionHeader}>
+              <Mail size={18} style={styles.sectionIcon} />
+              <h3 style={styles.sectionTitle}>Email Server</h3>
+            </div>
             <p style={styles.description}>
-              Configure the SMTP server Momentum should use when sending emails on your behalf.
+              SMTP settings for AI-sent emails. Stored locally in this browser only.
             </p>
 
-            <div style={styles.flexRow}>
-              <div style={{ flex: 2 }}>
-                <label style={styles.label} htmlFor="smtp-server">SMTP server</label>
+            <div style={styles.compactGrid}>
+              <div style={styles.gridItem2}>
+                <label style={styles.labelSmall} htmlFor="smtp-server">Server</label>
                 <input
                   id="smtp-server"
                   type="text"
                   value={emailForm.smtpServer}
                   onChange={(e) => updateEmailField('smtpServer', e.target.value)}
-                  style={styles.input}
+                  style={styles.inputSmall}
                   placeholder="smtp.example.com"
                 />
               </div>
-              <div style={{ flex: 1 }}>
-                <label style={styles.label} htmlFor="smtp-port">Port</label>
+              <div style={styles.gridItem1}>
+                <label style={styles.labelSmall} htmlFor="smtp-port">Port</label>
                 <input
                   id="smtp-port"
                   type="number"
                   value={emailForm.smtpPort}
                   onChange={(e) => updateEmailField('smtpPort', Number(e.target.value) || 0)}
-                  style={styles.input}
+                  style={styles.inputSmall}
                   min={1}
                 />
               </div>
             </div>
 
-            <div style={styles.flexRow}>
-              <div style={{ flex: 1 }}>
-                <label style={styles.label} htmlFor="smtp-username">Username</label>
+            <div style={styles.compactGrid}>
+              <div style={styles.gridItem1}>
+                <label style={styles.labelSmall} htmlFor="smtp-username">Username</label>
                 <input
                   id="smtp-username"
                   type="text"
                   value={emailForm.username}
                   onChange={(e) => updateEmailField('username', e.target.value)}
-                  style={styles.input}
-                  placeholder="bot@example.com"
+                  style={styles.inputSmall}
+                  placeholder="user@example.com"
                 />
               </div>
-              <div style={{ flex: 1 }}>
-                <label style={styles.label} htmlFor="smtp-password">Password</label>
+              <div style={styles.gridItem1}>
+                <label style={styles.labelSmall} htmlFor="smtp-password">Password</label>
                 <input
                   id="smtp-password"
                   type="password"
                   value={emailForm.password}
                   onChange={(e) => updateEmailField('password', e.target.value)}
-                  style={styles.input}
-                  placeholder={emailSettings?.hasPassword ? '••••••••' : 'Enter password'}
+                  style={styles.inputSmall}
+                  placeholder={emailSettings?.hasPassword ? '••••••••' : 'Password'}
                 />
               </div>
             </div>
 
-            <div style={styles.flexRow}>
-              <div style={{ flex: 1 }}>
-                <label style={styles.label} htmlFor="smtp-from">From address</label>
+            <div style={styles.compactGrid}>
+              <div style={styles.gridItem2}>
+                <label style={styles.labelSmall} htmlFor="smtp-from">From address</label>
                 <input
                   id="smtp-from"
                   type="email"
                   value={emailForm.fromAddress}
                   onChange={(e) => updateEmailField('fromAddress', e.target.value)}
-                  style={styles.input}
+                  style={styles.inputSmall}
                   placeholder="alerts@example.com"
                 />
               </div>
-              <div style={{ ...styles.toggleRow, flex: 1 }}>
-                <label style={styles.label} htmlFor="smtp-tls">Connection security</label>
-                <div style={styles.toggleGroup}>
+              <div style={styles.gridItem1}>
+                <label style={styles.labelSmall}>&nbsp;</label>
+                <label style={styles.checkboxLabel}>
                   <input
-                    id="smtp-tls"
                     type="checkbox"
                     checked={emailForm.useTLS}
                     onChange={(e) => updateEmailField('useTLS', e.target.checked)}
+                    style={styles.checkbox}
                   />
-                  <span>Use STARTTLS</span>
-                </div>
+                  STARTTLS
+                </label>
               </div>
             </div>
 
-            <div style={styles.actions}>
-              <button onClick={handleSaveEmail} style={styles.primaryButton} disabled={isSavingEmail}>
-                {isSavingEmail ? 'Saving…' : 'Save email settings'}
+            <div style={styles.actionsRow}>
+              <button onClick={handleSaveEmail} style={styles.saveButton} disabled={isSavingEmail}>
+                <Save size={14} />
+                {isSavingEmail ? 'Saving…' : 'Save'}
               </button>
               {onRefreshEmailSettings && (
-                <button onClick={handleRefreshEmail} style={styles.secondaryButton}>
-                  Refresh from server
+                <button onClick={handleRefreshEmail} style={styles.refreshButton} title="Reload from browser storage">
+                  <RefreshCw size={14} />
                 </button>
               )}
               {emailStatus && <span style={styles.statusText}>{emailStatus}</span>}
             </div>
-            <p style={styles.helperText}>Password is optional; leave blank to keep the existing secret.</p>
+            <p style={styles.helperText}>Settings are stored in this browser only - not shared across devices.</p>
           </div>
         )}
       </div>
@@ -298,22 +297,21 @@ const styles = {
   overlay: {
     position: "fixed",
     inset: 0,
-    backgroundColor: "rgba(0, 0, 0, 0.35)",
+    backgroundColor: "rgba(0, 0, 0, 0.4)",
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
     padding: "24px",
-    zIndex: 20,
+    zIndex: 1000,
   },
   modal: {
-    width: "min(580px, 100%)",
+    width: "min(480px, 100%)",
     maxHeight: "90vh",
     overflow: "auto",
     backgroundColor: "#ffffff",
-    borderRadius: 16,
-    padding: "24px",
-    boxShadow: "0 12px 30px rgba(0, 0, 0, 0.12)",
-    border: "1px solid #e8e3d8",
+    borderRadius: 12,
+    padding: "20px",
+    boxShadow: "0 16px 40px rgba(0, 0, 0, 0.15)",
     fontFamily: "'Inter', sans-serif",
     color: "#3a3631",
   },
@@ -321,149 +319,188 @@ const styles = {
     display: "flex",
     alignItems: "center",
     justifyContent: "space-between",
-    marginBottom: 20,
+    marginBottom: 16,
+    paddingBottom: 12,
+    borderBottom: "1px solid #e8e3d8",
   },
   title: {
     margin: 0,
-    fontSize: "20px",
+    fontSize: "18px",
     fontWeight: 600,
-    letterSpacing: "-0.25px",
+    letterSpacing: "-0.3px",
+    color: "#3a3631",
   },
   closeButton: {
+    width: 28,
+    height: 28,
     border: "none",
     background: "transparent",
-    fontSize: "20px",
     cursor: "pointer",
     color: "#6b6554",
-    lineHeight: 1,
-    padding: 6,
-    borderRadius: 8,
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    borderRadius: 6,
+    transition: "background-color 0.15s ease",
   },
   section: {
-    marginBottom: 20,
+    marginBottom: 16,
+    padding: "12px",
+    backgroundColor: "#faf8f3",
+    borderRadius: 8,
+  },
+  sectionHeader: {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 6,
+  },
+  sectionIcon: {
+    color: "#8b6f47",
   },
   sectionTitle: {
-    margin: "0 0 8px 0",
-    fontSize: "16px",
+    margin: 0,
+    fontSize: "14px",
     fontWeight: 600,
     letterSpacing: "-0.2px",
     color: "#3a3631",
   },
-  divider: {
-    height: 1,
-    backgroundColor: "#e8e3d8",
-    margin: "20px 0",
-  },
   description: {
-    fontSize: "14px",
+    fontSize: "12px",
     color: "#6b6554",
-    margin: "0 0 12px 0",
-    lineHeight: 1.6,
-  },
-  input: {
-    width: "100%",
-    padding: "10px 12px",
-    borderRadius: 10,
-    border: "1px solid #e8e3d8",
-    fontSize: "14px",
-    marginBottom: 12,
-    backgroundColor: "#faf8f3",
-    boxSizing: "border-box",
+    margin: "0 0 10px 0",
+    lineHeight: 1.5,
   },
   select: {
-    flex: 1,
-    padding: "10px 12px",
-    borderRadius: 10,
+    width: "100%",
+    padding: "8px 10px",
+    borderRadius: 6,
     border: "1px solid #e8e3d8",
-    fontSize: "14px",
-    backgroundColor: "#faf8f3",
+    fontSize: "13px",
+    backgroundColor: "#ffffff",
     cursor: "pointer",
+    color: "#3a3631",
   },
-  actions: {
+  selectCompact: {
+    flex: 1,
+    padding: "6px 8px",
+    borderRadius: 6,
+    border: "1px solid #e8e3d8",
+    fontSize: "12px",
+    backgroundColor: "#ffffff",
+    cursor: "pointer",
+    color: "#3a3631",
+  },
+  compactRow: {
     display: "flex",
-    gap: 10,
-    flexWrap: "wrap",
+    gap: 8,
+    alignItems: "center",
   },
-  primaryButton: {
-    padding: "10px 16px",
-    borderRadius: 10,
+  iconButtonCompact: {
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    padding: "6px 10px",
+    borderRadius: 6,
+    border: "1px solid #e8e3d8",
+    backgroundColor: "#ffffff",
+    color: "#6b6554",
+    cursor: "pointer",
+    fontWeight: 500,
+    fontSize: "12px",
+    transition: "all 0.15s ease",
+  },
+  hiddenFileInput: {
+    display: "none",
+  },
+  compactGrid: {
+    display: "flex",
+    gap: 8,
+    marginBottom: 8,
+  },
+  gridItem1: {
+    flex: 1,
+  },
+  gridItem2: {
+    flex: 2,
+  },
+  labelSmall: {
+    display: "block",
+    fontSize: "11px",
+    fontWeight: 500,
+    color: "#6b6554",
+    marginBottom: 4,
+    textTransform: "uppercase",
+    letterSpacing: "0.3px",
+  },
+  inputSmall: {
+    width: "100%",
+    padding: "7px 9px",
+    borderRadius: 6,
+    border: "1px solid #e8e3d8",
+    fontSize: "13px",
+    backgroundColor: "#ffffff",
+    boxSizing: "border-box",
+    color: "#3a3631",
+  },
+  checkboxLabel: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "7px 9px",
+    borderRadius: 6,
+    border: "1px solid #e8e3d8",
+    fontSize: "12px",
+    backgroundColor: "#ffffff",
+    cursor: "pointer",
+    color: "#6b6554",
+  },
+  checkbox: {
+    margin: 0,
+  },
+  actionsRow: {
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+    marginTop: 12,
+  },
+  saveButton: {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    padding: "7px 14px",
+    borderRadius: 6,
     border: "none",
     background: "linear-gradient(135deg, #7a9b76 0%, #8b6f47 100%)",
     color: "#fff",
     cursor: "pointer",
     fontWeight: 600,
-    letterSpacing: "0.2px",
+    fontSize: "12px",
+    transition: "opacity 0.15s ease",
   },
-  secondaryButton: {
-    padding: "10px 16px",
-    borderRadius: 10,
+  refreshButton: {
+    width: 28,
+    height: 28,
+    padding: 0,
+    borderRadius: 6,
     border: "1px solid #e8e3d8",
-    backgroundColor: "#fff",
+    backgroundColor: "#ffffff",
     color: "#6b6554",
     cursor: "pointer",
-    fontWeight: 500,
-  },
-  dataGroup: {
-    marginBottom: 16,
-  },
-  label: {
-    display: "block",
-    fontSize: "14px",
-    fontWeight: 500,
-    color: "#3a3631",
-    marginBottom: 8,
-  },
-  exportControls: {
-    display: "flex",
-    gap: 10,
-    alignItems: "center",
-  },
-  iconButton: {
     display: "flex",
     alignItems: "center",
-    gap: 8,
-    padding: "10px 16px",
-    borderRadius: 10,
-    border: "1px solid #e8e3d8",
-    backgroundColor: "#fff",
-    color: "#6b6554",
-    cursor: "pointer",
-    fontWeight: 500,
-    fontSize: "14px",
-  },
-  hiddenFileInput: {
-    display: "none",
-  },
-  flexRow: {
-    display: "flex",
-    gap: 12,
-    alignItems: "flex-end",
-    marginBottom: 12,
-    flexWrap: "wrap"
-  },
-  toggleRow: {
-    display: "flex",
-    flexDirection: "column",
-    justifyContent: "flex-end",
-    gap: 6
-  },
-  toggleGroup: {
-    display: "flex",
-    gap: 8,
-    alignItems: "center",
-    padding: "10px 12px",
-    border: "1px solid #e8e3d8",
-    borderRadius: 10,
-    backgroundColor: "#faf8f3",
+    justifyContent: "center",
+    transition: "all 0.15s ease",
   },
   statusText: {
-    fontSize: "13px",
-    color: "#6b6554",
-    alignSelf: "center",
+    fontSize: "12px",
+    color: "#7a9b76",
+    fontWeight: 500,
   },
   helperText: {
-    fontSize: "13px",
-    color: "#6b6554",
+    fontSize: "11px",
+    color: "#8b6f47",
     marginTop: 8,
+    fontStyle: "italic",
   }
 };

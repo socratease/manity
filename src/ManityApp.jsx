@@ -104,6 +104,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [globalSearchSelectedIndex, setGlobalSearchSelectedIndex] = useState(0);
   const globalSearchInputRef = useRef(null);
 
+  // Persistent portfolio filter (stays after search modal closes)
+  const [portfolioFilter, setPortfolioFilter] = useState('');
+
   // Momentum highlight state - tracks recently updated projects from AI
   const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState(new Set());
 
@@ -514,8 +517,13 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       }
 
       // Close search with ESC (when search is open)
+      // Keep the portfolio filter active when closing
       if (e.key === 'Escape' && globalSearchOpen) {
         e.preventDefault();
+        // Persist the current search query as the portfolio filter (if on portfolio view)
+        if (globalSearchQuery.trim() && activeView === 'overview' && !viewingProjectId) {
+          setPortfolioFilter(globalSearchQuery);
+        }
         setGlobalSearchOpen(false);
         setGlobalSearchQuery('');
       }
@@ -2277,12 +2285,15 @@ Write a professional executive summary that highlights the project's current sta
   // Show all projects, but organize by who is on them
   const visibleProjects = projects.filter(project => project.status !== 'deleted');
 
-  // Filter projects by search query when search is open on portfolio page
+  // Filter projects by search query (when search is open) or portfolio filter (persistent)
   const searchFilterProjects = (projectList) => {
-    if (!globalSearchOpen || !globalSearchQuery.trim() || activeView !== 'overview' || viewingProjectId) {
+    // Determine which query to use: live search or persistent filter
+    const activeQuery = globalSearchOpen ? globalSearchQuery : portfolioFilter;
+
+    if (!activeQuery.trim() || activeView !== 'overview' || viewingProjectId) {
       return projectList;
     }
-    const lowerQuery = globalSearchQuery.toLowerCase();
+    const lowerQuery = activeQuery.toLowerCase();
     return projectList.filter(project => {
       // Match project name
       if (project.name.toLowerCase().includes(lowerQuery)) return true;
@@ -2296,6 +2307,11 @@ Write a professional executive summary that highlights the project's current sta
       if (project.stakeholders.some(s => s.name.toLowerCase().includes(lowerQuery))) return true;
       return false;
     });
+  };
+
+  // Clear the persistent portfolio filter
+  const clearPortfolioFilter = () => {
+    setPortfolioFilter('');
   };
 
   // Projects the logged-in user is on
@@ -3120,6 +3136,10 @@ Keep tool calls granular (one discrete change per action), explain each action c
         <div
           style={styles.globalSearchOverlay}
           onClick={() => {
+            // Persist filter when on portfolio view
+            if (globalSearchQuery.trim() && activeView === 'overview' && !viewingProjectId) {
+              setPortfolioFilter(globalSearchQuery);
+            }
             setGlobalSearchOpen(false);
             setGlobalSearchQuery('');
           }}
@@ -3153,6 +3173,10 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     handleGlobalSearchSelect(results[globalSearchSelectedIndex]);
                   } else if (e.key === 'Escape') {
                     e.preventDefault();
+                    // Persist filter when on portfolio view
+                    if (globalSearchQuery.trim() && activeView === 'overview' && !viewingProjectId) {
+                      setPortfolioFilter(globalSearchQuery);
+                    }
                     setGlobalSearchOpen(false);
                     setGlobalSearchQuery('');
                   }
@@ -3161,7 +3185,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 style={styles.globalSearchInput}
                 autoFocus
               />
-              <span style={styles.globalSearchEscHint}>ESC to close</span>
+              <span style={styles.globalSearchEscHint}>ESC to close{activeView === 'overview' && !viewingProjectId ? ' & keep filter' : ''}</span>
             </div>
 
             {globalSearchQuery && (
@@ -3631,18 +3655,37 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
       <main style={styles.main}>
         <div style={styles.topBar}>
-          <button
-            onClick={() => {
-              setGlobalSearchOpen(true);
-              setGlobalSearchQuery('');
-              setGlobalSearchSelectedIndex(0);
-            }}
-            style={styles.globalSearchTrigger}
-          >
-            <Search size={16} />
-            <span style={styles.globalSearchTriggerText}>Search...</span>
-            <span style={styles.globalSearchShortcut}>⌘K</span>
-          </button>
+          <div style={styles.topBarLeft}>
+            <button
+              onClick={() => {
+                setGlobalSearchOpen(true);
+                setGlobalSearchQuery(portfolioFilter);
+                setGlobalSearchSelectedIndex(0);
+              }}
+              style={styles.searchIconTrigger}
+              title="Search (Ctrl+K)"
+            >
+              <Search size={16} />
+              <span style={styles.searchHintText}>Ctrl+K</span>
+            </button>
+
+            {/* Active portfolio filter indicator */}
+            {portfolioFilter && activeView === 'overview' && !viewingProjectId && (
+              <div style={styles.activeFilterBadge}>
+                <span style={styles.activeFilterText}>
+                  Filtered: "{portfolioFilter}"
+                </span>
+                <button
+                  onClick={clearPortfolioFilter}
+                  style={styles.clearFilterButton}
+                  title="Clear filter"
+                  aria-label="Clear filter"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+            )}
+          </div>
           <div style={styles.topBarRight}>
             {activeView === 'thrust' && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', marginRight: '12px' }}>
@@ -4221,19 +4264,24 @@ Keep tool calls granular (one discrete change per action), explain each action c
                               
                               {/* Add Subtask */}
                               {addingSubtaskTo === task.id ? (
-                                <div style={styles.addSubtaskBox}>
+                                <div style={styles.inlineAddSubtask}>
                                   <input
                                     type="text"
                                     value={newSubtaskTitle}
                                     onChange={(e) => setNewSubtaskTitle(e.target.value)}
                                     onKeyDown={(e) => {
-                                      if (e.ctrlKey && e.key === 'Enter' && newSubtaskTitle.trim()) {
+                                      if (e.key === 'Enter' && newSubtaskTitle.trim()) {
                                         e.preventDefault();
                                         handleAddSubtask(task.id);
+                                      } else if (e.key === 'Escape') {
+                                        e.preventDefault();
+                                        setAddingSubtaskTo(null);
+                                        setNewSubtaskTitle('');
+                                        setNewSubtaskDueDate('');
                                       }
                                     }}
-                                    placeholder="New subtask title..."
-                                    style={styles.addSubtaskInput}
+                                    placeholder="Subtask title..."
+                                    style={styles.inlineAddInputSmall}
                                     autoFocus
                                   />
                                   <input
@@ -4241,56 +4289,49 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                     value={newSubtaskDueDate}
                                     onChange={(e) => setNewSubtaskDueDate(e.target.value)}
                                     onKeyDown={(e) => {
-                                      if (e.ctrlKey && e.key === 'Enter' && newSubtaskTitle.trim()) {
+                                      if (e.key === 'Enter' && newSubtaskTitle.trim()) {
                                         e.preventDefault();
                                         handleAddSubtask(task.id);
-                                      }
-                                    }}
-                                    style={styles.addSubtaskInput}
-                                    placeholder="Due date"
-                                  />
-                                  {renderCtrlEnterHint('add subtask')}
-                                  <div style={styles.addSubtaskActions}>
-                                    <button
-                                      onClick={() => handleAddSubtask(task.id)}
-                                      disabled={!newSubtaskTitle.trim()}
-                                      style={{
-                                        ...styles.addSubtaskSubmit,
-                                        opacity: newSubtaskTitle.trim() ? 1 : 0.5,
-                                        cursor: newSubtaskTitle.trim() ? 'pointer' : 'not-allowed'
-                                      }}
-                                    >
-                                      Add
-                                    </button>
-                                    <button
-                                      onClick={() => {
+                                      } else if (e.key === 'Escape') {
+                                        e.preventDefault();
                                         setAddingSubtaskTo(null);
                                         setNewSubtaskTitle('');
                                         setNewSubtaskDueDate('');
-                                      }}
-                                      style={styles.addSubtaskCancel}
-                                    >
-                                      Cancel
-                                    </button>
-                                  </div>
+                                      }
+                                    }}
+                                    style={styles.inlineAddDateInputSmall}
+                                  />
+                                  <button
+                                    onClick={() => handleAddSubtask(task.id)}
+                                    disabled={!newSubtaskTitle.trim()}
+                                    style={{
+                                      ...styles.inlineAddConfirmSmall,
+                                      opacity: newSubtaskTitle.trim() ? 1 : 0.4,
+                                      cursor: newSubtaskTitle.trim() ? 'pointer' : 'not-allowed'
+                                    }}
+                                    title="Add subtask (Enter)"
+                                  >
+                                    <Check size={14} />
+                                  </button>
+                                  <button
+                                    onClick={() => {
+                                      setAddingSubtaskTo(null);
+                                      setNewSubtaskTitle('');
+                                      setNewSubtaskDueDate('');
+                                    }}
+                                    style={styles.inlineAddCancelSmall}
+                                    title="Cancel (Esc)"
+                                  >
+                                    <X size={14} />
+                                  </button>
                                 </div>
                               ) : (
                                 <button
                                   onClick={() => setAddingSubtaskTo(task.id)}
-                                  style={styles.addSubtaskButton}
-                                  onMouseEnter={(e) => {
-                                    e.currentTarget.style.backgroundColor = 'var(--sage)' + '10';
-                                    e.currentTarget.style.borderColor = 'var(--sage)';
-                                    e.currentTarget.style.color = 'var(--sage)';
-                                  }}
-                                  onMouseLeave={(e) => {
-                                    e.currentTarget.style.backgroundColor = 'transparent';
-                                    e.currentTarget.style.borderColor = 'var(--cloud)';
-                                    e.currentTarget.style.color = 'var(--stone)';
-                                  }}
+                                  style={styles.minimalAddButtonSmall}
+                                  title="Add subtask"
                                 >
                                   <Plus size={14} />
-                                  Add subtask
                                 </button>
                               )}
                             </div>
@@ -4301,19 +4342,24 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     
                     {/* Add New Task */}
                     {addingNewTask ? (
-                      <div style={styles.addTaskBox}>
+                      <div style={styles.inlineAddTask}>
                         <input
                           type="text"
                           value={newTaskTitle}
                           onChange={(e) => setNewTaskTitle(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.ctrlKey && e.key === 'Enter' && newTaskTitle.trim()) {
+                            if (e.key === 'Enter' && newTaskTitle.trim()) {
                               e.preventDefault();
                               handleAddTask();
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
+                              setAddingNewTask(false);
+                              setNewTaskTitle('');
+                              setNewTaskDueDate('');
                             }
                           }}
-                          placeholder="New task title..."
-                          style={styles.addTaskInput}
+                          placeholder="Task title..."
+                          style={styles.inlineAddInput}
                           autoFocus
                         />
                         <input
@@ -4321,56 +4367,49 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           value={newTaskDueDate}
                           onChange={(e) => setNewTaskDueDate(e.target.value)}
                           onKeyDown={(e) => {
-                            if (e.ctrlKey && e.key === 'Enter' && newTaskTitle.trim()) {
+                            if (e.key === 'Enter' && newTaskTitle.trim()) {
                               e.preventDefault();
                               handleAddTask();
-                            }
-                          }}
-                          style={styles.addTaskInput}
-                          placeholder="Due date"
-                        />
-                        {renderCtrlEnterHint('add task')}
-                        <div style={styles.addTaskActions}>
-                          <button
-                            onClick={handleAddTask}
-                            disabled={!newTaskTitle.trim()}
-                            style={{
-                              ...styles.addTaskSubmit,
-                              opacity: newTaskTitle.trim() ? 1 : 0.5,
-                              cursor: newTaskTitle.trim() ? 'pointer' : 'not-allowed'
-                            }}
-                          >
-                            Add Task
-                          </button>
-                          <button
-                            onClick={() => {
+                            } else if (e.key === 'Escape') {
+                              e.preventDefault();
                               setAddingNewTask(false);
                               setNewTaskTitle('');
                               setNewTaskDueDate('');
-                            }}
-                            style={styles.addTaskCancel}
-                          >
-                            Cancel
-                          </button>
-                        </div>
+                            }
+                          }}
+                          style={styles.inlineAddDateInput}
+                        />
+                        <button
+                          onClick={handleAddTask}
+                          disabled={!newTaskTitle.trim()}
+                          style={{
+                            ...styles.inlineAddConfirm,
+                            opacity: newTaskTitle.trim() ? 1 : 0.4,
+                            cursor: newTaskTitle.trim() ? 'pointer' : 'not-allowed'
+                          }}
+                          title="Add task (Enter)"
+                        >
+                          <Check size={16} />
+                        </button>
+                        <button
+                          onClick={() => {
+                            setAddingNewTask(false);
+                            setNewTaskTitle('');
+                            setNewTaskDueDate('');
+                          }}
+                          style={styles.inlineAddCancel}
+                          title="Cancel (Esc)"
+                        >
+                          <X size={16} />
+                        </button>
                       </div>
                     ) : (
                       <button
                         onClick={() => setAddingNewTask(true)}
-                        style={styles.addTaskButton}
-                        onMouseEnter={(e) => {
-                          e.currentTarget.style.backgroundColor = 'var(--earth)' + '10';
-                          e.currentTarget.style.borderColor = 'var(--earth)';
-                          e.currentTarget.style.color = 'var(--earth)';
-                        }}
-                        onMouseLeave={(e) => {
-                          e.currentTarget.style.backgroundColor = 'transparent';
-                          e.currentTarget.style.borderColor = 'var(--cloud)';
-                          e.currentTarget.style.color = 'var(--stone)';
-                        }}
+                        style={styles.minimalAddButton}
+                        title="Add new task"
                       >
                         <Plus size={16} />
-                        Add New Task
                       </button>
                     )}
                   </div>
@@ -5872,43 +5911,71 @@ const styles = {
     marginBottom: '24px',
   },
 
+  topBarLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+  },
+
   topBarRight: {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
   },
 
-  // Global Search Styles
-  globalSearchTrigger: {
+  // Subtle search trigger
+  searchIconTrigger: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 10px',
+    border: 'none',
+    borderRadius: '6px',
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    color: 'var(--stone)',
+    fontSize: '12px',
+    fontFamily: "'Inter', sans-serif",
+    transition: 'all 0.2s ease',
+    opacity: 0.6,
+  },
+
+  searchHintText: {
+    fontSize: '11px',
+    color: 'var(--stone)',
+    fontWeight: 500,
+    opacity: 0.8,
+  },
+
+  // Active filter badge
+  activeFilterBadge: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    padding: '8px 16px',
-    border: '1px solid var(--cloud)',
-    borderRadius: '8px',
-    backgroundColor: '#FFFFFF',
-    cursor: 'pointer',
-    color: 'var(--stone)',
-    fontSize: '14px',
+    padding: '6px 10px 6px 12px',
+    backgroundColor: 'var(--sage)15',
+    border: '1px solid var(--sage)40',
+    borderRadius: '20px',
+    fontSize: '13px',
     fontFamily: "'Inter', sans-serif",
-    transition: 'all 0.2s ease',
-    minWidth: '200px',
   },
 
-  globalSearchTriggerText: {
-    flex: 1,
-    textAlign: 'left',
-    color: 'var(--stone)',
-    opacity: 0.7,
-  },
-
-  globalSearchShortcut: {
-    fontSize: '11px',
-    padding: '2px 6px',
-    backgroundColor: 'var(--cream)',
-    borderRadius: '4px',
-    color: 'var(--stone)',
+  activeFilterText: {
+    color: 'var(--charcoal)',
     fontWeight: 500,
+  },
+
+  clearFilterButton: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: '2px',
+    border: 'none',
+    borderRadius: '50%',
+    backgroundColor: 'var(--stone)20',
+    color: 'var(--stone)',
+    cursor: 'pointer',
+    transition: 'all 0.15s ease',
   },
 
   globalSearchOverlay: {
@@ -7892,73 +7959,167 @@ const styles = {
     transition: 'all 0.2s ease',
   },
 
-  addTaskButton: {
-    width: '100%',
-    padding: '12px 16px',
-    border: '2px dashed var(--cloud)',
-    borderRadius: '8px',
+  // Minimal add button (icon only)
+  minimalAddButton: {
+    width: '32px',
+    height: '32px',
+    padding: '0',
+    border: '1px dashed var(--cloud)',
+    borderRadius: '6px',
     backgroundColor: 'transparent',
     color: 'var(--stone)',
-    fontSize: '14px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '600',
     cursor: 'pointer',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '8px',
     transition: 'all 0.2s ease',
-    marginTop: '16px',
+    marginTop: '8px',
+    opacity: 0.6,
   },
 
-  addTaskBox: {
-    backgroundColor: '#FFFFFF',
-    padding: '16px',
-    borderRadius: '8px',
-    marginTop: '16px',
-    border: '2px solid var(--earth)',
+  minimalAddButtonSmall: {
+    width: '26px',
+    height: '26px',
+    padding: '0',
+    border: '1px dashed var(--cloud)',
+    borderRadius: '4px',
+    backgroundColor: 'transparent',
+    color: 'var(--stone)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.2s ease',
+    marginTop: '4px',
+    opacity: 0.5,
   },
 
-  addTaskInput: {
-    width: '100%',
-    padding: '10px',
-    border: '1px solid var(--cloud)',
+  // Inline add task form
+  inlineAddTask: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    marginTop: '8px',
+    padding: '8px',
+    backgroundColor: 'var(--cream)',
     borderRadius: '6px',
+  },
+
+  inlineAddSubtask: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    marginTop: '4px',
+    padding: '6px',
+    backgroundColor: '#FFFFFF',
+    borderRadius: '4px',
+    border: '1px solid var(--cloud)',
+  },
+
+  inlineAddInput: {
+    flex: 1,
+    padding: '8px 10px',
+    border: '1px solid var(--cloud)',
+    borderRadius: '4px',
     fontSize: '14px',
     fontFamily: "'Inter', sans-serif",
     color: 'var(--charcoal)',
-    marginBottom: '10px',
+    backgroundColor: '#FFFFFF',
+    minWidth: '120px',
   },
 
-  addTaskActions: {
-    display: 'flex',
-    gap: '10px',
-  },
-
-  addTaskSubmit: {
-    padding: '8px 16px',
-    border: 'none',
-    borderRadius: '6px',
-    background: 'linear-gradient(135deg, var(--earth) 0%, var(--amber) 100%)',
-    color: '#FFFFFF',
+  inlineAddInputSmall: {
+    flex: 1,
+    padding: '6px 8px',
+    border: '1px solid var(--cloud)',
+    borderRadius: '4px',
     fontSize: '13px',
     fontFamily: "'Inter', sans-serif",
-    fontWeight: '600',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
+    color: 'var(--charcoal)',
+    backgroundColor: 'var(--cream)',
+    minWidth: '100px',
   },
 
-  addTaskCancel: {
-    padding: '8px 16px',
+  inlineAddDateInput: {
+    padding: '8px 10px',
     border: '1px solid var(--cloud)',
-    borderRadius: '6px',
+    borderRadius: '4px',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    backgroundColor: '#FFFFFF',
+    width: '130px',
+  },
+
+  inlineAddDateInputSmall: {
+    padding: '6px 8px',
+    border: '1px solid var(--cloud)',
+    borderRadius: '4px',
+    fontSize: '12px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    backgroundColor: 'var(--cream)',
+    width: '115px',
+  },
+
+  inlineAddConfirm: {
+    width: '32px',
+    height: '32px',
+    padding: '0',
+    border: 'none',
+    borderRadius: '4px',
+    backgroundColor: 'var(--sage)',
+    color: '#FFFFFF',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.15s ease',
+  },
+
+  inlineAddConfirmSmall: {
+    width: '26px',
+    height: '26px',
+    padding: '0',
+    border: 'none',
+    borderRadius: '4px',
+    backgroundColor: 'var(--sage)',
+    color: '#FFFFFF',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.15s ease',
+  },
+
+  inlineAddCancel: {
+    width: '32px',
+    height: '32px',
+    padding: '0',
+    border: '1px solid var(--cloud)',
+    borderRadius: '4px',
     backgroundColor: '#FFFFFF',
     color: 'var(--stone)',
-    fontSize: '13px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '600',
     cursor: 'pointer',
-    transition: 'all 0.2s ease',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.15s ease',
+  },
+
+  inlineAddCancelSmall: {
+    width: '26px',
+    height: '26px',
+    padding: '0',
+    border: '1px solid var(--cloud)',
+    borderRadius: '4px',
+    backgroundColor: '#FFFFFF',
+    color: 'var(--stone)',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.15s ease',
   },
 
   taskContextBadge: {
