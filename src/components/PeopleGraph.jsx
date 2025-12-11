@@ -13,6 +13,7 @@ import {
   Clock,
   LogIn
 } from 'lucide-react';
+import { HelpTooltip } from './ui';
 
 const SAMPLE_PEOPLE = [
   { id: 'p1', name: 'Sarah Chen', team: 'Engineering', email: 'sarah@company.com' },
@@ -1347,20 +1348,14 @@ const PeopleGraph = ({
       </div>
 
       {nodes.length > 0 && !selectedNode && (
-        <div style={styles.instructionsHint}>
-          <div style={styles.instructionItem}>
-            <span style={styles.instructionIcon}>🖱️</span>
-            <span>Drag nodes to rearrange</span>
-          </div>
-          <div style={styles.instructionItem}>
-            <span style={styles.instructionIcon}>👆</span>
-            <span>Click for details</span>
-          </div>
-          <div style={styles.instructionItem}>
-            <span style={styles.instructionIcon}>✨</span>
-            <span>Hover to see connections</span>
-          </div>
-        </div>
+        <HelpTooltip
+          tips={[
+            { icon: '🖱️', text: 'Drag nodes to rearrange' },
+            { icon: '👆', text: 'Click for details' },
+            { icon: '✨', text: 'Hover to see connections' },
+          ]}
+          style={{ position: 'absolute', top: '20px', right: '20px' }}
+        />
       )}
 
       {nodes.length === 0 && (
