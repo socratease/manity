@@ -12,20 +12,43 @@ const resolveUrl = (path) => {
 // Local storage key for email settings
 const EMAIL_SETTINGS_KEY = 'manity_email_settings';
 
-// Load email settings from localStorage
+// Clean up any stored credentials from localStorage (migration)
+const cleanupStoredCredentials = () => {
+  try {
+    const stored = localStorage.getItem(EMAIL_SETTINGS_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      // Remove credentials if they exist
+      if (parsed.username || parsed.password) {
+        const cleaned = {
+          smtpServer: parsed.smtpServer || '',
+          smtpPort: parsed.smtpPort || 25,
+          fromAddress: parsed.fromAddress || '',
+          useTLS: parsed.useTLS ?? false
+        };
+        localStorage.setItem(EMAIL_SETTINGS_KEY, JSON.stringify(cleaned));
+        console.log('Cleaned up stored email credentials from localStorage');
+      }
+    }
+  } catch (e) {
+    console.error('Failed to clean up stored credentials', e);
+  }
+};
+
+// Load email settings from localStorage (no credentials)
 const loadEmailSettingsFromStorage = () => {
+  // Clean up any legacy stored credentials first
+  cleanupStoredCredentials();
+
   try {
     const stored = localStorage.getItem(EMAIL_SETTINGS_KEY);
     if (stored) {
       const parsed = JSON.parse(stored);
       return {
         smtpServer: parsed.smtpServer || '',
-        smtpPort: parsed.smtpPort || 587,
-        username: parsed.username || '',
-        password: parsed.password || '',
+        smtpPort: parsed.smtpPort || 25,
         fromAddress: parsed.fromAddress || '',
-        useTLS: parsed.useTLS ?? true,
-        hasPassword: !!parsed.password
+        useTLS: parsed.useTLS ?? false
       };
     }
   } catch (e) {
@@ -33,12 +56,9 @@ const loadEmailSettingsFromStorage = () => {
   }
   return {
     smtpServer: '',
-    smtpPort: 587,
-    username: '',
-    password: '',
+    smtpPort: 25,
     fromAddress: '',
-    useTLS: true,
-    hasPassword: false
+    useTLS: false
   };
 };
 
@@ -147,12 +167,9 @@ export const PortfolioProvider = ({ children }) => {
   const saveEmailSettings = useCallback((settings) => {
     const toSave = {
       smtpServer: settings.smtpServer || '',
-      smtpPort: settings.smtpPort || 587,
-      username: settings.username || '',
-      // Only update password if provided, otherwise keep existing
-      password: settings.password || emailSettings.password || '',
+      smtpPort: settings.smtpPort || 25,
       fromAddress: settings.fromAddress || '',
-      useTLS: settings.useTLS ?? true
+      useTLS: settings.useTLS ?? false
     };
 
     try {
@@ -162,17 +179,13 @@ export const PortfolioProvider = ({ children }) => {
       throw new Error('Unable to save email settings');
     }
 
-    const updated = {
-      ...toSave,
-      hasPassword: !!toSave.password
-    };
-    setEmailSettings(updated);
-    return updated;
-  }, [emailSettings.password]);
+    setEmailSettings(toSave);
+    return toSave;
+  }, []);
 
   const sendEmail = useCallback(async ({ recipients, subject, body }) => {
     // Include email settings from localStorage with each request
-    // (since settings are now browser-local, not stored on server)
+    // Emails are sent anonymously without credentials
     const settings = loadEmailSettingsFromStorage();
 
     if (!settings.smtpServer) {
@@ -185,11 +198,9 @@ export const PortfolioProvider = ({ children }) => {
         recipients,
         subject,
         body,
-        // Pass SMTP settings with request
+        // Pass SMTP settings with request (no credentials - anonymous sending)
         smtp_server: settings.smtpServer,
         smtp_port: settings.smtpPort,
-        username: settings.username,
-        password: settings.password,
         from_address: settings.fromAddress,
         use_tls: settings.useTLS
       })

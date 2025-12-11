@@ -29,9 +29,23 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
   ], [tasks]);
 
   // Calculate timeline range based on provided dates or zoom
+  // Clamp to +/- 3 years from reference date to prevent extreme timeline extension
   const getTimelineRange = useCallback(() => {
     const now = startDate ? new Date(startDate) : new Date('2025-01-01');
-    const rangeStart = new Date(now);
+    const referenceDate = new Date();
+
+    // Calculate max bounds: +/- 3 years from today
+    const maxYearsRange = 3;
+    const minDate = new Date(referenceDate);
+    minDate.setFullYear(minDate.getFullYear() - maxYearsRange);
+    const maxDate = new Date(referenceDate);
+    maxDate.setFullYear(maxDate.getFullYear() + maxYearsRange);
+
+    // Clamp start date
+    let rangeStart = new Date(now);
+    if (rangeStart < minDate) rangeStart = new Date(minDate);
+    if (rangeStart > maxDate) rangeStart = new Date(maxDate);
+
     let rangeEnd;
 
     if (endDate) {
@@ -40,6 +54,10 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
       rangeEnd = new Date(rangeStart);
       rangeEnd.setMonth(rangeEnd.getMonth() + timelineZoom);
     }
+
+    // Clamp end date
+    if (rangeEnd < minDate) rangeEnd = new Date(minDate);
+    if (rangeEnd > maxDate) rangeEnd = new Date(maxDate);
 
     if (rangeEnd <= rangeStart) {
       rangeEnd = new Date(rangeStart);

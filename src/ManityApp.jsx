@@ -103,6 +103,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [globalSearchQuery, setGlobalSearchQuery] = useState('');
   const [globalSearchSelectedIndex, setGlobalSearchSelectedIndex] = useState(0);
   const globalSearchInputRef = useRef(null);
+  const globalSearchResultsRef = useRef(null);
 
   // Persistent portfolio filter (stays after search modal closes)
   const [portfolioFilter, setPortfolioFilter] = useState('');
@@ -539,6 +540,14 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       globalSearchInputRef.current.focus();
     }
   }, [globalSearchOpen]);
+
+  // Scroll selected search result into view
+  useEffect(() => {
+    if (globalSearchOpen && globalSearchResultsRef.current) {
+      const selectedElement = globalSearchResultsRef.current.querySelector(`[data-search-index="${globalSearchSelectedIndex}"]`);
+      selectedElement?.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    }
+  }, [globalSearchSelectedIndex, globalSearchOpen]);
 
   const handleDailyCheckin = (projectId) => {
     if (checkinNote.trim()) {
@@ -3189,7 +3198,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
             </div>
 
             {globalSearchQuery && (
-              <div style={styles.globalSearchResults}>
+              <div ref={globalSearchResultsRef} style={styles.globalSearchResults}>
                 {(() => {
                   const results = getGlobalSearchResults(globalSearchQuery);
                   if (results.length === 0) {
@@ -3202,6 +3211,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   return results.map((result, idx) => (
                     <div
                       key={`${result.type}-${result.id}`}
+                      data-search-index={idx}
                       style={{
                         ...styles.globalSearchResultItem,
                         backgroundColor: idx === globalSearchSelectedIndex ? 'var(--cream)' : 'transparent'
