@@ -149,6 +149,7 @@ const PeopleGraph = ({
   const [graphOffset, setGraphOffset] = useState({ x: 0, y: 0 });
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', team: '', email: '' });
+  const [loginFeedback, setLoginFeedback] = useState(null);
 
   const teamColors = useMemo(() => {
     const baseColors = new Map([
@@ -1148,12 +1149,21 @@ const PeopleGraph = ({
                     ) : (
                       <>
                         <button
-                          style={styles.calloutLoginBtn}
-                          onClick={() => onLoginAs?.(selectedNode.name)}
+                          style={{
+                            ...styles.calloutLoginBtn,
+                            ...(loggedInUser === selectedNode.name ? styles.calloutLoginBtnActive : {}),
+                            ...(loginFeedback === selectedNode.name ? styles.calloutLoginBtnFeedback : {})
+                          }}
+                          onClick={() => {
+                            onLoginAs?.(selectedNode.name);
+                            setLoginFeedback(selectedNode.name);
+                            setTimeout(() => setLoginFeedback(null), 2000);
+                          }}
                           title="Log in as this person"
                         >
                           <LogIn size={14} />
-                          Log in
+                          {loginFeedback === selectedNode.name ? 'Logged in!' :
+                           loggedInUser === selectedNode.name ? 'Logged in' : 'Log in'}
                         </button>
                         <button
                           style={styles.calloutEditBtnIcon}
@@ -2062,6 +2072,17 @@ const styles = {
     fontWeight: '600',
     cursor: 'pointer',
     transition: 'all 0.2s ease'
+  },
+
+  calloutLoginBtnActive: {
+    backgroundColor: '#5d7a5a',
+    boxShadow: 'inset 0 2px 4px rgba(0,0,0,0.2)'
+  },
+
+  calloutLoginBtnFeedback: {
+    backgroundColor: '#4CAF50',
+    transform: 'scale(1.02)',
+    boxShadow: '0 0 12px rgba(76, 175, 80, 0.5)'
   },
 
   calloutDeleteBtn: {

@@ -17,6 +17,14 @@ function AppContent() {
     setIsSettingsOpen(false);
   };
 
+  // Wrapper to update both ManityApp state and local settingsData
+  const handleSetLoggedInUser = (newUser) => {
+    if (settingsData.setLoggedInUser) {
+      settingsData.setLoggedInUser(newUser);
+    }
+    setSettingsData(prev => ({ ...prev, loggedInUser: newUser }));
+  };
+
   const handleImportWrapper = async (file) => {
     try {
       await handleImport(file, 'merge');
@@ -35,7 +43,7 @@ function AppContent() {
         onImport={handleImportWrapper}
         projects={projects}
         loggedInUser={settingsData.loggedInUser}
-        setLoggedInUser={settingsData.setLoggedInUser}
+        setLoggedInUser={handleSetLoggedInUser}
         allStakeholders={settingsData.allStakeholders}
         emailSettings={emailSettings}
         onSaveEmailSettings={saveEmailSettings}
