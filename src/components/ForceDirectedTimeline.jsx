@@ -28,7 +28,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     { id: 13, title: 'Go Live & Monitoring Setup', dueDate: '2025-03-20', status: 'todo', taskTitle: 'Release' },
   ], [tasks]);
 
-  // Calculate timeline range based on provided dates or zoom
+  // Calculate timeline range based on zoom (always uses zoom slider for end date)
   // Clamp to +/- 3 years from reference date to prevent extreme timeline extension
   const getTimelineRange = useCallback(() => {
     const now = startDate ? new Date(startDate) : new Date('2025-01-01');
@@ -46,14 +46,9 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     if (rangeStart < minDate) rangeStart = new Date(minDate);
     if (rangeStart > maxDate) rangeStart = new Date(maxDate);
 
-    let rangeEnd;
-
-    if (endDate) {
-      rangeEnd = new Date(endDate);
-    } else {
-      rangeEnd = new Date(rangeStart);
-      rangeEnd.setMonth(rangeEnd.getMonth() + timelineZoom);
-    }
+    // Always use zoom slider to determine end date for interactive control
+    let rangeEnd = new Date(rangeStart);
+    rangeEnd.setMonth(rangeEnd.getMonth() + timelineZoom);
 
     // Clamp end date
     if (rangeEnd < minDate) rangeEnd = new Date(minDate);
@@ -65,7 +60,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     }
 
     return { startDate: rangeStart, endDate: rangeEnd };
-  }, [timelineZoom, startDate, endDate]);
+  }, [timelineZoom, startDate]);
 
   const timelineConfig = {
     padding: { left: 80, right: 80, top: 30, bottom: 30 },
@@ -92,7 +87,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     const totalMs = rangeEnd - rangeStart;
     const dateMs = new Date(date) - rangeStart;
     return padding.left + (dateMs / totalMs) * timelineWidth;
-  }, [dimensions.width, timelineZoom, startDate, endDate]);
+  }, [dimensions.width, getTimelineRange]);
 
   // Initialize nodes
   useEffect(() => {
@@ -126,7 +121,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
       };
     });
     setNodes(initialNodes);
-  }, [getTimelineX, timelineZoom, startDate, endDate]);
+  }, [getTimelineX, getTimelineRange, sampleTasks]);
 
   // Physics simulation
   useEffect(() => {
@@ -240,12 +235,12 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     };
   }, [nodes.length, dimensions.width, draggedNode]);
 
-  // Handle resize
+  // Handle resize - use full container width
   useEffect(() => {
     const handleResize = () => {
       if (containerRef.current) {
         setDimensions({
-          width: Math.min(containerRef.current.offsetWidth, 1400),
+          width: containerRef.current.offsetWidth,
           height: 250,
         });
       }
@@ -326,6 +321,8 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
   const getZoomLabel = () => {
     if (timelineZoom === 1) return '1 Month';
     if (timelineZoom === 12) return '1 Year';
+    if (timelineZoom === 24) return '2 Years';
+    if (timelineZoom > 12) return `${timelineZoom} Months`;
     return `${timelineZoom} Months`;
   };
 
@@ -636,15 +633,15 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
             width="230"
             height="40"
           >
-            <div style={styles.zoomControl}>
+            <div xmlns="http://www.w3.org/1999/xhtml" style={styles.zoomControl}>
               <label style={styles.controlLabel}>🔍</label>
               <input
                 type="range"
                 min="1"
-                max="12"
+                max="24"
                 step="1"
                 value={timelineZoom}
-                onChange={(e) => setTimelineZoom(parseInt(e.target.value))}
+                onChange={(e) => setTimelineZoom(parseInt(e.target.value, 10))}
                 style={styles.slider}
               />
               <span style={styles.controlValue}>{getZoomLabel()}</span>
