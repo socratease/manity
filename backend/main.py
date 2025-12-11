@@ -11,7 +11,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field as PydanticField
 import httpx
-from sqlalchemy import Column, delete
+from sqlalchemy import Column, String, delete, func
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import selectinload
@@ -96,6 +96,51 @@ def normalize_stakeholders(stakeholders: Optional[List[Stakeholder | dict]]) -> 
     return normalized
 
 
+def serialize_person(person: "Person") -> dict:
+    return {
+        "id": person.id,
+        "name": person.name,
+        "team": person.team,
+        "email": person.email,
+    }
+
+
+def get_person_by_name(session: Session, name: str) -> "Person | None":
+    if not name:
+        return None
+
+    normalized_name = name.strip()
+    if not normalized_name:
+        return None
+
+    statement = select(Person).where(func.lower(Person.name) == normalized_name.lower())
+    return session.exec(statement).first()
+
+
+def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "Person":
+    normalized_name = payload.name.strip()
+    existing = get_person_by_name(session, normalized_name)
+
+    if existing:
+        existing.team = payload.team or existing.team
+        existing.email = payload.email
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return existing
+
+    person = Person(
+        id=payload.id or generate_id("person"),
+        name=normalized_name,
+        team=payload.team,
+        email=payload.email,
+    )
+    session.add(person)
+    session.commit()
+    session.refresh(person)
+    return person
+
+
 class SubtaskBase(SQLModel):
     title: str
     status: str = "todo"
@@ -164,7 +209,7 @@ class Project(ProjectBase, table=True):
 
 
 class PersonBase(SQLModel):
-    name: str
+    name: str = Field(sa_column=Column(String, unique=True, index=True))
     team: str
     email: Optional[str] = None
 
@@ -463,21 +508,28 @@ def load_project(session: Session, project_id: str) -> Project:
 def list_people(session: Session = Depends(get_session)):
     statement = select(Person)
     people = session.exec(statement).all()
-    return [{"id": p.id, "name": p.name, "team": p.team, "email": p.email} for p in people]
+
+    unique_people: dict[str, Person] = {}
+    for person in people:
+        key = person.name.lower()
+        if key not in unique_people:
+            unique_people[key] = person
+            continue
+
+        # Collapse legacy duplicates by preferring the first encountered record
+        legacy = unique_people[key]
+        legacy.team = legacy.team or person.team
+        legacy.email = legacy.email or person.email
+        session.delete(person)
+
+    session.commit()
+    return [serialize_person(person) for person in unique_people.values()]
 
 
 @app.post("/people", status_code=status.HTTP_201_CREATED)
 def create_person(payload: PersonPayload, session: Session = Depends(get_session)):
-    person = Person(
-        id=payload.id or generate_id("person"),
-        name=payload.name,
-        team=payload.team,
-        email=payload.email,
-    )
-    session.add(person)
-    session.commit()
-    session.refresh(person)
-    return {"id": person.id, "name": person.name, "team": person.team, "email": person.email}
+    person = upsert_person_from_payload(session, payload)
+    return serialize_person(person)
 
 
 @app.get("/people/{person_id}")
@@ -485,7 +537,7 @@ def get_person(person_id: str, session: Session = Depends(get_session)):
     person = session.exec(select(Person).where(Person.id == person_id)).first()
     if not person:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
-    return {"id": person.id, "name": person.name, "team": person.team, "email": person.email}
+    return serialize_person(person)
 
 
 @app.put("/people/{person_id}")
@@ -493,13 +545,23 @@ def update_person(person_id: str, payload: PersonPayload, session: Session = Dep
     person = session.exec(select(Person).where(Person.id == person_id)).first()
     if not person:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
-    person.name = payload.name
+
+    normalized_name = payload.name.strip()
+
+    conflict = get_person_by_name(session, normalized_name)
+    if conflict and conflict.id != person.id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="A person with that name already exists",
+        )
+
+    person.name = normalized_name
     person.team = payload.team
     person.email = payload.email
     session.add(person)
     session.commit()
     session.refresh(person)
-    return {"id": person.id, "name": person.name, "team": person.team, "email": person.email}
+    return serialize_person(person)
 
 
 @app.delete("/people/{person_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -768,14 +830,8 @@ async def import_portfolio(
         if payload.mode == "merge" and person_payload.id in existing_people:
             session.delete(existing_people[person_payload.id])
             session.commit()
-        person = Person(
-            id=person_payload.id or generate_id("person"),
-            name=person_payload.name,
-            team=person_payload.team,
-            email=person_payload.email,
-        )
-        session.add(person)
-        session.commit()
+
+        upsert_person_from_payload(session, person_payload)
 
     projects = list_projects(session)
     people = list_people(session)
