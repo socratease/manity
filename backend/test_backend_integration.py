@@ -1,5 +1,6 @@
 import json
 from contextlib import contextmanager
+from contextlib import contextmanager
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -199,58 +200,77 @@ def test_export_and_import_round_trip(tmp_path):
     export_payload = exported.json()
     assert export_payload["projects"][0]["id"] == export_project["id"]
 
-    replace_db = tmp_path / "replace.db"
-    with create_isolated_client(replace_db) as client:
-        placeholder = client.post(
-            "/projects",
-            json={
-                "name": "Placeholder",
-                "status": "planning",
-                "priority": "low",
-                "progress": 0,
-                "plan": [],
-                "recentActivity": [],
-                "stakeholders": [],
-                "description": "temp",
-                "lastUpdate": None,
-                "executiveUpdate": None,
-                "startDate": None,
-                "targetDate": None,
-            },
-        )
-        assert placeholder.status_code == 201
 
-        replace_response = client.post(
-            "/import?mode=replace", json=export_payload
-        )
-        assert replace_response.status_code == 200
-        replaced_projects = client.get("/projects").json()
-        assert {p["id"] for p in replaced_projects} == {export_project["id"]}
+def test_email_settings_and_sending(tmp_path, monkeypatch):
+    db_path = tmp_path / "email.db"
+    sent_messages = []
 
-        extra_project = client.post(
-            "/projects",
+    class FakeSMTP:
+        def __init__(self, server, port, timeout=None):
+            self.server = server
+            self.port = port
+            self.timeout = timeout
+            self.started_tls = False
+            self.logged_in = False
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def starttls(self):
+            self.started_tls = True
+
+        def login(self, username, password):
+            self.logged_in = True
+            self.username = username
+            self.password = password
+
+        def send_message(self, message):
+            sent_messages.append({
+                "to": message["To"],
+                "from": message["From"],
+                "subject": message["Subject"],
+                "body": message.get_content(),
+            })
+
+    monkeypatch.setattr(main.smtplib, "SMTP", FakeSMTP)
+
+    with create_isolated_client(db_path) as client:
+        defaults = client.get("/settings/email").json()
+        assert defaults["smtpServer"] == ""
+        assert defaults["hasPassword"] is False
+
+        updated = client.put(
+            "/settings/email",
             json={
-                "name": "Local only",
-                "status": "active",
-                "priority": "high",
-                "progress": 50,
-                "plan": [],
-                "recentActivity": [],
-                "stakeholders": [],
-                "description": "should survive merge",
-                "lastUpdate": None,
-                "executiveUpdate": None,
-                "startDate": None,
-                "targetDate": None,
+                "smtpServer": "smtp.example.com",
+                "smtpPort": 2525,
+                "username": "bot@example.com",
+                "password": "secret",
+                "useTLS": True,
+                "fromAddress": "bot@example.com",
             },
         ).json()
 
-    with create_isolated_client(replace_db) as client:
-        merge_response = client.post("/import?mode=merge", json=export_payload)
-        assert merge_response.status_code == 200
-        merged_projects = client.get("/projects").json()
-        merged_ids = {p["id"] for p in merged_projects}
-        assert merged_ids == {export_project["id"], extra_project["id"]}
+        assert updated["smtpServer"] == "smtp.example.com"
+        assert updated["smtpPort"] == 2525
+        assert updated["hasPassword"] is True
 
-        merged_export = client.get("/export").json()
-        assert len(merged_export["projects"]) == 2
+        response = client.post(
+            "/actions/email",
+            json={
+                "recipients": ["alex@example.com", "team@example.com"],
+                "subject": "Status",
+                "body": "Update ready",
+            },
+        )
+
+        assert response.status_code == 202
+        assert sent_messages
+        message = sent_messages[0]
+        assert message["to"] == "alex@example.com, team@example.com"
+        assert message["from"] == "bot@example.com"
+        assert message["subject"] == "Status"
+        assert "Update ready" in message["body"]

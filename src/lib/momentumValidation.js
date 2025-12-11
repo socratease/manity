@@ -12,7 +12,8 @@ export const supportedMomentumActions = [
   'update_subtask',
   'update_project',
   'create_project',
-  'add_person'
+  'add_person',
+  'send_email'
 ];
 
 /**
@@ -83,6 +84,33 @@ export function validateThrustActions(actions = [], projects = []) {
         return;
       }
       validActions.push({ ...action, name: personName });
+      return;
+    }
+
+    if (action.type === 'send_email') {
+      const recipients = Array.isArray(action.recipients)
+        ? action.recipients
+        : typeof action.recipients === 'string'
+          ? action.recipients.split(',').map(r => r.trim()).filter(Boolean)
+          : [];
+
+      if (!recipients.length) {
+        errors.push(`Action ${idx + 1} (send_email) is missing recipients.`);
+        return;
+      }
+      if (!action.subject) {
+        errors.push(`Action ${idx + 1} (send_email) is missing a subject.`);
+        return;
+      }
+      if (!action.body) {
+        errors.push(`Action ${idx + 1} (send_email) is missing a body.`);
+        return;
+      }
+
+      validActions.push({
+        ...action,
+        recipients
+      });
       return;
     }
 
