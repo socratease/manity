@@ -9,17 +9,44 @@ const resolveUrl = (path) => {
   return `${window.location.origin}${API_BASE}${path}`;
 };
 
-export const PortfolioProvider = ({ children }) => {
-  const [projects, setProjectsState] = useState([]);
-  const [people, setPeopleState] = useState([]);
-  const [emailSettings, setEmailSettings] = useState({
+// Local storage key for email settings
+const EMAIL_SETTINGS_KEY = 'manity_email_settings';
+
+// Load email settings from localStorage
+const loadEmailSettingsFromStorage = () => {
+  try {
+    const stored = localStorage.getItem(EMAIL_SETTINGS_KEY);
+    if (stored) {
+      const parsed = JSON.parse(stored);
+      return {
+        smtpServer: parsed.smtpServer || '',
+        smtpPort: parsed.smtpPort || 587,
+        username: parsed.username || '',
+        password: parsed.password || '',
+        fromAddress: parsed.fromAddress || '',
+        useTLS: parsed.useTLS ?? true,
+        hasPassword: !!parsed.password
+      };
+    }
+  } catch (e) {
+    console.error('Failed to load email settings from localStorage', e);
+  }
+  return {
     smtpServer: '',
     smtpPort: 587,
     username: '',
+    password: '',
     fromAddress: '',
     useTLS: true,
     hasPassword: false
-  });
+  };
+};
+
+export const PortfolioProvider = ({ children }) => {
+  const [projects, setProjectsState] = useState([]);
+  const [people, setPeopleState] = useState([]);
+  // Email settings stored in localStorage (browser-specific)
+  const [emailSettings, setEmailSettings] = useState(loadEmailSettingsFromStorage);
   const hasInitializedRef = useRef(false);
 
   const dedupePeople = useCallback((list = []) => {
@@ -110,35 +137,70 @@ export const PortfolioProvider = ({ children }) => {
     }
   }, [apiRequest, dedupePeople]);
 
-  const refreshEmailSettings = useCallback(async () => {
-    const data = await apiRequest('/settings/email');
-    if (data) {
-      setEmailSettings(data);
-    }
-    return data;
-  }, [apiRequest]);
+  // Email settings are stored in localStorage (browser-specific, not shared across machines)
+  const refreshEmailSettings = useCallback(() => {
+    const loaded = loadEmailSettingsFromStorage();
+    setEmailSettings(loaded);
+    return loaded;
+  }, []);
 
-  const saveEmailSettings = useCallback(async (settings) => {
-    const updated = await apiRequest('/settings/email', {
-      method: 'PUT',
-      body: JSON.stringify(settings)
-    });
+  const saveEmailSettings = useCallback((settings) => {
+    const toSave = {
+      smtpServer: settings.smtpServer || '',
+      smtpPort: settings.smtpPort || 587,
+      username: settings.username || '',
+      // Only update password if provided, otherwise keep existing
+      password: settings.password || emailSettings.password || '',
+      fromAddress: settings.fromAddress || '',
+      useTLS: settings.useTLS ?? true
+    };
+
+    try {
+      localStorage.setItem(EMAIL_SETTINGS_KEY, JSON.stringify(toSave));
+    } catch (e) {
+      console.error('Failed to save email settings to localStorage', e);
+      throw new Error('Unable to save email settings');
+    }
+
+    const updated = {
+      ...toSave,
+      hasPassword: !!toSave.password
+    };
     setEmailSettings(updated);
     return updated;
-  }, [apiRequest]);
+  }, [emailSettings.password]);
 
   const sendEmail = useCallback(async ({ recipients, subject, body }) => {
+    // Include email settings from localStorage with each request
+    // (since settings are now browser-local, not stored on server)
+    const settings = loadEmailSettingsFromStorage();
+
+    if (!settings.smtpServer) {
+      throw new Error('Email server not configured. Please configure SMTP settings first.');
+    }
+
     return apiRequest('/actions/email', {
       method: 'POST',
-      body: JSON.stringify({ recipients, subject, body })
+      body: JSON.stringify({
+        recipients,
+        subject,
+        body,
+        // Pass SMTP settings with request
+        smtp_server: settings.smtpServer,
+        smtp_port: settings.smtpPort,
+        username: settings.username,
+        password: settings.password,
+        from_address: settings.fromAddress,
+        use_tls: settings.useTLS
+      })
     });
   }, [apiRequest]);
 
   useEffect(() => {
     refreshProjects();
     refreshPeople();
-    refreshEmailSettings();
-  }, [refreshProjects, refreshPeople, refreshEmailSettings]);
+    // Email settings are loaded from localStorage on initial state, no need to fetch
+  }, [refreshProjects, refreshPeople]);
 
   const updateProjects = useCallback((updater) => {
     setProjectsState(prevProjects => {
