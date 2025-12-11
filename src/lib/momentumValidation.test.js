@@ -184,7 +184,28 @@ describe('validateThrustActions', () => {
     it('should validate all supported action types', () => {
       const actions = supportedMomentumActions
         .filter(type => type !== 'create_project')
-        .map(type => ({ type, projectId: '1', title: 'Test' }));
+        .map(type => {
+          switch (type) {
+            case 'comment':
+              return { type, projectId: '1', note: 'Test comment' };
+            case 'add_task':
+              return { type, projectId: '1', title: 'Task' };
+            case 'update_task':
+              return { type, projectId: '1', taskId: 'task-1', title: 'Renamed', status: 'todo' };
+            case 'add_subtask':
+              return { type, projectId: '1', taskId: 'task-1', subtaskTitle: 'Subtask', status: 'todo' };
+            case 'update_subtask':
+              return { type, projectId: '1', taskId: 'task-1', subtaskId: 'subtask-1', title: 'Updated subtask', status: 'todo' };
+            case 'update_project':
+              return { type, projectId: '1', status: 'active', progress: 50 };
+            case 'add_person':
+              return { type, name: 'Jamie Example', email: 'jamie@example.com' };
+            case 'send_email':
+              return { type, recipients: ['team@example.com'], subject: 'Hello', body: 'Update ready' };
+            default:
+              return { type, projectId: '1' };
+          }
+        });
 
       const result = validateThrustActions(actions, mockProjects);
       expect(result.validActions).toHaveLength(actions.length);
