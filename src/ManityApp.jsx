@@ -128,7 +128,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               properties: {
                 type: {
                   type: "string",
-                  enum: ["comment", "add_task", "update_task", "add_subtask", "update_subtask", "update_project", "create_project", "add_person", "send_email"],
+                  enum: ["comment", "add_task", "update_task", "add_subtask", "update_subtask", "update_project", "create_project", "add_person", "send_email", "query_portfolio"],
                   description: "The type of action"
                 },
                 projectId: {
@@ -192,7 +192,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                 status: {
                   type: "string",
                   enum: ["todo", "in-progress", "completed", "planning", "active", "on-hold", "cancelled"],
-                  description: "Status of task, subtask, or project"
+                  description: "Status of task, subtask, or project. Use todo/in-progress/completed for tasks; planning/active/on-hold/cancelled/completed for projects (use 'active' instead of 'in_progress')."
                 },
                 dueDate: {
                   type: "string",
@@ -230,6 +230,20 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                 stakeholders: {
                   type: "string",
                   description: "Comma-separated list of stakeholder names (for create_project action)"
+                },
+                scope: {
+                  type: "string",
+                  enum: ["portfolio", "project", "people"],
+                  description: "Data to fetch when using query_portfolio"
+                },
+                detailLevel: {
+                  type: "string",
+                  enum: ["summary", "detailed"],
+                  description: "Level of detail for query_portfolio responses"
+                },
+                includePeople: {
+                  type: "boolean",
+                  description: "Whether to include People data when querying the portfolio"
                 }
               },
               required: ["type"],
@@ -1677,6 +1691,53 @@ Write a professional executive summary that highlights the project's current sta
       let label = '';
       let detail = '';
 
+      if (action.type === 'query_portfolio') {
+        const scope = ['portfolio', 'project', 'people'].includes(action.scope)
+          ? action.scope
+          : action.projectId || action.projectName
+            ? 'project'
+            : 'portfolio';
+        const detailLevel = ['summary', 'detailed'].includes(action.detailLevel)
+          ? action.detailLevel
+          : 'summary';
+        const includePeople = action.includePeople !== false;
+        const portfolioContext = buildThrustContext();
+        let scopedProjects = portfolioContext;
+
+        if (scope === 'project' && (action.projectId || action.projectName)) {
+          const scopedProject = resolveProject(action.projectId || action.projectName);
+          if (!scopedProject) {
+            appendActionResult('Skipped action: unknown project', 'Skipped query_portfolio because the project was not found.', actionDeltas);
+            continue;
+          }
+          scopedProjects = portfolioContext.filter(project => `${project.id}` === `${scopedProject.id}`);
+        }
+
+        const projectSummary = scopedProjects.map(project => ({
+          id: project.id,
+          name: project.name,
+          status: project.status,
+          priority: project.priority,
+          progress: project.progress,
+          targetDate: project.targetDate,
+          lastUpdate: project.lastUpdate
+        }));
+
+        const queryResult = {
+          scope,
+          detailLevel,
+          projects: detailLevel === 'detailed' ? scopedProjects : projectSummary,
+          ...(includePeople ? { people: people.map(person => ({ name: person.name, team: person.team, email: person.email || null })) } : {})
+        };
+
+        appendActionResult(
+          'Shared portfolio data',
+          `Portfolio snapshot (${detailLevel}, ${scope}): ${JSON.stringify(queryResult, null, 2)}`,
+          actionDeltas
+        );
+        continue;
+      }
+
       if (action.type === 'add_person') {
         const personName = (action.name || action.personName || '').trim();
         if (!personName) {
@@ -1721,7 +1782,7 @@ Write a professional executive summary that highlights the project's current sta
           id: newId,
           name: projectName,
           priority: action.priority || 'medium',
-          status: action.status || 'in_progress',
+          status: action.status || 'active',
           progress: typeof action.progress === 'number' ? action.progress : 0,
           stakeholders: normalizedStakeholders,
           description: action.description || '',
@@ -2007,6 +2068,10 @@ Write a professional executive summary that highlights the project's current sta
         return `Add ${action.name || action.personName || 'a new person'} to People`;
       case 'send_email':
         return `Email ${action.recipients?.join ? action.recipients.join(', ') : action.recipients || 'recipients'} about "${action.subject || ''}"`;
+      case 'query_portfolio':
+        return action.projectName || action.projectId
+          ? `Fetch portfolio context for ${action.projectName || `project ${action.projectId}`}`
+          : 'Fetch latest portfolio context';
       default:
         return `Action queued: ${action.type || 'unknown'} for ${projectName}`;
     }
@@ -2157,7 +2222,7 @@ Write a professional executive summary that highlights the project's current sta
       { role: 'assistant', content },
       {
         role: 'system',
-        content: `Your previous response could not be applied because ${errors.join('; ')}. Use only these action types: ${supportedMomentumActions.join(', ')}. Each action must include a valid projectId or projectName that exists in the provided portfolio. Respond only with JSON containing "response" and "actions".`
+        content: `Your previous response could not be applied because ${errors.join('; ')}. Use only these action types: ${supportedMomentumActions.join(', ')}. Project-targeted actions must include a valid projectId or projectName that exists in the provided portfolio. Respond only with JSON containing "response" and "actions".`
       }
     ];
 
@@ -2189,12 +2254,13 @@ Supported atomic actions (never combine multiple changes into one action):
 - update_task: adjust a task. Fields: projectId, taskId or taskTitle, title (optional), status, dueDate, completedDate.
 - add_subtask: create a subtask. Fields: projectId, taskId or taskTitle, subtaskTitle or title, status, dueDate.
 - update_subtask: adjust a subtask. Fields: projectId, taskId or taskTitle, subtaskId or subtaskTitle, title, status, dueDate, completedDate.
-- update_project: change project status/progress/dates. Fields: projectId, status, progress (0-100), targetDate, lastUpdate.
-- create_project: create a new project. Fields: name (required), description (optional), priority (low/medium/high, default medium), status (planning/active/on-hold/cancelled, default planning), targetDate (optional), stakeholders (comma-separated names, optional).
+- update_project: change project status/progress/dates. Fields: projectId, status, progress (0-100), targetDate, lastUpdate. Use project statuses: planning, active, on-hold, cancelled, or completed (never "in_progress").
+- create_project: create a new project. Fields: name (required), description (optional), priority (low/medium/high, default medium), status (planning/active/on-hold/cancelled, default active), targetDate (optional), stakeholders (comma-separated names, optional). Use the status value "active" for projects in flight.
 - add_person: add a person to the People database. Fields: name (required), team (optional), email (optional). If the person already exists, update their info instead of duplicating.
 - send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People, comma separated or array), subject (required), body (required).
+- query_portfolio: request portfolio data when you need fresh context. Fields: scope (portfolio/project/people), detailLevel (summary/detailed), includePeople (boolean), projectId or projectName (optional when scope is project).
 
-Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project. When creating projects, if you lack required information like name or description, ask the user for these details before proceeding with the action.`;
+Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project. When creating projects, if you lack required information like name or description, ask the user for these details before proceeding with the action. If you need more context, call query_portfolio before taking other actions.`;
     const context = buildThrustContext();
     const orderedMessages = [...nextMessages].sort((a, b) => new Date(a.date) - new Date(b.date));
     const messages = [

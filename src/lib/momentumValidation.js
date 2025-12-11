@@ -13,7 +13,8 @@ export const supportedMomentumActions = [
   'update_project',
   'create_project',
   'add_person',
-  'send_email'
+  'send_email',
+  'query_portfolio'
 ];
 
 /**
@@ -84,6 +85,42 @@ export function validateThrustActions(actions = [], projects = []) {
         return;
       }
       validActions.push({ ...action, name: personName });
+      return;
+    }
+
+    if (action.type === 'query_portfolio') {
+      const detailLevel = ['summary', 'detailed'].includes(action.detailLevel)
+        ? action.detailLevel
+        : 'summary';
+      const scope = ['portfolio', 'project', 'people'].includes(action.scope)
+        ? action.scope
+        : action.projectId || action.projectName
+          ? 'project'
+          : 'portfolio';
+
+      const projectRef = action.projectId ?? action.projectName;
+      if (projectRef) {
+        const resolvedProject = resolveMomentumProjectRef(projectRef, projects);
+        if (!resolvedProject) {
+          errors.push(`Action ${idx + 1} (query_portfolio) references unknown project "${projectRef}".`);
+          return;
+        }
+
+        validActions.push({
+          ...action,
+          projectId: resolvedProject.id,
+          projectName: resolvedProject.name,
+          scope,
+          detailLevel
+        });
+        return;
+      }
+
+      validActions.push({
+        ...action,
+        scope,
+        detailLevel
+      });
       return;
     }
 
