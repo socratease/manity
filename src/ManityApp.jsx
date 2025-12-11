@@ -2113,12 +2113,22 @@ Write a professional executive summary that highlights the project's current sta
         }
         case 'add_task': {
           const taskId = action.taskId || `ai-task-${Math.random().toString(36).slice(2, 7)}`;
+          // Resolve assignee if provided
+          let taskAssignee = null;
+          if (action.assignee) {
+            const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
+            if (assigneeName) {
+              const person = findPersonByName(assigneeName);
+              taskAssignee = person ? { name: person.name, team: person.team } : { name: assigneeName };
+            }
+          }
           const newTask = {
             id: taskId,
             title: action.title || 'New task',
             status: action.status || 'todo',
             dueDate: action.dueDate,
             completedDate: action.completedDate,
+            assignee: taskAssignee,
             subtasks: (action.subtasks || []).map(subtask => ({
               id: subtask.id || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`,
               title: subtask.title || 'New subtask',
@@ -2129,7 +2139,7 @@ Write a professional executive summary that highlights the project's current sta
           project.plan = [...project.plan, newTask];
           actionDeltas.push({ type: 'remove_task', projectId: project.id, taskId });
           label = `Added task "${newTask.title}" to ${project.name}`;
-          detail = `Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)}) to ${project.name}`;
+          detail = `Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)})${taskAssignee ? ` assigned to ${taskAssignee.name}` : ''} to ${project.name}`;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
           break;
@@ -2161,6 +2171,25 @@ Write a professional executive summary that highlights the project's current sta
             changes.push(`completed ${action.completedDate}`);
             task.completedDate = action.completedDate;
           }
+          // Handle assignee changes
+          if (action.assignee !== undefined) {
+            const currentAssigneeName = task.assignee?.name || 'unassigned';
+            if (action.assignee === null || action.assignee === '') {
+              // Clear assignee
+              if (task.assignee) {
+                changes.push(`unassigned from ${currentAssigneeName}`);
+                task.assignee = null;
+              }
+            } else {
+              // Set new assignee - accept name string or object with name
+              const newAssigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
+              if (newAssigneeName && newAssigneeName !== currentAssigneeName) {
+                const person = findPersonByName(newAssigneeName);
+                changes.push(`assigned to ${newAssigneeName}`);
+                task.assignee = person ? { name: person.name, team: person.team } : { name: newAssigneeName };
+              }
+            }
+          }
 
           actionDeltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
           label = `Updated task "${task.title}" in ${project.name}`;
@@ -2178,16 +2207,26 @@ Write a professional executive summary that highlights the project's current sta
           }
 
           const subtaskId = action.subtaskId || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`;
+          // Resolve assignee if provided
+          let subtaskAssignee = null;
+          if (action.assignee) {
+            const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
+            if (assigneeName) {
+              const person = findPersonByName(assigneeName);
+              subtaskAssignee = person ? { name: person.name, team: person.team } : { name: assigneeName };
+            }
+          }
           const newSubtask = {
             id: subtaskId,
             title: action.subtaskTitle || action.title || 'New subtask',
             status: action.status || 'todo',
-            dueDate: action.dueDate
+            dueDate: action.dueDate,
+            assignee: subtaskAssignee
           };
           task.subtasks = [...(task.subtasks || []), newSubtask];
           actionDeltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
           label = `Added subtask "${newSubtask.title}" to ${task.title}`;
-          detail = `Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)}) under ${task.title} in ${project.name}`;
+          detail = `Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)})${subtaskAssignee ? ` assigned to ${subtaskAssignee.name}` : ''} under ${task.title} in ${project.name}`;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
           break;
@@ -2226,6 +2265,25 @@ Write a professional executive summary that highlights the project's current sta
             changes.push(`completed ${action.completedDate}`);
             subtask.completedDate = action.completedDate;
           }
+          // Handle assignee changes
+          if (action.assignee !== undefined) {
+            const currentAssigneeName = subtask.assignee?.name || 'unassigned';
+            if (action.assignee === null || action.assignee === '') {
+              // Clear assignee
+              if (subtask.assignee) {
+                changes.push(`unassigned from ${currentAssigneeName}`);
+                subtask.assignee = null;
+              }
+            } else {
+              // Set new assignee - accept name string or object with name
+              const newAssigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
+              if (newAssigneeName && newAssigneeName !== currentAssigneeName) {
+                const person = findPersonByName(newAssigneeName);
+                changes.push(`assigned to ${newAssigneeName}`);
+                subtask.assignee = person ? { name: person.name, team: person.team } : { name: newAssigneeName };
+              }
+            }
+          }
 
           actionDeltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
           label = `Updated subtask "${subtask.title}" in ${task.title}`;
@@ -2236,16 +2294,37 @@ Write a professional executive summary that highlights the project's current sta
         }
         case 'update_project': {
           const previous = {
+            name: project.name,
+            description: project.description,
+            executiveUpdate: project.executiveUpdate,
             status: project.status,
+            priority: project.priority,
             progress: project.progress,
             targetDate: project.targetDate,
+            startDate: project.startDate,
             lastUpdate: project.lastUpdate
           };
           const changes = [];
 
+          if (action.name && action.name !== project.name) {
+            changes.push(`renamed "${project.name}" → "${action.name}"`);
+            project.name = action.name;
+          }
+          if (action.description && action.description !== project.description) {
+            changes.push(`description updated`);
+            project.description = action.description;
+          }
+          if (action.executiveUpdate && action.executiveUpdate !== project.executiveUpdate) {
+            changes.push(`executive update revised`);
+            project.executiveUpdate = action.executiveUpdate;
+          }
           if (action.status && action.status !== project.status) {
             changes.push(`status ${project.status} → ${action.status}`);
             project.status = action.status;
+          }
+          if (action.priority && action.priority !== project.priority) {
+            changes.push(`priority ${project.priority} → ${action.priority}`);
+            project.priority = action.priority;
           }
           if (typeof action.progress === 'number' && action.progress !== project.progress) {
             changes.push(`progress ${project.progress}% → ${action.progress}%`);
@@ -2254,6 +2333,10 @@ Write a professional executive summary that highlights the project's current sta
           if (action.targetDate && action.targetDate !== project.targetDate) {
             changes.push(`target ${project.targetDate || 'unset'} → ${action.targetDate}`);
             project.targetDate = action.targetDate;
+          }
+          if (action.startDate && action.startDate !== project.startDate) {
+            changes.push(`start date ${project.startDate || 'unset'} → ${action.startDate}`);
+            project.startDate = action.startDate;
           }
           if (action.lastUpdate && action.lastUpdate !== project.lastUpdate) {
             changes.push(`last update → ${action.lastUpdate}`);
@@ -2577,11 +2660,11 @@ Using dialectic project planning methodology, be concise but explicit about what
 
 Supported atomic actions (never combine multiple changes into one action):
 - comment: log a project activity. Fields: projectId, note (or content), author (optional).
-- add_task: create a new task in a project. Fields: projectId, title, dueDate (optional), status (todo/in-progress/completed), completedDate (optional).
-- update_task: adjust a task. Fields: projectId, taskId or taskTitle, title (optional), status, dueDate, completedDate.
-- add_subtask: create a subtask. Fields: projectId, taskId or taskTitle, subtaskTitle or title, status, dueDate.
-- update_subtask: adjust a subtask. Fields: projectId, taskId or taskTitle, subtaskId or subtaskTitle, title, status, dueDate, completedDate.
-- update_project: change project status/progress/dates. Fields: projectId, status, progress (0-100), targetDate, lastUpdate. Use project statuses: planning, active, on-hold, cancelled, or completed (never "in_progress").
+- add_task: create a new task in a project. Fields: projectId, title, dueDate (optional), status (todo/in-progress/completed), completedDate (optional), assignee (person name, optional).
+- update_task: adjust a task. Fields: projectId, taskId or taskTitle, title (optional), status, dueDate, completedDate, assignee (person name or null to unassign).
+- add_subtask: create a subtask. Fields: projectId, taskId or taskTitle, subtaskTitle or title, status, dueDate, assignee (person name, optional).
+- update_subtask: adjust a subtask. Fields: projectId, taskId or taskTitle, subtaskId or subtaskTitle, title, status, dueDate, completedDate, assignee (person name or null to unassign).
+- update_project: change project fields. Fields: projectId, name (rename project), description (project description), executiveUpdate (executive summary), status (planning/active/on-hold/cancelled/completed), priority (low/medium/high), progress (0-100), targetDate, startDate, lastUpdate. Use project statuses: planning, active, on-hold, cancelled, or completed (never "in_progress").
 - create_project: create a new project. Fields: name (required), description (optional), priority (low/medium/high, default medium), status (planning/active/on-hold/cancelled, default active), targetDate (optional), stakeholders (comma-separated names, optional). Use the status value "active" for projects in flight.
 - add_person: add a person to the People database. Fields: name (required), team (optional), email (optional). If the person already exists, update their info instead of duplicating.
 - send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People, comma separated or array), subject (required), body (required). Do NOT include any AI signature in the email body - the system will automatically append one.
@@ -3857,20 +3940,23 @@ Keep tool calls granular (one discrete change per action), explain each action c
             <div style={styles.detailsHeader}>
               <div>
                 <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
-                {editMode ? (
-                  <>
-                    <textarea
-                      value={editValues.description}
-                      onChange={(e) => setEditValues({...editValues, description: e.target.value})}
-                      onFocus={() => setFocusedField('project-description')}
-                      onBlur={() => setFocusedField(null)}
-                      style={{...styles.detailsDescription, ...styles.editTextarea, minHeight: '80px'}}
-                    />
-                    {renderEditingHint('project-description')}
-                  </>
-                ) : (
-                  <p style={styles.detailsDescription}>{viewingProject.description}</p>
-                )}
+                <div style={styles.descriptionSection}>
+                  <label style={styles.descriptionLabel}>Project Description</label>
+                  {editMode ? (
+                    <>
+                      <textarea
+                        value={editValues.description}
+                        onChange={(e) => setEditValues({...editValues, description: e.target.value})}
+                        onFocus={() => setFocusedField('project-description')}
+                        onBlur={() => setFocusedField(null)}
+                        style={{...styles.detailsDescription, ...styles.editTextarea, minHeight: '80px'}}
+                      />
+                      {renderEditingHint('project-description')}
+                    </>
+                  ) : (
+                    <p style={styles.detailsDescription}>{viewingProject.description}</p>
+                  )}
+                </div>
               </div>
               <div style={styles.headerActions}>
                 {editMode ? (
@@ -5686,45 +5772,45 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
                 return (
                   <div style={styles.slideStage}>
-                    <div style={styles.slideControlRail}>
-                      {isEditingSlide && (
+                    <div style={styles.slideSurface}>
+                      <div style={styles.slideControlRail}>
+                        {isEditingSlide && (
+                          <button
+                            onClick={() => generateExecSummary(slideProject.id)}
+                            style={{
+                              ...styles.slideControlButton,
+                              opacity: isGeneratingSummary ? 0.5 : 1,
+                            }}
+                            disabled={isGeneratingSummary}
+                            title={'AI generate summary (g)'}
+                          >
+                            <Sparkles size={14} />
+                            <span>AI generate</span>
+                            <span style={{ fontSize: '10px', opacity: 0.6, marginLeft: '4px' }}>G</span>
+                          </button>
+                        )}
                         <button
-                          onClick={() => generateExecSummary(slideProject.id)}
+                          onClick={() => {
+                            if (!isEditingSlide) {
+                              startEditingExecSummary(slideProject.id, slideProject.executiveUpdate || slideProject.description);
+                            }
+                            toggleSlideEditMode();
+                          }}
                           style={{
                             ...styles.slideControlButton,
-                            opacity: isGeneratingSummary ? 0.5 : 1,
+                            backgroundColor: isEditingSlide ? 'var(--coral)' + '15' : 'transparent',
+                            borderColor: isEditingSlide ? 'var(--coral)' : 'var(--cloud)',
+                            color: isEditingSlide ? 'var(--coral)' : 'var(--charcoal)'
                           }}
-                          disabled={isGeneratingSummary}
-                          title={'AI generate summary (g)'}
+                          title={isEditingSlide ? 'Save and exit edit mode (Ctrl+Enter)' : 'Edit slide (e)'}
                         >
-                          <Sparkles size={14} />
-                          <span>AI generate</span>
-                          <span style={{ fontSize: '10px', opacity: 0.6, marginLeft: '4px' }}>G</span>
+                          <Edit2 size={14} />
+                          <span>{isEditingSlide ? 'Save' : 'Edit'}</span>
+                          <span style={{ fontSize: '10px', opacity: 0.6, marginLeft: '4px' }}>
+                            {isEditingSlide ? 'Ctrl+⏎' : 'E'}
+                          </span>
                         </button>
-                      )}
-                      <button
-                        onClick={() => {
-                          if (!isEditingSlide) {
-                            startEditingExecSummary(slideProject.id, slideProject.executiveUpdate || slideProject.description);
-                          }
-                          toggleSlideEditMode();
-                        }}
-                        style={{
-                          ...styles.slideControlButton,
-                          backgroundColor: isEditingSlide ? 'var(--coral)' + '15' : 'transparent',
-                          borderColor: isEditingSlide ? 'var(--coral)' : 'var(--cloud)',
-                          color: isEditingSlide ? 'var(--coral)' : 'var(--charcoal)'
-                        }}
-                        title={isEditingSlide ? 'Save and exit edit mode (Ctrl+Enter)' : 'Edit slide (e)'}
-                      >
-                        <Edit2 size={14} />
-                        <span>{isEditingSlide ? 'Save' : 'Edit'}</span>
-                        <span style={{ fontSize: '10px', opacity: 0.6, marginLeft: '4px' }}>
-                          {isEditingSlide ? 'Ctrl+⏎' : 'E'}
-                        </span>
-                      </button>
-                    </div>
-                    <div style={styles.slideSurface}>
+                      </div>
                       <div style={styles.slideSurfaceInner}>
                         {/* Header with name, description subtitle, and project details */}
                         <div style={styles.slideCompactHeader}>
@@ -6021,7 +6107,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     />
                   </div>
                   <div style={{ ...styles.formField, gridColumn: 'span 2' }}>
-                    <label style={styles.formLabel}>Description</label>
+                    <label style={styles.formLabel}>Project Description</label>
                     <textarea
                       value={newProjectDescription}
                       onChange={(e) => setNewProjectDescription(e.target.value)}
@@ -7507,6 +7593,21 @@ const styles = {
     fontFamily: "'Inter', sans-serif",
     lineHeight: '1.6',
     maxWidth: '600px',
+  },
+
+  descriptionSection: {
+    marginTop: '12px',
+  },
+
+  descriptionLabel: {
+    display: 'block',
+    fontSize: '12px',
+    fontWeight: '600',
+    color: 'var(--stone)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    marginBottom: '6px',
+    fontFamily: "'Inter', sans-serif",
   },
 
   priorityBadgeLarge: {
@@ -9484,12 +9585,12 @@ const styles = {
 
   slideControlRail: {
     position: 'absolute',
-    left: '0px',
-    top: '30px',
+    right: '12px',
+    top: '12px',
     display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-    zIndex: 2,
+    flexDirection: 'row',
+    gap: '8px',
+    zIndex: 10,
   },
 
   slideControlButton: {
