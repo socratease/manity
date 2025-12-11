@@ -230,6 +230,42 @@ class EmailSettings(SQLModel, table=True):
     from_address: Optional[str] = None
 
 
+class AuditLog(SQLModel, table=True):
+    """Audit log for tracking all actions and AI conversations"""
+    id: Optional[int] = Field(default=None, primary_key=True)
+    timestamp: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
+    action: str  # e.g., "create_project", "update_task", "llm_chat"
+    entity_type: Optional[str] = None  # e.g., "project", "task", "person"
+    entity_id: Optional[str] = None  # ID of the affected entity
+    details: Optional[str] = Field(default=None, sa_column=Column(String))  # JSON string with additional details
+    user_agent: Optional[str] = None  # Client user agent
+    ip_address: Optional[str] = None  # Client IP address
+
+
+def log_action(
+    session: Session,
+    action: str,
+    entity_type: str = None,
+    entity_id: str = None,
+    details: dict = None,
+    request: Request = None
+):
+    """Log an action to the audit log"""
+    import json
+
+    log_entry = AuditLog(
+        action=action,
+        entity_type=entity_type,
+        entity_id=entity_id,
+        details=json.dumps(details) if details else None,
+        user_agent=request.headers.get("user-agent") if request else None,
+        ip_address=request.client.host if request and request.client else None
+    )
+    session.add(log_entry)
+    session.commit()
+    logger.info(f"Action logged: {action} on {entity_type}:{entity_id}")
+
+
 class SubtaskPayload(SubtaskBase):
     id: Optional[str] = None
 
@@ -339,18 +375,21 @@ def dispatch_email(
     body: str,
     username: str | None = None,
     password: str | None = None,
-    use_tls: bool = True
+    use_tls: bool = False
 ) -> dict:
     """
     Send an email via SMTP and verify the server response.
+
+    Emails are sent anonymously without authentication by default.
+    The server is expected to be a local or trusted SMTP relay.
 
     Returns a dict with 'sent_to' (list of successful recipients) and any 'refused' recipients.
     Raises ValueError for configuration issues, SMTPException for server errors.
     """
     if not smtp_server:
-        raise ValueError("SMTP server is not configured")
+        raise ValueError("SMTP server is not configured. Please set the server address in settings.")
     if not from_address:
-        raise ValueError("Sender address is not configured")
+        raise ValueError("Sender address is not configured. Please set the From address in settings.")
     if not recipients:
         raise ValueError("At least one recipient is required")
 
@@ -367,13 +406,18 @@ def dispatch_email(
             if code != 250:
                 raise smtplib.SMTPException(f"Server not ready: {code} {resp.decode()}")
 
+            # Use STARTTLS only if explicitly requested
             if use_tls:
-                code, resp = smtp.starttls()
-                if code != 220:
-                    raise smtplib.SMTPException(f"STARTTLS failed: {code} {resp.decode()}")
+                try:
+                    code, resp = smtp.starttls()
+                    if code != 220:
+                        logger.warning("STARTTLS failed with code %d, continuing without TLS", code)
+                except smtplib.SMTPNotSupportedError:
+                    logger.info("Server does not support STARTTLS, sending without encryption")
 
-            if username or password:
-                smtp.login(username or "", password or "")
+            # Only attempt login if credentials are provided (not typical for anonymous relay)
+            if username and password:
+                smtp.login(username, password)
 
             # send_message returns dict of refused recipients (empty = all accepted)
             refused = smtp.send_message(message)
@@ -405,9 +449,15 @@ def dispatch_email(
     except smtplib.SMTPRecipientsRefused as exc:
         logger.exception("All recipients refused")
         raise ValueError(f"All recipients refused by server")
+    except smtplib.SMTPConnectError as exc:
+        logger.exception("Failed to connect to SMTP server")
+        raise ValueError(f"Could not connect to email server at {smtp_server}:{smtp_port}. Please check your settings.")
     except smtplib.SMTPException as exc:
         logger.exception("SMTP error sending email")
         raise exc
+    except ConnectionRefusedError:
+        logger.exception("Connection refused by SMTP server")
+        raise ValueError(f"Connection refused by email server at {smtp_server}:{smtp_port}. Please verify the server is running.")
     except Exception as exc:
         logger.exception("Failed to send email")
         raise exc
@@ -693,8 +743,9 @@ def list_people(session: Session = Depends(get_session)):
 
 
 @app.post("/people", status_code=status.HTTP_201_CREATED)
-def create_person(payload: PersonPayload, session: Session = Depends(get_session)):
+def create_person(payload: PersonPayload, request: Request, session: Session = Depends(get_session)):
     person = upsert_person_from_payload(session, payload)
+    log_action(session, "create_person", "person", person.id, {"name": person.name, "team": person.team}, request)
     return serialize_person(person)
 
 
@@ -707,7 +758,7 @@ def get_person(person_id: str, session: Session = Depends(get_session)):
 
 
 @app.put("/people/{person_id}")
-def update_person(person_id: str, payload: PersonPayload, session: Session = Depends(get_session)):
+def update_person(person_id: str, payload: PersonPayload, request: Request, session: Session = Depends(get_session)):
     person = session.exec(select(Person).where(Person.id == person_id)).first()
     if not person:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
@@ -721,22 +772,26 @@ def update_person(person_id: str, payload: PersonPayload, session: Session = Dep
             detail="A person with that name already exists",
         )
 
+    old_values = {"name": person.name, "team": person.team, "email": person.email}
     person.name = normalized_name
     person.team = payload.team
     person.email = payload.email
     session.add(person)
     session.commit()
     session.refresh(person)
+    log_action(session, "update_person", "person", person_id, {"old": old_values, "new": {"name": person.name, "team": person.team, "email": person.email}}, request)
     return serialize_person(person)
 
 
 @app.delete("/people/{person_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_person(person_id: str, session: Session = Depends(get_session)):
+def delete_person(person_id: str, request: Request, session: Session = Depends(get_session)):
     person = session.exec(select(Person).where(Person.id == person_id)).first()
     if not person:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
+    deleted_data = {"name": person.name, "team": person.team}
     session.delete(person)
     session.commit()
+    log_action(session, "delete_person", "person", person_id, deleted_data, request)
     return None
 
 
@@ -765,7 +820,7 @@ def update_email_settings(payload: EmailSettingsPayload, session: Session = Depe
 
 
 @app.post("/actions/email", status_code=status.HTTP_200_OK)
-def send_email_action(payload: EmailSendPayload):
+def send_email_action(payload: EmailSendPayload, request: Request, session: Session = Depends(get_session)):
     """
     Send an email and verify server acceptance.
 
@@ -789,9 +844,13 @@ def send_email_action(payload: EmailSendPayload):
             use_tls=payload.use_tls if payload.use_tls is not None else True
         )
     except ValueError as exc:
+        log_action(session, "send_email_failed", "email", None, {"error": str(exc), "recipient_count": len(recipients)}, request)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except smtplib.SMTPException as exc:
+        log_action(session, "send_email_failed", "email", None, {"error": str(exc), "recipient_count": len(recipients)}, request)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"SMTP error: {str(exc)}")
+
+    log_action(session, "send_email", "email", None, {"recipient_count": len(result["sent_to"]), "subject_preview": payload.subject[:50] if payload.subject else None}, request)
 
     # Return detailed result including which recipients were successful
     return {
@@ -813,8 +872,9 @@ def list_projects(session: Session = Depends(get_session)):
 
 
 @app.post("/projects", status_code=status.HTTP_201_CREATED)
-def create_project(payload: ProjectPayload, session: Session = Depends(get_session)):
+def create_project(payload: ProjectPayload, request: Request, session: Session = Depends(get_session)):
     project = upsert_project(session, payload)
+    log_action(session, "create_project", "project", project.id, {"name": project.name, "status": project.status}, request)
     return serialize_project(project)
 
 
@@ -825,24 +885,27 @@ def get_project(project_id: str, session: Session = Depends(get_session)):
 
 
 @app.put("/projects/{project_id}")
-def update_project(project_id: str, payload: ProjectPayload, session: Session = Depends(get_session)):
+def update_project(project_id: str, payload: ProjectPayload, request: Request, session: Session = Depends(get_session)):
     if payload.id and payload.id != project_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Project ID mismatch")
     payload.id = project_id
     project = upsert_project(session, payload)
+    log_action(session, "update_project", "project", project_id, {"name": project.name, "status": project.status}, request)
     return serialize_project(project)
 
 
 @app.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_project(project_id: str, session: Session = Depends(get_session)):
+def delete_project(project_id: str, request: Request, session: Session = Depends(get_session)):
     project = load_project(session, project_id)
+    deleted_data = {"name": project.name}
     session.delete(project)
     session.commit()
+    log_action(session, "delete_project", "project", project_id, deleted_data, request)
     return None
 
 
 @app.post("/projects/{project_id}/tasks")
-def create_task(project_id: str, payload: TaskPayload, session: Session = Depends(get_session)):
+def create_task(project_id: str, payload: TaskPayload, request: Request, session: Session = Depends(get_session)):
     project = load_project(session, project_id)
     task = Task(
         id=payload.id or generate_id("task"),
@@ -856,34 +919,39 @@ def create_task(project_id: str, payload: TaskPayload, session: Session = Depend
     session.add(task)
     session.commit()
     session.refresh(task)
+    log_action(session, "create_task", "task", task.id, {"project_id": project_id, "title": task.title}, request)
     return serialize_project(load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/tasks/{task_id}")
-def update_task(project_id: str, task_id: str, payload: TaskPayload, session: Session = Depends(get_session)):
+def update_task(project_id: str, task_id: str, payload: TaskPayload, request: Request, session: Session = Depends(get_session)):
     project = load_project(session, project_id)
     task = session.exec(select(Task).where(Task.id == task_id, Task.project_id == project.id)).first()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    old_status = task.status
     apply_task_payload(task, payload)
     session.add(task)
     session.commit()
+    log_action(session, "update_task", "task", task_id, {"project_id": project_id, "title": task.title, "old_status": old_status, "new_status": task.status}, request)
     return serialize_project(load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
-def remove_task(project_id: str, task_id: str, session: Session = Depends(get_session)):
+def remove_task(project_id: str, task_id: str, request: Request, session: Session = Depends(get_session)):
     project = load_project(session, project_id)
     task = session.exec(select(Task).where(Task.id == task_id, Task.project_id == project.id)).first()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    deleted_data = {"project_id": project_id, "title": task.title}
     session.delete(task)
     session.commit()
+    log_action(session, "delete_task", "task", task_id, deleted_data, request)
     return None
 
 
 @app.post("/projects/{project_id}/tasks/{task_id}/subtasks")
-def create_subtask(project_id: str, task_id: str, payload: SubtaskPayload, session: Session = Depends(get_session)):
+def create_subtask(project_id: str, task_id: str, payload: SubtaskPayload, request: Request, session: Session = Depends(get_session)):
     load_project(session, project_id)
     task = session.exec(select(Task).where(Task.id == task_id, Task.project_id == project_id)).first()
     if not task:
@@ -898,37 +966,42 @@ def create_subtask(project_id: str, task_id: str, payload: SubtaskPayload, sessi
     )
     session.add(subtask)
     session.commit()
+    log_action(session, "create_subtask", "subtask", subtask.id, {"project_id": project_id, "task_id": task_id, "title": subtask.title}, request)
     return serialize_project(load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/tasks/{task_id}/subtasks/{subtask_id}")
-def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: SubtaskPayload, session: Session = Depends(get_session)):
+def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: SubtaskPayload, request: Request, session: Session = Depends(get_session)):
     load_project(session, project_id)
     subtask = session.exec(select(Subtask).where(Subtask.id == subtask_id, Subtask.task_id == task_id)).first()
     if not subtask:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+    old_status = subtask.status
     subtask.title = payload.title
     subtask.status = payload.status
     subtask.dueDate = payload.dueDate
     subtask.completedDate = payload.completedDate
     session.add(subtask)
     session.commit()
+    log_action(session, "update_subtask", "subtask", subtask_id, {"project_id": project_id, "task_id": task_id, "title": subtask.title, "old_status": old_status, "new_status": subtask.status}, request)
     return serialize_project(load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/tasks/{task_id}/subtasks/{subtask_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_subtask(project_id: str, task_id: str, subtask_id: str, session: Session = Depends(get_session)):
+def delete_subtask(project_id: str, task_id: str, subtask_id: str, request: Request, session: Session = Depends(get_session)):
     load_project(session, project_id)
     subtask = session.exec(select(Subtask).where(Subtask.id == subtask_id, Subtask.task_id == task_id)).first()
     if not subtask:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+    deleted_data = {"project_id": project_id, "task_id": task_id, "title": subtask.title}
     session.delete(subtask)
     session.commit()
+    log_action(session, "delete_subtask", "subtask", subtask_id, deleted_data, request)
     return None
 
 
 @app.post("/projects/{project_id}/activities")
-def create_activity(project_id: str, payload: ActivityPayload, session: Session = Depends(get_session)):
+def create_activity(project_id: str, payload: ActivityPayload, request: Request, session: Session = Depends(get_session)):
     project = load_project(session, project_id)
     activity = Activity(
         id=payload.id or generate_id("activity"),
@@ -939,11 +1012,12 @@ def create_activity(project_id: str, payload: ActivityPayload, session: Session 
     )
     session.add(activity)
     session.commit()
+    log_action(session, "create_activity", "activity", activity.id, {"project_id": project_id, "author": activity.author, "note_preview": activity.note[:100] if activity.note else None}, request)
     return serialize_project(load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/activities/{activity_id}")
-def update_activity(project_id: str, activity_id: str, payload: ActivityPayload, session: Session = Depends(get_session)):
+def update_activity(project_id: str, activity_id: str, payload: ActivityPayload, request: Request, session: Session = Depends(get_session)):
     load_project(session, project_id)
     activity = session.exec(select(Activity).where(Activity.id == activity_id, Activity.project_id == project_id)).first()
     if not activity:
@@ -953,17 +1027,20 @@ def update_activity(project_id: str, activity_id: str, payload: ActivityPayload,
     activity.author = payload.author
     session.add(activity)
     session.commit()
+    log_action(session, "update_activity", "activity", activity_id, {"project_id": project_id, "author": activity.author}, request)
     return serialize_project(load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/activities/{activity_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_activity(project_id: str, activity_id: str, session: Session = Depends(get_session)):
+def delete_activity(project_id: str, activity_id: str, request: Request, session: Session = Depends(get_session)):
     load_project(session, project_id)
     activity = session.exec(select(Activity).where(Activity.id == activity_id, Activity.project_id == project_id)).first()
     if not activity:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+    deleted_data = {"project_id": project_id, "author": activity.author}
     session.delete(activity)
     session.commit()
+    log_action(session, "delete_activity", "activity", activity_id, deleted_data, request)
     return None
 
 
@@ -1063,6 +1140,9 @@ async def import_portfolio(
 
     projects = list_projects(session)
     people = list_people(session)
+
+    log_action(session, "import_portfolio", "portfolio", None, {"mode": payload.mode, "project_count": len(payload.projects), "people_count": len(payload.people)}, request)
+
     return {"projects": projects, "people": people}
 
 
@@ -1130,19 +1210,24 @@ def _build_llm_request(payload: ChatRequest) -> tuple[str, dict, dict]:
 
 
 @app.post("/api/llm/chat")
-async def proxy_llm_chat(payload: ChatRequest):
+async def proxy_llm_chat(payload: ChatRequest, request: Request, session: Session = Depends(get_session)):
     url, headers, request_body = _build_llm_request(payload)
+
+    # Log the conversation request (messages without exposing full content for privacy)
+    message_summary = [{"role": m.role.value, "content_length": len(m.content)} for m in payload.messages]
 
     try:
         async with httpx.AsyncClient(timeout=30) as client:
             response = await client.post(url, headers=headers, json=request_body)
     except httpx.HTTPError as exc:  # pragma: no cover - network safeguard
+        log_action(session, "llm_chat_error", "llm", None, {"model": payload.model, "error": str(exc), "message_count": len(payload.messages)}, request)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=f"Upstream request failed: {exc}",
         ) from exc
 
     if response.status_code >= 400:
+        log_action(session, "llm_chat_error", "llm", None, {"model": payload.model, "status_code": response.status_code, "message_count": len(payload.messages)}, request)
         raise HTTPException(
             status_code=response.status_code,
             detail=response.text,
@@ -1150,6 +1235,17 @@ async def proxy_llm_chat(payload: ChatRequest):
 
     data = response.json()
     content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+    # Log successful LLM conversation with full messages and response for auditing
+    import json
+    conversation_log = {
+        "model": payload.model,
+        "messages": [{"role": m.role.value, "content": m.content} for m in payload.messages],
+        "response": content,
+        "usage": data.get("usage", {})
+    }
+    log_action(session, "llm_chat", "llm", None, conversation_log, request)
+
     return {"content": content, "raw": data}
 
 

@@ -18,11 +18,9 @@ export default function SettingsModal({
   const importInputRef = useRef(null);
   const [emailForm, setEmailForm] = useState({
     smtpServer: "",
-    smtpPort: 587,
-    username: "",
-    password: "",
+    smtpPort: 25,
     fromAddress: "",
-    useTLS: true
+    useTLS: false
   });
   const [isSavingEmail, setIsSavingEmail] = useState(false);
   const [emailStatus, setEmailStatus] = useState("");
@@ -31,11 +29,9 @@ export default function SettingsModal({
     if (!emailSettings) return;
     setEmailForm({
       smtpServer: emailSettings.smtpServer || "",
-      smtpPort: emailSettings.smtpPort || 587,
-      username: emailSettings.username || "",
-      password: "",
+      smtpPort: emailSettings.smtpPort || 25,
       fromAddress: emailSettings.fromAddress || "",
-      useTLS: emailSettings.useTLS ?? true
+      useTLS: emailSettings.useTLS ?? false
     });
   }, [emailSettings]);
 
@@ -75,9 +71,8 @@ export default function SettingsModal({
     setIsSavingEmail(true);
     setEmailStatus('');
     try {
-      await onSaveEmailSettings({ ...emailForm, password: emailForm.password || undefined });
+      await onSaveEmailSettings(emailForm);
       setEmailStatus('Email settings saved');
-      setEmailForm(prev => ({ ...prev, password: '' }));
     } catch (error) {
       setEmailStatus(error?.message || 'Unable to save email settings');
     } finally {
@@ -91,7 +86,6 @@ export default function SettingsModal({
     try {
       const data = await onRefreshEmailSettings();
       if (data) {
-        setEmailForm(prev => ({ ...prev, password: '' }));
         setEmailStatus('Email settings refreshed');
       }
     } catch (error) {
@@ -194,7 +188,7 @@ export default function SettingsModal({
               <h3 style={styles.sectionTitle}>Email Server</h3>
             </div>
             <p style={styles.description}>
-              SMTP settings for AI-sent emails. Stored locally in this browser only.
+              SMTP settings for AI-sent emails. Emails are sent anonymously from the server without authentication.
             </p>
 
             <div style={styles.compactGrid}>
@@ -206,7 +200,7 @@ export default function SettingsModal({
                   value={emailForm.smtpServer}
                   onChange={(e) => updateEmailField('smtpServer', e.target.value)}
                   style={styles.inputSmall}
-                  placeholder="smtp.example.com"
+                  placeholder="localhost"
                 />
               </div>
               <div style={styles.gridItem1}>
@@ -223,31 +217,6 @@ export default function SettingsModal({
             </div>
 
             <div style={styles.compactGrid}>
-              <div style={styles.gridItem1}>
-                <label style={styles.labelSmall} htmlFor="smtp-username">Username</label>
-                <input
-                  id="smtp-username"
-                  type="text"
-                  value={emailForm.username}
-                  onChange={(e) => updateEmailField('username', e.target.value)}
-                  style={styles.inputSmall}
-                  placeholder="user@example.com"
-                />
-              </div>
-              <div style={styles.gridItem1}>
-                <label style={styles.labelSmall} htmlFor="smtp-password">Password</label>
-                <input
-                  id="smtp-password"
-                  type="password"
-                  value={emailForm.password}
-                  onChange={(e) => updateEmailField('password', e.target.value)}
-                  style={styles.inputSmall}
-                  placeholder={emailSettings?.hasPassword ? '••••••••' : 'Password'}
-                />
-              </div>
-            </div>
-
-            <div style={styles.compactGrid}>
               <div style={styles.gridItem2}>
                 <label style={styles.labelSmall} htmlFor="smtp-from">From address</label>
                 <input
@@ -256,7 +225,7 @@ export default function SettingsModal({
                   value={emailForm.fromAddress}
                   onChange={(e) => updateEmailField('fromAddress', e.target.value)}
                   style={styles.inputSmall}
-                  placeholder="alerts@example.com"
+                  placeholder="noreply@example.com"
                 />
               </div>
               <div style={styles.gridItem1}>
@@ -285,7 +254,7 @@ export default function SettingsModal({
               )}
               {emailStatus && <span style={styles.statusText}>{emailStatus}</span>}
             </div>
-            <p style={styles.helperText}>Settings are stored in this browser only - not shared across devices.</p>
+            <p style={styles.helperText}>Settings are stored in this browser only. Emails are sent anonymously without credentials.</p>
           </div>
         )}
       </div>
