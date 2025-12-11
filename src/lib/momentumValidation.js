@@ -11,7 +11,8 @@ export const supportedMomentumActions = [
   'add_subtask',
   'update_subtask',
   'update_project',
-  'create_project'
+  'create_project',
+  'add_person'
 ];
 
 /**
@@ -72,6 +73,16 @@ export function validateThrustActions(actions = [], projects = []) {
       // Track this project so subsequent actions can reference it
       pendingProjects.set(projectName.toLowerCase(), { name: projectName });
       validActions.push(action);
+      return;
+    }
+
+    if (action.type === 'add_person') {
+      const personName = action.name || action.personName;
+      if (!personName) {
+        errors.push(`Action ${idx + 1} (add_person) is missing a name or personName.`);
+        return;
+      }
+      validActions.push({ ...action, name: personName });
       return;
     }
 

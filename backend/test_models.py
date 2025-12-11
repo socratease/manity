@@ -214,3 +214,47 @@ def test_import_portfolio_honors_query_mode_for_file_replace(tmp_path):
     with Session(main.engine) as session:
         project_ids = {project.id for project in session.exec(select(main.Project)).all()}
         assert project_ids == {"replacement"}
+
+
+def test_people_endpoint_is_idempotent_by_name(tmp_path):
+    client = _create_test_client(tmp_path)
+
+    first = client.post(
+        "/people",
+        json={"name": "Alex Kim", "team": "Engineering", "email": None},
+    ).json()
+
+    second = client.post(
+        "/people",
+        json={"name": "Alex Kim", "team": "Design", "email": "alex@example.com"},
+    ).json()
+
+    assert first["id"] == second["id"]
+    assert second["team"] == "Design"
+    assert second["email"] == "alex@example.com"
+
+    people = client.get("/people").json()
+    assert len(people) == 1
+    assert people[0]["team"] == "Design"
+    assert people[0]["email"] == "alex@example.com"
+
+
+def test_import_people_collapses_duplicate_names(tmp_path):
+    client = _create_test_client(tmp_path)
+
+    payload = {
+        "projects": [{"id": "demo-project", "name": "Demo Project"}],
+        "people": [
+            {"id": "one", "name": "Jamie Li", "team": "Product"},
+            {"id": "two", "name": "Jamie Li", "team": "Engineering", "email": "jamie@example.com"},
+        ],
+    }
+
+    response = client.post("/import?mode=replace", json=payload)
+    assert response.status_code == 200
+
+    people = client.get("/people").json()
+    assert len(people) == 1
+    assert people[0]["name"] == "Jamie Li"
+    assert people[0]["team"] == "Engineering"
+    assert people[0]["email"] == "jamie@example.com"
