@@ -1319,27 +1319,55 @@ Write a professional executive summary that highlights the project's current sta
     recentActivity: [...project.recentActivity]
   });
 
+  const findPersonByName = (name) => {
+    if (!name) return null;
+    const lower = name.toLowerCase();
+    return people.find(person => person.name.toLowerCase() === lower) || null;
+  };
+
+  const normalizeStakeholderEntry = (person) => {
+    if (!person || !person.name) return null;
+    const existing = findPersonByName(person.name);
+    return {
+      name: person.name,
+      team: existing?.team || person.team || 'Contributor'
+    };
+  };
+
+  const normalizeStakeholderList = (list = []) => {
+    const map = new Map();
+
+    list.forEach(entry => {
+      const normalized = normalizeStakeholderEntry(entry);
+      if (!normalized) return;
+
+      map.set(normalized.name.toLowerCase(), normalized);
+    });
+
+    return Array.from(map.values());
+  };
+
   // Helper function to sync stakeholders to People database
   const syncStakeholdersToPeople = async (stakeholders) => {
     if (!stakeholders || stakeholders.length === 0) return;
 
     for (const stakeholder of stakeholders) {
-      // Check if person already exists in people database
-      const existingPerson = people.find(p =>
-        p.name.toLowerCase() === stakeholder.name.toLowerCase()
-      );
+      const normalized = normalizeStakeholderEntry(stakeholder);
+      if (!normalized) continue;
 
-      // If person doesn't exist, create them
-      if (!existingPerson) {
-        try {
-          await createPerson({
-            name: stakeholder.name,
-            team: stakeholder.team || 'Contributor',
-            email: null
-          });
-        } catch (error) {
-          console.error(`Failed to sync stakeholder ${stakeholder.name} to People:`, error);
-        }
+      const existingPerson = findPersonByName(normalized.name);
+      const needsSync = !existingPerson || existingPerson.team !== normalized.team;
+
+      if (!needsSync) continue;
+
+      try {
+        await createPerson({
+          name: normalized.name,
+          team: normalized.team,
+          email: existingPerson?.email || null
+        });
+      } catch (error) {
+        console.error(`Failed to sync stakeholder ${normalized.name} to People:`, error);
       }
     }
   };
@@ -1352,12 +1380,9 @@ Write a professional executive summary that highlights the project's current sta
       // Add stakeholders
       if (project.stakeholders) {
         project.stakeholders.forEach(stakeholder => {
-          if (stakeholder.name && stakeholder.name.trim()) {
-            peopleToSync.set(stakeholder.name.toLowerCase(), {
-              name: stakeholder.name,
-              team: stakeholder.team || 'Contributor'
-            });
-          }
+          const normalized = normalizeStakeholderEntry(stakeholder);
+          if (!normalized) return;
+          peopleToSync.set(normalized.name.toLowerCase(), normalized);
         });
       }
 
@@ -1365,10 +1390,7 @@ Write a professional executive summary that highlights the project's current sta
       if (project.recentActivity) {
         project.recentActivity.forEach(activity => {
           if (activity.author && activity.author.trim() && activity.author !== 'You') {
-            peopleToSync.set(activity.author.toLowerCase(), {
-              name: activity.author,
-              team: 'Contributor'
-            });
+            peopleToSync.set(activity.author.toLowerCase(), normalizeStakeholderEntry({ name: activity.author }));
           }
         });
       }
@@ -1393,7 +1415,7 @@ Write a professional executive summary that highlights the project's current sta
     if (!newProjectName.trim()) return;
 
     // newProjectStakeholders is now an array of {name, team} objects from PersonPicker
-    const stakeholderEntries = newProjectStakeholders.filter(Boolean);
+    const stakeholderEntries = normalizeStakeholderList(newProjectStakeholders.filter(Boolean));
 
     const createdAt = new Date().toISOString();
     const newId = `proj-${Date.now()}`;
@@ -1402,7 +1424,7 @@ Write a professional executive summary that highlights the project's current sta
       name: newProjectName.trim(),
       stakeholders: stakeholderEntries.length > 0
         ? stakeholderEntries
-        : [{ name: loggedInUser || 'You', team: 'Owner' }],
+        : normalizeStakeholderList([{ name: loggedInUser || 'You', team: 'Owner' }]),
       status: newProjectStatus,
       priority: newProjectPriority,
       progress: 0,
@@ -1427,11 +1449,11 @@ Write a professional executive summary that highlights the project's current sta
   };
 
   const handleStakeholderSelection = (selectedPeople) => {
-    setNewProjectStakeholders(selectedPeople);
+    setNewProjectStakeholders(normalizeStakeholderList(selectedPeople));
   };
 
   const handleEditStakeholderSelection = (selectedPeople) => {
-    setEditValues(prev => ({ ...prev, stakeholders: selectedPeople }));
+    setEditValues(prev => ({ ...prev, stakeholders: normalizeStakeholderList(selectedPeople) }));
   };
 
   const handleCreateNewPerson = async (personData) => {
@@ -1442,20 +1464,24 @@ Write a professional executive summary that highlights the project's current sta
     });
 
     // Add the newly created person to the appropriate stakeholder list
-    const newStakeholder = { name: created.name, team: created.team };
+    const newStakeholder = normalizeStakeholderEntry(created) || { name: created.name, team: created.team };
 
     if (stakeholderSelectionTarget === 'newProject') {
       setNewProjectStakeholders(prev => {
-        const exists = prev.some(p => p.name === newStakeholder.name);
-        return exists ? prev : [...prev, newStakeholder];
+        const exists = prev.some(p => p.name.toLowerCase() === newStakeholder.name.toLowerCase());
+        return exists
+          ? prev.map(p => p.name.toLowerCase() === newStakeholder.name.toLowerCase() ? newStakeholder : p)
+          : [...prev, newStakeholder];
       });
     } else if (stakeholderSelectionTarget === 'editProject') {
       setEditValues(prev => {
         const currentStakeholders = prev.stakeholders || [];
-        const exists = currentStakeholders.some(p => p.name === newStakeholder.name);
+        const exists = currentStakeholders.some(p => p.name.toLowerCase() === newStakeholder.name.toLowerCase());
         return {
           ...prev,
-          stakeholders: exists ? currentStakeholders : [...currentStakeholders, newStakeholder]
+          stakeholders: exists
+            ? currentStakeholders.map(p => p.name.toLowerCase() === newStakeholder.name.toLowerCase() ? newStakeholder : p)
+            : [...currentStakeholders, newStakeholder]
         };
       });
     }
@@ -1586,269 +1612,311 @@ Write a professional executive summary that highlights the project's current sta
     });
   };
 
-  const applyThrustActions = (actions = []) => {
+
+  const applyThrustActions = async (actions = []) => {
     if (!actions.length) {
       return { deltas: [], actionResults: [] };
     }
 
     const result = { deltas: [], actionResults: [] };
+    const workingProjects = projects.map(cloneProjectDeep);
+    const projectLookup = new Map();
+    workingProjects.forEach(project => {
+      projectLookup.set(`${project.id}`.toLowerCase(), project.id);
+      projectLookup.set(project.name.toLowerCase(), project.id);
+    });
 
-    setProjects(prevProjects => {
-      const workingProjects = prevProjects.map(cloneProjectDeep);
-      const projectLookup = new Map();
+    const appendActionResult = (label, detail, deltas = []) => {
+      result.actionResults.push({
+        label: label || 'Action processed',
+        detail: detail || 'No additional details provided.',
+        deltas
+      });
+      result.deltas.push(...deltas);
+    };
 
-      const appendActionResult = (label, detail, deltas = []) => {
-        result.actionResults.push({
-          label: label || 'Action processed',
-          detail: detail || 'No additional details provided.',
-          deltas
+    const resolveProject = (target) => {
+      if (!target) return null;
+      const normalizedTarget = `${target}`.toLowerCase();
+      const mappedId = projectLookup.get(normalizedTarget);
+      const lookupTarget = mappedId || target;
+      const lowerTarget = `${lookupTarget}`.toLowerCase();
+      return workingProjects.find(p => `${p.id}` === `${lookupTarget}` || p.name.toLowerCase() === lowerTarget);
+    };
+
+    const resolveTask = (project, target) => {
+      if (!project || !target) return null;
+      const lowerTarget = `${target}`.toLowerCase();
+      return project.plan.find(task => `${task.id}` === `${target}` || task.title.toLowerCase() === lowerTarget);
+    };
+
+    const describeDueDate = (date) => date ? `due ${new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'no due date set';
+
+    let projectsChanged = false;
+
+    for (const action of actions) {
+      const actionDeltas = [];
+      let label = '';
+      let detail = '';
+
+      if (action.type === 'add_person') {
+        const personName = (action.name || action.personName || '').trim();
+        if (!personName) {
+          appendActionResult('Skipped action: missing person name', 'Skipped add_person because no name was provided.', actionDeltas);
+          continue;
+        }
+
+        const targetTeam = action.team || 'Contributor';
+        const existing = findPersonByName(personName);
+        const saved = await createPerson({
+          name: personName,
+          team: targetTeam,
+          email: action.email || existing?.email || null
         });
-        result.deltas.push(...deltas);
-      };
 
-      const resolveProject = (target) => {
-        if (!target) return null;
-        const normalizedTarget = `${target}`.toLowerCase();
-        const mappedId = projectLookup.get(normalizedTarget);
-        const lookupTarget = mappedId || target;
-        const lowerTarget = `${lookupTarget}`.toLowerCase();
-        return workingProjects.find(p => `${p.id}` === `${lookupTarget}` || p.name.toLowerCase() === lowerTarget);
-      };
-
-      const resolveTask = (project, target) => {
-        if (!project || !target) return null;
-        const lowerTarget = `${target}`.toLowerCase();
-        return project.plan.find(task => `${task.id}` === `${target}` || task.title.toLowerCase() === lowerTarget);
-      };
-
-      const describeDueDate = (date) => date ? `due ${new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'no due date set';
-
-      actions.forEach(action => {
-        const actionDeltas = [];
-        let label = '';
-        let detail = '';
-
-        if (action.type === 'create_project') {
-          const projectName = (action.name || action.projectName || '').trim();
-          if (!projectName) {
-            label = 'Skipped action: missing project name';
-            detail = 'Skipped create_project because no name was provided.';
-            appendActionResult(label, detail, actionDeltas);
-            return;
-          }
-
-          const stakeholderEntries = action.stakeholders
-            ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean).map(name => ({ name, team: 'Contributor' }))
-            : [{ name: loggedInUser || 'Momentum', team: 'Owner' }];
-          const createdAt = new Date().toISOString();
-          const newId = action.projectId || action.id || `ai-project-${Math.random().toString(36).slice(2, 7)}`;
-          const newProject = {
-            id: newId,
-            name: projectName,
-            priority: action.priority || 'medium',
-            status: action.status || 'in_progress',
-            progress: typeof action.progress === 'number' ? action.progress : 0,
-            stakeholders: stakeholderEntries,
-            description: action.description || '',
-            startDate: createdAt.split('T')[0],
-            targetDate: action.targetDate || '',
-            plan: [],
-            recentActivity: action.description
-              ? [{ id: generateActivityId(), date: createdAt, note: action.description, author: 'Momentum' }]
-              : []
-          };
-
-          workingProjects.push(newProject);
-          projectLookup.set(`${projectName}`.toLowerCase(), newId);
-          projectLookup.set(`${newId}`.toLowerCase(), newId);
-          if (action.projectId || action.id) {
-            projectLookup.set(`${action.projectId || action.id}`.toLowerCase(), newId);
-          }
-
-          actionDeltas.push({ type: 'remove_project', projectId: newId });
-          label = `Created new project "${projectName}"`;
-          detail = `Created new project "${projectName}" with status ${newProject.status} and priority ${newProject.priority}`;
-          appendActionResult(label, detail, actionDeltas);
-          return;
-        }
-
-        const project = resolveProject(action.projectId || action.projectName);
-
-        if (!project) {
-          appendActionResult('Skipped action: unknown project', 'Skipped action because the project was not found.', actionDeltas);
-          return;
-        }
-
-        switch (action.type) {
-          case 'comment': {
-            const activityId = generateActivityId();
-            const newActivity = {
-              id: activityId,
-              date: new Date().toISOString(),
-              note: action.note || action.content || 'Update logged by Momentum',
-              author: action.author || 'Momentum'
-            };
-            project.recentActivity = [newActivity, ...project.recentActivity];
-            actionDeltas.push({ type: 'remove_activity', projectId: project.id, activityId });
-            label = `Commented on ${project.name}`;
-            detail = `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author}`;
-            break;
-          }
-          case 'add_task': {
-            const taskId = action.taskId || `ai-task-${Math.random().toString(36).slice(2, 7)}`;
-            const newTask = {
-              id: taskId,
-              title: action.title || 'New task',
-              status: action.status || 'todo',
-              dueDate: action.dueDate,
-              completedDate: action.completedDate,
-              subtasks: (action.subtasks || []).map(subtask => ({
-                id: subtask.id || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`,
-                title: subtask.title || 'New subtask',
-                status: subtask.status || 'todo',
-                dueDate: subtask.dueDate
-              }))
-            };
-            project.plan = [...project.plan, newTask];
-            actionDeltas.push({ type: 'remove_task', projectId: project.id, taskId });
-            label = `Added task "${newTask.title}" to ${project.name}`;
-            detail = `Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)}) to ${project.name}`;
-            break;
-          }
-          case 'update_task': {
-            const task = resolveTask(project, action.taskId || action.taskTitle);
-            if (!task) {
-              label = `Skipped action: missing task in ${project.name}`;
-              detail = `Skipped task update in ${project.name} because the task was not found.`;
-              break;
-            }
-
-            const previous = { ...task };
-            const changes = [];
-
-            if (action.title && action.title !== task.title) {
-              changes.push(`renamed to "${action.title}"`);
-              task.title = action.title;
-            }
-            if (action.status && action.status !== task.status) {
-              changes.push(`status ${task.status} → ${action.status}`);
-              task.status = action.status;
-            }
-            if (action.dueDate && action.dueDate !== task.dueDate) {
-              changes.push(`due date ${task.dueDate || 'unset'} → ${action.dueDate}`);
-              task.dueDate = action.dueDate;
-            }
-            if (action.completedDate && action.completedDate !== task.completedDate) {
-              changes.push(`completed ${action.completedDate}`);
-              task.completedDate = action.completedDate;
-            }
-
-            actionDeltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
-            label = `Updated task "${task.title}" in ${project.name}`;
-            detail = `Updated task "${task.title}" in ${project.name}: ${changes.join('; ') || 'no tracked changes'}`;
-            break;
-          }
-          case 'add_subtask': {
-            const task = resolveTask(project, action.taskId || action.taskTitle);
-            if (!task) {
-              label = `Skipped action: missing parent task in ${project.name}`;
-              detail = `Skipped subtask add in ${project.name} because the parent task was not found.`;
-              break;
-            }
-
-            const subtaskId = action.subtaskId || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`;
-            const newSubtask = {
-              id: subtaskId,
-              title: action.title || action.subtaskTitle || 'New subtask',
-              status: action.status || 'todo',
-              dueDate: action.dueDate
-            };
-            task.subtasks = [...task.subtasks, newSubtask];
-            actionDeltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
-            label = `Added subtask "${newSubtask.title}" to ${task.title}`;
-            detail = `Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)}) under ${task.title}`;
-            break;
-          }
-          case 'update_subtask': {
-            const task = resolveTask(project, action.taskId || action.taskTitle);
-            if (!task) {
-              label = `Skipped action: missing parent task in ${project.name}`;
-              detail = `Skipped subtask update in ${project.name} because the parent task was not found.`;
-              break;
-            }
-            const subtask = task.subtasks.find(st => `${st.id}` === `${action.subtaskId}` || st.title.toLowerCase() === `${action.subtaskTitle || action.title || ''}`.toLowerCase());
-            if (!subtask) {
-              label = `Skipped action: missing subtask in ${task.title}`;
-              detail = `Skipped subtask update because no subtask matched in ${task.title}.`;
-              break;
-            }
-
-            const previous = { ...subtask };
-            const changes = [];
-
-            if ((action.title || action.subtaskTitle) && (action.title || action.subtaskTitle) !== subtask.title) {
-              changes.push(`renamed to "${action.title || action.subtaskTitle}"`);
-              subtask.title = action.title || action.subtaskTitle;
-            }
-            if (action.status && action.status !== subtask.status) {
-              changes.push(`status ${subtask.status} → ${action.status}`);
-              subtask.status = action.status;
-            }
-            if (action.dueDate && action.dueDate !== subtask.dueDate) {
-              changes.push(`due date ${subtask.dueDate || 'unset'} → ${action.dueDate}`);
-              subtask.dueDate = action.dueDate;
-            }
-            if (action.completedDate && action.completedDate !== subtask.completedDate) {
-              changes.push(`completed ${action.completedDate}`);
-              subtask.completedDate = action.completedDate;
-            }
-
-            actionDeltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
-            label = `Updated subtask "${subtask.title}" in ${task.title}`;
-            detail = `Updated subtask "${subtask.title}" in ${task.title}: ${changes.join('; ') || 'no tracked changes'}`;
-            break;
-          }
-          case 'update_project': {
-            const previous = {
-              status: project.status,
-              progress: project.progress,
-              targetDate: project.targetDate,
-              lastUpdate: project.lastUpdate
-            };
-            const changes = [];
-
-            if (action.status && action.status !== project.status) {
-              changes.push(`status ${project.status} → ${action.status}`);
-              project.status = action.status;
-            }
-            if (typeof action.progress === 'number' && action.progress !== project.progress) {
-              changes.push(`progress ${project.progress}% → ${action.progress}%`);
-              project.progress = action.progress;
-            }
-            if (action.targetDate && action.targetDate !== project.targetDate) {
-              changes.push(`target ${project.targetDate || 'unset'} → ${action.targetDate}`);
-              project.targetDate = action.targetDate;
-            }
-            if (action.lastUpdate && action.lastUpdate !== project.lastUpdate) {
-              changes.push(`last update → ${action.lastUpdate}`);
-              project.lastUpdate = action.lastUpdate;
-            }
-
-            actionDeltas.push({ type: 'restore_project', projectId: project.id, previous });
-            label = `Updated ${project.name}`;
-            detail = `Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`;
-            break;
-          }
-          default:
-            label = 'Skipped action: unsupported type';
-            detail = `Skipped unsupported action type: ${action.type}`;
-        }
+        const updatedTeam = existing && saved.team !== existing.team;
+        label = existing ? `Updated person ${saved.name}` : `Added person ${saved.name}`;
+        detail = updatedTeam
+          ? `Ensured ${saved.name} is tracked with team ${saved.team}.`
+          : `${saved.name} is available in People.`;
 
         appendActionResult(label, detail, actionDeltas);
-      });
+        continue;
+      }
 
-      return workingProjects;
-    });
+      if (action.type === 'create_project') {
+        const projectName = (action.name || action.projectName || '').trim();
+        if (!projectName) {
+          label = 'Skipped action: missing project name';
+          detail = 'Skipped create_project because no name was provided.';
+          appendActionResult(label, detail, actionDeltas);
+          continue;
+        }
+
+        const stakeholderEntries = action.stakeholders
+          ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean).map(name => ({ name, team: 'Contributor' }))
+          : [{ name: loggedInUser || 'Momentum', team: 'Owner' }];
+        const normalizedStakeholders = normalizeStakeholderList(stakeholderEntries);
+        const createdAt = new Date().toISOString();
+        const newId = action.projectId || action.id || `ai-project-${Math.random().toString(36).slice(2, 7)}`;
+        const newProject = {
+          id: newId,
+          name: projectName,
+          priority: action.priority || 'medium',
+          status: action.status || 'in_progress',
+          progress: typeof action.progress === 'number' ? action.progress : 0,
+          stakeholders: normalizedStakeholders,
+          description: action.description || '',
+          startDate: createdAt.split('T')[0],
+          targetDate: action.targetDate || '',
+          plan: [],
+          recentActivity: action.description
+            ? [{ id: generateActivityId(), date: createdAt, note: action.description, author: 'Momentum' }]
+            : []
+        };
+
+        workingProjects.push(newProject);
+        projectLookup.set(`${projectName}`.toLowerCase(), newId);
+        projectLookup.set(`${newId}`.toLowerCase(), newId);
+        if (action.projectId || action.id) {
+          projectLookup.set(`${action.projectId || action.id}`.toLowerCase(), newId);
+        }
+
+        actionDeltas.push({ type: 'remove_project', projectId: newId });
+        label = `Created new project "${projectName}"`;
+        detail = `Created new project "${projectName}" with status ${newProject.status} and priority ${newProject.priority}`;
+        projectsChanged = true;
+
+        appendActionResult(label, detail, actionDeltas);
+        await syncStakeholdersToPeople(newProject.stakeholders);
+        continue;
+      }
+
+      const project = resolveProject(action.projectId || action.projectName);
+
+      if (!project) {
+        appendActionResult('Skipped action: unknown project', 'Skipped action because the project was not found.', actionDeltas);
+        continue;
+      }
+
+      switch (action.type) {
+        case 'comment': {
+          const activityId = generateActivityId();
+          const newActivity = {
+            id: activityId,
+            date: new Date().toISOString(),
+            note: action.note || action.content || 'Update logged by Momentum',
+            author: action.author || 'Momentum'
+          };
+          project.recentActivity = [newActivity, ...project.recentActivity];
+          actionDeltas.push({ type: 'remove_activity', projectId: project.id, activityId });
+          label = `Commented on ${project.name}`;
+          detail = `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author}`;
+          projectsChanged = true;
+          break;
+        }
+        case 'add_task': {
+          const taskId = action.taskId || `ai-task-${Math.random().toString(36).slice(2, 7)}`;
+          const newTask = {
+            id: taskId,
+            title: action.title || 'New task',
+            status: action.status || 'todo',
+            dueDate: action.dueDate,
+            completedDate: action.completedDate,
+            subtasks: (action.subtasks || []).map(subtask => ({
+              id: subtask.id || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`,
+              title: subtask.title || 'New subtask',
+              status: subtask.status || 'todo',
+              dueDate: subtask.dueDate
+            }))
+          };
+          project.plan = [...project.plan, newTask];
+          actionDeltas.push({ type: 'remove_task', projectId: project.id, taskId });
+          label = `Added task "${newTask.title}" to ${project.name}`;
+          detail = `Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)}) to ${project.name}`;
+          projectsChanged = true;
+          break;
+        }
+        case 'update_task': {
+          const task = resolveTask(project, action.taskId || action.taskTitle);
+          if (!task) {
+            label = `Skipped action: missing task in ${project.name}`;
+            detail = `Skipped task update in ${project.name} because the task was not found.`;
+            break;
+          }
+
+          const previous = { ...task };
+          const changes = [];
+
+          if (action.title && action.title !== task.title) {
+            changes.push(`renamed to "${action.title}"`);
+            task.title = action.title;
+          }
+          if (action.status && action.status !== task.status) {
+            changes.push(`status ${task.status} → ${action.status}`);
+            task.status = action.status;
+          }
+          if (action.dueDate && action.dueDate !== task.dueDate) {
+            changes.push(`due date ${task.dueDate || 'unset'} → ${action.dueDate}`);
+            task.dueDate = action.dueDate;
+          }
+          if (action.completedDate && action.completedDate !== task.completedDate) {
+            changes.push(`completed ${action.completedDate}`);
+            task.completedDate = action.completedDate;
+          }
+
+          actionDeltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
+          label = `Updated task "${task.title}" in ${project.name}`;
+          detail = `Updated task "${task.title}" in ${project.name}: ${changes.join('; ') || 'no tracked changes'}`;
+          projectsChanged = true;
+          break;
+        }
+        case 'add_subtask': {
+          const task = resolveTask(project, action.taskId || action.taskTitle);
+          if (!task) {
+            label = `Skipped action: missing task in ${project.name}`;
+            detail = `Skipped subtask creation in ${project.name} because the parent task was not found.`;
+            break;
+          }
+
+          const subtaskId = action.subtaskId || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`;
+          const newSubtask = {
+            id: subtaskId,
+            title: action.subtaskTitle || action.title || 'New subtask',
+            status: action.status || 'todo',
+            dueDate: action.dueDate
+          };
+          task.subtasks = [...(task.subtasks || []), newSubtask];
+          actionDeltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
+          label = `Added subtask "${newSubtask.title}" to ${task.title}`;
+          detail = `Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)}) under ${task.title} in ${project.name}`;
+          projectsChanged = true;
+          break;
+        }
+        case 'update_subtask': {
+          const task = resolveTask(project, action.taskId || action.taskTitle);
+          if (!task) {
+            label = `Skipped action: missing task in ${project.name}`;
+            detail = `Skipped subtask update in ${project.name} because the parent task was not found.`;
+            break;
+          }
+
+          const subtask = resolveTask({ plan: task.subtasks || [] }, action.subtaskId || action.subtaskTitle);
+          if (!subtask) {
+            label = `Skipped action: missing subtask in ${task.title}`;
+            detail = `Skipped subtask update in ${task.title} because the subtask was not found.`;
+            break;
+          }
+
+          const previous = { ...subtask };
+          const changes = [];
+
+          if (action.title && action.title !== subtask.title) {
+            changes.push(`renamed to "${action.title}"`);
+            subtask.title = action.title;
+          }
+          if (action.status && action.status !== subtask.status) {
+            changes.push(`status ${subtask.status} → ${action.status}`);
+            subtask.status = action.status;
+          }
+          if (action.dueDate && action.dueDate !== subtask.dueDate) {
+            changes.push(`due date ${subtask.dueDate || 'unset'} → ${action.dueDate}`);
+            subtask.dueDate = action.dueDate;
+          }
+          if (action.completedDate && action.completedDate !== subtask.completedDate) {
+            changes.push(`completed ${action.completedDate}`);
+            subtask.completedDate = action.completedDate;
+          }
+
+          actionDeltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
+          label = `Updated subtask "${subtask.title}" in ${task.title}`;
+          detail = `Updated subtask "${subtask.title}" in ${task.title}: ${changes.join('; ') || 'no tracked changes'}`;
+          projectsChanged = true;
+          break;
+        }
+        case 'update_project': {
+          const previous = {
+            status: project.status,
+            progress: project.progress,
+            targetDate: project.targetDate,
+            lastUpdate: project.lastUpdate
+          };
+          const changes = [];
+
+          if (action.status && action.status !== project.status) {
+            changes.push(`status ${project.status} → ${action.status}`);
+            project.status = action.status;
+          }
+          if (typeof action.progress === 'number' && action.progress !== project.progress) {
+            changes.push(`progress ${project.progress}% → ${action.progress}%`);
+            project.progress = action.progress;
+          }
+          if (action.targetDate && action.targetDate !== project.targetDate) {
+            changes.push(`target ${project.targetDate || 'unset'} → ${action.targetDate}`);
+            project.targetDate = action.targetDate;
+          }
+          if (action.lastUpdate && action.lastUpdate !== project.lastUpdate) {
+            changes.push(`last update → ${action.lastUpdate}`);
+            project.lastUpdate = action.lastUpdate;
+          }
+
+          actionDeltas.push({ type: 'restore_project', projectId: project.id, previous });
+          label = `Updated ${project.name}`;
+          detail = `Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`;
+          projectsChanged = true;
+          break;
+        }
+        default:
+          label = 'Skipped action: unsupported type';
+          detail = `Skipped unsupported action type: ${action.type}`;
+      }
+
+      appendActionResult(label, detail, actionDeltas);
+    }
+
+    if (projectsChanged) {
+      setProjects(workingProjects);
+    }
 
     return {
       deltas: result.deltas,
@@ -1874,6 +1942,8 @@ Write a professional executive summary that highlights the project's current sta
         return `Update subtask "${action.subtaskTitle || action.title || action.subtaskId || ''}" in ${projectName}`;
       case 'update_project':
         return `Update project ${projectName}: status/progress/date tweaks`;
+      case 'add_person':
+        return `Add ${action.name || action.personName || 'a new person'} to People`;
       default:
         return `Action queued: ${action.type || 'unknown'} for ${projectName}`;
     }
@@ -1884,24 +1954,25 @@ Write a professional executive summary that highlights the project's current sta
     // Include admin users for backwards compatibility
     const stakeholderMap = new Map();
 
-    adminUsers.forEach(admin => {
-      stakeholderMap.set(admin.name, admin);
-    });
+    const addStakeholder = (entry) => {
+      const normalized = normalizeStakeholderEntry(entry);
+      if (!normalized) return;
 
-    people.forEach(person => {
-      if (!stakeholderMap.has(person.name)) {
-        stakeholderMap.set(person.name, { name: person.name, team: person.team });
+      const key = normalized.name.toLowerCase();
+      const existing = stakeholderMap.get(key);
+
+      if (!existing || (!existing.team && normalized.team)) {
+        stakeholderMap.set(key, normalized);
       }
-    });
+    };
+
+    adminUsers.forEach(addStakeholder);
+    people.forEach(addStakeholder);
 
     // Also include any stakeholders from projects that aren't in the People database yet
     // (for backwards compatibility with existing data)
     projects.forEach(project => {
-      project.stakeholders.forEach(stakeholder => {
-        if (!stakeholderMap.has(stakeholder.name)) {
-          stakeholderMap.set(stakeholder.name, stakeholder);
-        }
-      });
+      project.stakeholders.forEach(addStakeholder);
     });
 
     return Array.from(stakeholderMap.values());
@@ -2057,6 +2128,7 @@ Supported atomic actions (never combine multiple changes into one action):
 - update_subtask: adjust a subtask. Fields: projectId, taskId or taskTitle, subtaskId or subtaskTitle, title, status, dueDate, completedDate.
 - update_project: change project status/progress/dates. Fields: projectId, status, progress (0-100), targetDate, lastUpdate.
 - create_project: create a new project. Fields: name (required), description (optional), priority (low/medium/high, default medium), status (planning/active/on-hold/cancelled, default planning), targetDate (optional), stakeholders (comma-separated names, optional).
+- add_person: add a person to the People database. Fields: name (required), team (optional), email (optional). If the person already exists, update their info instead of duplicating.
 
 Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project. When creating projects, if you lack required information like name or description, ask the user for these details before proceeding with the action.`;
     const context = buildThrustContext();
@@ -2076,7 +2148,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
     try {
       const { parsed, content } = await requestMomentumActions(messages);
       setThrustPendingActions(parsed.actions || []);
-      const { deltas, actionResults } = applyThrustActions(parsed.actions || []);
+      const { deltas, actionResults } = await applyThrustActions(parsed.actions || []);
 
       const assistantMessage = {
         id: responseId,

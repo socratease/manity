@@ -14,6 +14,26 @@ export const PortfolioProvider = ({ children }) => {
   const [people, setPeopleState] = useState([]);
   const hasInitializedRef = useRef(false);
 
+  const dedupePeople = useCallback((list = []) => {
+    const map = new Map();
+
+    list.forEach(person => {
+      const key = (person?.name || '').trim().toLowerCase();
+      if (!key) return;
+
+      const existing = map.get(key) || {};
+      map.set(key, {
+        ...existing,
+        ...person,
+        name: person.name || existing.name,
+        team: person.team || existing.team || 'Contributor',
+        email: person.email ?? existing.email ?? null
+      });
+    });
+
+    return Array.from(map.values());
+  }, []);
+
   const apiRequest = useCallback(async (path, options = {}) => {
     const response = await fetch(resolveUrl(path), {
       headers: {
@@ -74,13 +94,13 @@ export const PortfolioProvider = ({ children }) => {
     try {
       const data = await apiRequest('/people');
       if (Array.isArray(data)) {
-        setPeopleState(data);
+        setPeopleState(dedupePeople(data));
       }
     } catch (error) {
       console.error('Failed to load people', error);
       setPeopleState([]);
     }
-  }, [apiRequest]);
+  }, [apiRequest, dedupePeople]);
 
   useEffect(() => {
     refreshProjects();
@@ -245,13 +265,32 @@ export const PortfolioProvider = ({ children }) => {
   }, [apiRequest, updateProjects]);
 
   const createPerson = useCallback(async (person) => {
+    const existing = people.find(p => p.name.toLowerCase() === person.name.toLowerCase());
+
+    if (existing) {
+      const needsUpdate =
+        (person.team && person.team !== existing.team) ||
+        (person.email && person.email !== existing.email);
+
+      if (needsUpdate) {
+        const updated = await apiRequest(`/people/${existing.id}`, {
+          method: 'PUT',
+          body: JSON.stringify({ ...existing, ...person, id: existing.id })
+        });
+        setPeopleState(prev => prev.map(p => p.id === existing.id ? updated : p));
+        return updated;
+      }
+
+      return existing;
+    }
+
     const created = await apiRequest('/people', {
       method: 'POST',
       body: JSON.stringify(person)
     });
-    setPeopleState(prev => [...prev, created]);
+    setPeopleState(prev => dedupePeople([...prev, created]));
     return created;
-  }, [apiRequest]);
+  }, [apiRequest, dedupePeople, people]);
 
   const updatePerson = useCallback(async (personId, updates) => {
     const updated = await apiRequest(`/people/${personId}`, {
