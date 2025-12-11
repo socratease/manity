@@ -16,6 +16,7 @@ export interface Subtask {
   status: 'todo' | 'in-progress' | 'completed';
   dueDate?: string;
   completedDate?: string;
+  assignee?: User;
 }
 
 export interface Task {
@@ -24,6 +25,7 @@ export interface Task {
   status: 'todo' | 'in-progress' | 'completed';
   dueDate?: string;
   completedDate?: string;
+  assignee?: User;
   subtasks: Subtask[];
 }
 
@@ -258,7 +260,8 @@ const normalizeSubtask = (subtask: Partial<Subtask>, idx: number): Subtask => ({
   title: typeof subtask.title === 'string' ? subtask.title : 'Untitled Subtask',
   status: subtask.status === 'in-progress' || subtask.status === 'completed' ? subtask.status : 'todo',
   dueDate: subtask.dueDate,
-  completedDate: subtask.completedDate
+  completedDate: subtask.completedDate,
+  assignee: subtask.assignee
 });
 
 const normalizeTask = (task: Partial<Task>, idx: number): Task => ({
@@ -267,6 +270,7 @@ const normalizeTask = (task: Partial<Task>, idx: number): Task => ({
   status: task.status === 'in-progress' || task.status === 'completed' ? task.status : 'todo',
   dueDate: task.dueDate,
   completedDate: task.completedDate,
+  assignee: task.assignee,
   subtasks: Array.isArray(task.subtasks) ? task.subtasks.map((subtask, subIdx) => normalizeSubtask(subtask, subIdx)) : []
 });
 
