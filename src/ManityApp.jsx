@@ -1297,7 +1297,8 @@ Write a professional executive summary that highlights the project's current sta
     // Combined regex: match old format or new format
     // Old format: @[Display Name](type:value)
     // New format: @DisplayName (word characters, spaces, and parentheses until space or end)
-    const combinedRegex = /@\[([^\]]+)\]\(([^:]+):([^)]+)\)|@([\w\s\(\),→]+?)(?=\s|$|[.!?])/g;
+    // Mentions must start at the beginning of the string or after whitespace to avoid matching emails
+    const combinedRegex = /(?<!\S)@\[([^\]]+)\]\(([^:]+):([^)]+)\)|(?<!\S)@([\w\s\(\),→.'-]+)(?=\s|$|[.!?])/g;
     let match;
 
     while ((match = combinedRegex.exec(text)) !== null) {
@@ -1528,28 +1529,38 @@ Write a professional executive summary that highlights the project's current sta
   };
 
   const buildThrustContext = () => {
-    return projects.map(project => ({
-      id: project.id,
-      name: project.name,
-      status: project.status,
-      progress: project.progress,
-      priority: project.priority,
-      lastUpdate: project.lastUpdate,
-      targetDate: project.targetDate,
-      plan: project.plan.map(task => ({
-        id: task.id,
-        title: task.title,
-        status: task.status,
-        dueDate: task.dueDate,
-        subtasks: (task.subtasks || []).map(subtask => ({
-          id: subtask.id,
-          title: subtask.title,
-          status: subtask.status,
-          dueDate: subtask.dueDate
-        }))
-      })),
-      recentActivity: project.recentActivity.slice(0, 3)
-    }));
+    return projects.map(project => {
+      const contributors = (project.stakeholders || []).map(person => ({
+        name: person.name,
+        team: person.team,
+        email: person.email || null
+      }));
+
+      return {
+        id: project.id,
+        name: project.name,
+        status: project.status,
+        progress: project.progress,
+        priority: project.priority,
+        lastUpdate: project.lastUpdate,
+        targetDate: project.targetDate,
+        stakeholders: contributors,
+        contributors,
+        plan: project.plan.map(task => ({
+          id: task.id,
+          title: task.title,
+          status: task.status,
+          dueDate: task.dueDate,
+          subtasks: (task.subtasks || []).map(subtask => ({
+            id: subtask.id,
+            title: subtask.title,
+            status: subtask.status,
+            dueDate: subtask.dueDate
+          }))
+        })),
+        recentActivity: project.recentActivity.slice(0, 3)
+      };
+    });
   };
 
   const parseAssistantResponse = (content) => {
@@ -1720,7 +1731,8 @@ Write a professional executive summary that highlights the project's current sta
           priority: project.priority,
           progress: project.progress,
           targetDate: project.targetDate,
-          lastUpdate: project.lastUpdate
+          lastUpdate: project.lastUpdate,
+          contributors: project.contributors || project.stakeholders || []
         }));
 
         const queryResult = {
@@ -1828,7 +1840,7 @@ Write a professional executive summary that highlights the project's current sta
             id: activityId,
             date: new Date().toISOString(),
             note: action.note || action.content || 'Update logged by Momentum',
-            author: action.author || 'Momentum'
+            author: action.author || loggedInUser || 'You'
           };
           project.recentActivity = [newActivity, ...project.recentActivity];
           actionDeltas.push({ type: 'remove_activity', projectId: project.id, activityId });
@@ -2013,11 +2025,17 @@ Write a professional executive summary that highlights the project's current sta
             continue;
           }
 
+          const signature = 'sent with the help of an AI clerk';
+          const normalizedBody = action.body || '';
+          const bodyWithSignature = normalizedBody.toLowerCase().includes(signature)
+            ? normalizedBody
+            : `${normalizedBody.trim()}` + (normalizedBody.trim() ? `\n\n${signature}` : signature);
+
           try {
             await sendEmail({
               recipients: normalizedRecipients,
               subject: action.subject,
-              body: action.body
+              body: bodyWithSignature
             });
             label = `Email sent to ${normalizedRecipients.join(', ')}`;
             detail = `Sent email "${action.subject}"`;
@@ -2259,6 +2277,8 @@ Supported atomic actions (never combine multiple changes into one action):
 - add_person: add a person to the People database. Fields: name (required), team (optional), email (optional). If the person already exists, update their info instead of duplicating.
 - send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People, comma separated or array), subject (required), body (required).
 - query_portfolio: request portfolio data when you need fresh context. Fields: scope (portfolio/project/people), detailLevel (summary/detailed), includePeople (boolean), projectId or projectName (optional when scope is project).
+
+When drafting email bodies, append the sign-off "sent with the help of an AI clerk" before sending.
 
 Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project. When creating projects, if you lack required information like name or description, ask the user for these details before proceeding with the action. If you need more context, call query_portfolio before taking other actions.`;
     const context = buildThrustContext();
