@@ -132,6 +132,23 @@ describe('validateThrustActions', () => {
       expect(result.errors).toHaveLength(1);
       expect(result.errors[0]).toContain('unknown project');
     });
+
+    it('should validate query_portfolio without a project reference', () => {
+      const actions = [{ type: 'query_portfolio', scope: 'portfolio', detailLevel: 'summary', includePeople: true }];
+      const result = validateThrustActions(actions, mockProjects);
+      expect(result.validActions).toHaveLength(1);
+      expect(result.errors).toHaveLength(0);
+      expect(result.validActions[0].scope).toBe('portfolio');
+      expect(result.validActions[0].detailLevel).toBe('summary');
+    });
+
+    it('should return error for query_portfolio with unknown project', () => {
+      const actions = [{ type: 'query_portfolio', projectName: 'Unknown Project' }];
+      const result = validateThrustActions(actions, mockProjects);
+      expect(result.validActions).toHaveLength(0);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain('unknown project');
+    });
   });
 
   describe('pending project tracking (same-batch creation)', () => {
@@ -202,6 +219,8 @@ describe('validateThrustActions', () => {
               return { type, name: 'Jamie Example', email: 'jamie@example.com' };
             case 'send_email':
               return { type, recipients: ['team@example.com'], subject: 'Hello', body: 'Update ready' };
+            case 'query_portfolio':
+              return { type, projectId: '1', scope: 'project', detailLevel: 'detailed', includePeople: true };
             default:
               return { type, projectId: '1' };
           }
