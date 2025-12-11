@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, Search } from 'lucide-react';
+import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, Search, User, UserCircle } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
 import ForceDirectedTimeline from './components/ForceDirectedTimeline';
@@ -34,11 +34,19 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [newSubtaskDueDate, setNewSubtaskDueDate] = useState('');
   const [commentingOn, setCommentingOn] = useState(null);
   const [subtaskComment, setSubtaskComment] = useState('');
+  const [taskCommentingOn, setTaskCommentingOn] = useState(null);
+  const [taskComment, setTaskComment] = useState('');
+  const [hoveredCommentItem, setHoveredCommentItem] = useState(null);
+  const [expandedActionMessages, setExpandedActionMessages] = useState({});
   const [addingNewTask, setAddingNewTask] = useState(false);
   const [newTaskTitle, setNewTaskTitle] = useState('');
   const [newTaskDueDate, setNewTaskDueDate] = useState('');
   const [editingDueDate, setEditingDueDate] = useState(null);
   const [tempDueDate, setTempDueDate] = useState('');
+  const [editingCompletedDate, setEditingCompletedDate] = useState(false); // true when editing done date instead of due date
+  const [editingAssignee, setEditingAssignee] = useState(null); // 'task-{id}' or 'subtask-{id}' when editing assignee
+  const [assigneeSearchTerm, setAssigneeSearchTerm] = useState('');
+  const [assigneeFocusedIndex, setAssigneeFocusedIndex] = useState(0);
   const [timelineUpdate, setTimelineUpdate] = useState('');
   const [showTagSuggestions, setShowTagSuggestions] = useState(false);
   const [tagSearchTerm, setTagSearchTerm] = useState('');
@@ -549,6 +557,22 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }
   }, [globalSearchSelectedIndex, globalSearchOpen]);
 
+  // Close assignee dropdown when clicking outside
+  useEffect(() => {
+    if (!editingAssignee) return;
+    const handleClickOutside = (e) => {
+      // Check if click is outside the assignee dropdown
+      const dropdown = document.querySelector('[data-assignee-dropdown]');
+      if (dropdown && !dropdown.contains(e.target)) {
+        setEditingAssignee(null);
+        setAssigneeSearchTerm('');
+        setAssigneeFocusedIndex(0);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [editingAssignee]);
+
   const handleDailyCheckin = (projectId) => {
     if (checkinNote.trim()) {
       setProjects(projects.map(p =>
@@ -821,6 +845,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const handleUpdateDueDate = (taskId, subtaskId = null) => {
     if (tempDueDate) {
+      const fieldToUpdate = editingCompletedDate ? 'completedDate' : 'dueDate';
       setProjects(projects.map(p =>
         p.id === viewingProjectId
           ? {
@@ -832,11 +857,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                         ...task,
                         subtasks: task.subtasks.map(st =>
                           st.id === subtaskId
-                            ? { ...st, dueDate: tempDueDate }
+                            ? { ...st, [fieldToUpdate]: tempDueDate }
                             : st
                         )
                       }
-                    : { ...task, dueDate: tempDueDate }
+                    : { ...task, [fieldToUpdate]: tempDueDate }
                   : task
               )
             }
@@ -844,7 +869,35 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       ));
       setEditingDueDate(null);
       setTempDueDate('');
+      setEditingCompletedDate(false);
     }
+  };
+
+  const handleUpdateAssignee = (taskId, subtaskId, person) => {
+    setProjects(projects.map(p =>
+      p.id === viewingProjectId
+        ? {
+            ...p,
+            plan: p.plan.map(task =>
+              task.id === taskId
+                ? subtaskId
+                  ? {
+                      ...task,
+                      subtasks: task.subtasks.map(st =>
+                        st.id === subtaskId
+                          ? { ...st, assignee: person }
+                          : st
+                      )
+                    }
+                  : { ...task, assignee: person }
+                : task
+            )
+          }
+        : p
+    ));
+    setEditingAssignee(null);
+    setAssigneeSearchTerm('');
+    setAssigneeFocusedIndex(0);
   };
 
   const handleSubtaskComment = (taskId, subtaskId, taskTitle, subtaskTitle) => {
@@ -869,6 +922,44 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       setSubtaskComment('');
       setCommentingOn(null);
     }
+  };
+
+  const handleTaskComment = (taskId, taskTitle) => {
+    if (taskComment.trim()) {
+      setProjects(projects.map(p =>
+        p.id === viewingProjectId
+          ? {
+              ...p,
+              recentActivity: [
+                {
+                  id: generateActivityId(),
+                  date: new Date().toISOString(),
+                  note: taskComment,
+                  author: loggedInUser,
+                  taskContext: { taskId, subtaskId: null, taskTitle, subtaskTitle: null }
+                },
+                ...p.recentActivity
+              ]
+            }
+          : p
+      ));
+      setTaskComment('');
+      setTaskCommentingOn(null);
+    }
+  };
+
+  // Helper function to get comments for a specific task or subtask
+  const getCommentsForItem = (taskId, subtaskId = null) => {
+    const project = projects.find(p => p.id === viewingProjectId);
+    if (!project || !project.recentActivity) return [];
+
+    return project.recentActivity.filter(activity => {
+      if (!activity.taskContext) return false;
+      if (subtaskId) {
+        return activity.taskContext.taskId === taskId && activity.taskContext.subtaskId === subtaskId;
+      }
+      return activity.taskContext.taskId === taskId;
+    });
   };
 
   const toggleTaskEditing = () => {
@@ -1067,10 +1158,19 @@ Write a professional executive summary that highlights the project's current sta
     }));
   };
 
+  // Helper to parse date string as local date (fixes timezone off-by-one bug)
+  const parseLocalDate = (dateString) => {
+    if (!dateString) return null;
+    // Handle ISO format with time (e.g., "2025-12-11T14:30:00")
+    const datePart = dateString.split('T')[0];
+    const [year, month, day] = datePart.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  };
+
   const formatDueDate = (dateString, status, completedDate) => {
     // If completed, show completion date with green checkmark
     if (status === 'completed' && completedDate) {
-      const date = new Date(completedDate);
+      const date = parseLocalDate(completedDate);
       return {
         text: `Done ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
         color: 'var(--sage)',
@@ -1081,13 +1181,16 @@ Write a professional executive summary that highlights the project's current sta
       };
     }
 
-    const date = new Date(dateString);
+    const date = parseLocalDate(dateString);
+    if (!date) {
+      return { text: 'No date', color: 'var(--stone)', isOverdue: false, isCompleted: false, formattedDate: '', isDueSoon: false };
+    }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const dueDate = new Date(date);
     dueDate.setHours(0, 0, 0, 0);
     const diffTime = dueDate - today;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
     const formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const isDueSoon = diffDays >= 0 && diffDays <= 7;
 
@@ -2189,11 +2292,13 @@ Write a professional executive summary that highlights the project's current sta
             continue;
           }
 
-          const signature = 'sent with the help of an AI clerk';
+          const signature = '-sent by an AI clerk';
           const normalizedBody = action.body || '';
-          const bodyWithSignature = normalizedBody.toLowerCase().includes(signature)
-            ? normalizedBody
-            : `${normalizedBody.trim()}` + (normalizedBody.trim() ? `\n\n${signature}` : signature);
+          // Remove any existing AI clerk signatures to prevent duplicates
+          const cleanedBody = normalizedBody
+            .replace(/\n*-?\s*sent (with the help of|by) an AI clerk\s*$/gi, '')
+            .trim();
+          const bodyWithSignature = cleanedBody ? `${cleanedBody}\n\n${signature}` : signature;
 
           try {
             await sendEmail({
@@ -2466,7 +2571,9 @@ Write a professional executive summary that highlights the project's current sta
     setThrustError('');
     setThrustPendingActions([]);
 
-    const systemPrompt = `You are Momentum, an experienced technical project manager using dialectic project planning. Be concise but explicit about what you are doing, offer guiding prompts such as "have you thought of X yet?", and rely on the provided project data for context. Respond with a JSON object containing a 'response' string and an 'actions' array.
+    const systemPrompt = `You are Momentum, an experienced technical project manager supporting the Data Science and AI team at BCBST (BlueCross BlueShield of Tennessee), a health insurance company. The team builds AI products and predictive models for healthcare applications.
+
+Using dialectic project planning methodology, be concise but explicit about what you are doing, offer guiding prompts such as "have you thought of X yet?", and rely on the provided project data for context. Respond with a JSON object containing a 'response' string and an 'actions' array.
 
 Supported atomic actions (never combine multiple changes into one action):
 - comment: log a project activity. Fields: projectId, note (or content), author (optional).
@@ -2477,10 +2584,8 @@ Supported atomic actions (never combine multiple changes into one action):
 - update_project: change project status/progress/dates. Fields: projectId, status, progress (0-100), targetDate, lastUpdate. Use project statuses: planning, active, on-hold, cancelled, or completed (never "in_progress").
 - create_project: create a new project. Fields: name (required), description (optional), priority (low/medium/high, default medium), status (planning/active/on-hold/cancelled, default active), targetDate (optional), stakeholders (comma-separated names, optional). Use the status value "active" for projects in flight.
 - add_person: add a person to the People database. Fields: name (required), team (optional), email (optional). If the person already exists, update their info instead of duplicating.
-- send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People, comma separated or array), subject (required), body (required).
+- send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People, comma separated or array), subject (required), body (required). Do NOT include any AI signature in the email body - the system will automatically append one.
 - query_portfolio: request portfolio data when you need fresh context. Fields: scope (portfolio/project/people), detailLevel (summary/detailed), includePeople (boolean), projectId or projectName (optional when scope is project).
-
-When drafting email bodies, append the sign-off "sent with the help of an AI clerk" before sending.
 
 Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project. When creating projects, if you lack required information like name or description, ask the user for these details before proceeding with the action. If you need more context, call query_portfolio before taking other actions.`;
     const context = buildThrustContext();
@@ -4041,9 +4146,9 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                   autoFocus
                                 />
                               ) : (
-                                <span 
+                                <span
                                   style={{
-                                    ...styles.dueDateBadge, 
+                                    ...styles.dueDateBadge,
                                     color: dueDateInfo.color,
                                     cursor: 'pointer',
                                     display: 'flex',
@@ -4053,9 +4158,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setEditingDueDate(`task-${task.id}`);
-                                    setTempDueDate(task.dueDate);
+                                    // Edit completedDate when done, dueDate when not done
+                                    const isCompleted = task.status === 'completed';
+                                    setEditingCompletedDate(isCompleted);
+                                    setTempDueDate(isCompleted ? (task.completedDate || '') : (task.dueDate || ''));
                                   }}
-                                  title="Click to edit due date"
+                                  title={task.status === 'completed' ? "Click to edit completion date" : "Click to edit due date"}
                                 >
                                   {dueDateInfo.isCompleted && <Check size={12} style={{ color: 'var(--sage)' }} />}
                                   {dueDateInfo.text}
@@ -4063,6 +4171,150 @@ Keep tool calls granular (one discrete change per action), explain each action c
                               )}
                             </div>
                             <div style={styles.taskHeaderRight}>
+                              {/* Task Assignee picker */}
+                              <div style={{ position: 'relative' }}>
+                                {editingAssignee === `task-${task.id}` ? (
+                                  <div style={styles.assigneeDropdown} data-assignee-dropdown>
+                                    <input
+                                      type="text"
+                                      value={assigneeSearchTerm}
+                                      onChange={(e) => {
+                                        setAssigneeSearchTerm(e.target.value);
+                                        setAssigneeFocusedIndex(0);
+                                      }}
+                                      onKeyDown={(e) => {
+                                        const filtered = people.filter(p =>
+                                          p.name.toLowerCase().includes(assigneeSearchTerm.toLowerCase()) ||
+                                          (p.team && p.team.toLowerCase().includes(assigneeSearchTerm.toLowerCase()))
+                                        ).slice(0, 5);
+                                        if (e.key === 'ArrowDown') {
+                                          e.preventDefault();
+                                          setAssigneeFocusedIndex(prev => prev < filtered.length - 1 ? prev + 1 : prev);
+                                        } else if (e.key === 'ArrowUp') {
+                                          e.preventDefault();
+                                          setAssigneeFocusedIndex(prev => prev > 0 ? prev - 1 : 0);
+                                        } else if (e.key === 'Enter' && filtered[assigneeFocusedIndex]) {
+                                          e.preventDefault();
+                                          handleUpdateAssignee(task.id, null, filtered[assigneeFocusedIndex]);
+                                        } else if (e.key === 'Escape') {
+                                          e.preventDefault();
+                                          setEditingAssignee(null);
+                                          setAssigneeSearchTerm('');
+                                        }
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                      placeholder="Search people..."
+                                      style={styles.assigneeSearchInput}
+                                      autoFocus
+                                    />
+                                    <div style={styles.assigneeList}>
+                                      {people
+                                        .filter(p =>
+                                          p.name.toLowerCase().includes(assigneeSearchTerm.toLowerCase()) ||
+                                          (p.team && p.team.toLowerCase().includes(assigneeSearchTerm.toLowerCase()))
+                                        )
+                                        .slice(0, 5)
+                                        .map((person, idx) => (
+                                          <div
+                                            key={person.id || person.name}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleUpdateAssignee(task.id, null, person);
+                                            }}
+                                            onMouseEnter={() => setAssigneeFocusedIndex(idx)}
+                                            style={{
+                                              ...styles.assigneeOption,
+                                              backgroundColor: idx === assigneeFocusedIndex ? 'var(--cream)' : 'transparent'
+                                            }}
+                                          >
+                                            <User size={12} style={{ color: 'var(--stone)' }} />
+                                            <span>{person.name}</span>
+                                            {person.team && <span style={{ color: 'var(--stone)', fontSize: '11px' }}>({person.team})</span>}
+                                          </div>
+                                        ))}
+                                      {task.assignee && (
+                                        <div
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleUpdateAssignee(task.id, null, null);
+                                          }}
+                                          style={{ ...styles.assigneeOption, color: 'var(--coral)' }}
+                                        >
+                                          <X size={12} />
+                                          <span>Remove assignee</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingAssignee(`task-${task.id}`);
+                                      setAssigneeSearchTerm('');
+                                      setAssigneeFocusedIndex(0);
+                                    }}
+                                    style={styles.assigneeButton}
+                                    title={task.assignee ? `Assigned to ${task.assignee.name}` : "Assign to someone"}
+                                  >
+                                    {task.assignee ? (
+                                      <span style={styles.assigneeBadge}>
+                                        {task.assignee.name.split(' ').map(n => n[0]).join('')}
+                                      </span>
+                                    ) : (
+                                      <UserCircle size={16} style={{ color: 'var(--stone)' }} />
+                                    )}
+                                  </button>
+                                )}
+                              </div>
+                              {/* Task Comment Button with Tooltip */}
+                              <div
+                                style={{ position: 'relative' }}
+                                onMouseEnter={() => setHoveredCommentItem(`task-${task.id}`)}
+                                onMouseLeave={() => setHoveredCommentItem(null)}
+                              >
+                                <button
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setTaskCommentingOn(taskCommentingOn === task.id ? null : task.id);
+                                    setTaskComment('');
+                                  }}
+                                  style={{
+                                    ...styles.commentButton,
+                                    color: getCommentsForItem(task.id).length > 0 ? 'var(--earth)' : 'var(--stone)'
+                                  }}
+                                  title="Add/view comments"
+                                  onMouseEnter={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'var(--amber)' + '20';
+                                    e.currentTarget.style.color = 'var(--earth)';
+                                  }}
+                                  onMouseLeave={(e) => {
+                                    e.currentTarget.style.backgroundColor = 'transparent';
+                                    e.currentTarget.style.color = getCommentsForItem(task.id).length > 0 ? 'var(--earth)' : 'var(--stone)';
+                                  }}
+                                >
+                                  <MessageSquare size={14} />
+                                  {getCommentsForItem(task.id).length > 0 && (
+                                    <span style={styles.commentCountBadge}>{getCommentsForItem(task.id).length}</span>
+                                  )}
+                                </button>
+                                {/* Comment Tooltip */}
+                                {hoveredCommentItem === `task-${task.id}` && getCommentsForItem(task.id).length > 0 && (
+                                  <div style={styles.commentTooltip}>
+                                    <div style={styles.commentTooltipHeader}>Comments ({getCommentsForItem(task.id).length})</div>
+                                    {getCommentsForItem(task.id).slice(0, 5).map((comment, cIdx) => (
+                                      <div key={comment.id || cIdx} style={styles.commentTooltipItem}>
+                                        <div style={styles.commentTooltipAuthor}>{comment.author || 'Unknown'}</div>
+                                        <div style={styles.commentTooltipNote}>{comment.note}</div>
+                                        <div style={styles.commentTooltipDate}>{formatDateTime(comment.date)}</div>
+                                      </div>
+                                    ))}
+                                    {getCommentsForItem(task.id).length > 5 && (
+                                      <div style={styles.commentTooltipMore}>+{getCommentsForItem(task.id).length - 5} more</div>
+                                    )}
+                                  </div>
+                                )}
+                              </div>
                               {taskEditEnabled && (
                                 <>
                                   <button
@@ -4098,7 +4350,50 @@ Keep tool calls granular (one discrete change per action), explain each action c
                               />
                             </div>
                           </div>
-                          
+
+                          {/* Task Comment Input Box */}
+                          {taskCommentingOn === task.id && (
+                            <div style={styles.commentBox}>
+                              <textarea
+                                value={taskComment}
+                                onChange={(e) => setTaskComment(e.target.value)}
+                                onFocus={() => setFocusedField('task-comment')}
+                                onBlur={() => setFocusedField(null)}
+                                onKeyDown={(e) => {
+                                  if (e.ctrlKey && e.key === 'Enter') {
+                                    e.preventDefault();
+                                    handleTaskComment(task.id, task.title);
+                                  }
+                                }}
+                                placeholder="Add a comment to this task..."
+                                style={styles.commentInput}
+                                autoFocus
+                              />
+                              {renderEditingHint('task-comment')}
+                              {renderCtrlEnterHint('send comment')}
+                              <div style={styles.commentActions}>
+                                <button
+                                  onClick={() => handleTaskComment(task.id, task.title)}
+                                  disabled={!taskComment.trim()}
+                                  style={{
+                                    ...styles.commentSubmit,
+                                    opacity: taskComment.trim() ? 1 : 0.5,
+                                    cursor: taskComment.trim() ? 'pointer' : 'not-allowed'
+                                  }}
+                                >
+                                  <Send size={12} />
+                                  Comment
+                                </button>
+                                <button
+                                  onClick={() => setTaskCommentingOn(null)}
+                                  style={styles.commentCancel}
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </div>
+                          )}
+
                           {isExpanded && task.subtasks && (
                             <div style={styles.subtaskList}>
                               {task.subtasks.map((subtask, subIdx) => {
@@ -4161,7 +4456,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                           autoFocus
                                         />
                                       ) : (
-                                        <span 
+                                        <span
                                           style={{
                                             ...styles.subtaskDueDate,
                                             color: subtaskDueDate.color,
@@ -4174,33 +4469,161 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             setEditingDueDate(`subtask-${subtask.id}`);
-                                            setTempDueDate(subtask.dueDate);
+                                            // Edit completedDate when done, dueDate when not done
+                                            const isCompleted = subtask.status === 'completed';
+                                            setEditingCompletedDate(isCompleted);
+                                            setTempDueDate(isCompleted ? (subtask.completedDate || '') : (subtask.dueDate || ''));
                                           }}
-                                          title="Click to edit due date"
+                                          title={subtask.status === 'completed' ? "Click to edit completion date" : "Click to edit due date"}
                                         >
                                           {subtaskDueDate.isCompleted && <Check size={10} style={{ color: 'var(--sage)' }} />}
                                           {subtaskDueDate.text}
                                         </span>
                                       )}
-                                      <button
-                                        onClick={(e) => {
-                                          e.stopPropagation();
-                                          setCommentingOn(isCommenting ? null : subtask.id);
-                                          setSubtaskComment('');
-                                        }}
-                                        style={styles.commentButton}
-                                        title="Add comment"
-                                        onMouseEnter={(e) => {
-                                          e.currentTarget.style.backgroundColor = 'var(--amber)' + '20';
-                                          e.currentTarget.style.color = 'var(--earth)';
-                                        }}
-                                        onMouseLeave={(e) => {
-                                          e.currentTarget.style.backgroundColor = 'transparent';
-                                          e.currentTarget.style.color = 'var(--stone)';
-                                        }}
+                                      {/* Assignee picker */}
+                                      <div style={{ position: 'relative' }}>
+                                        {editingAssignee === `subtask-${subtask.id}` ? (
+                                          <div style={styles.assigneeDropdown} data-assignee-dropdown>
+                                            <input
+                                              type="text"
+                                              value={assigneeSearchTerm}
+                                              onChange={(e) => {
+                                                setAssigneeSearchTerm(e.target.value);
+                                                setAssigneeFocusedIndex(0);
+                                              }}
+                                              onKeyDown={(e) => {
+                                                const filtered = people.filter(p =>
+                                                  p.name.toLowerCase().includes(assigneeSearchTerm.toLowerCase()) ||
+                                                  (p.team && p.team.toLowerCase().includes(assigneeSearchTerm.toLowerCase()))
+                                                ).slice(0, 5);
+                                                if (e.key === 'ArrowDown') {
+                                                  e.preventDefault();
+                                                  setAssigneeFocusedIndex(prev => prev < filtered.length - 1 ? prev + 1 : prev);
+                                                } else if (e.key === 'ArrowUp') {
+                                                  e.preventDefault();
+                                                  setAssigneeFocusedIndex(prev => prev > 0 ? prev - 1 : 0);
+                                                } else if (e.key === 'Enter' && filtered[assigneeFocusedIndex]) {
+                                                  e.preventDefault();
+                                                  handleUpdateAssignee(task.id, subtask.id, filtered[assigneeFocusedIndex]);
+                                                } else if (e.key === 'Escape') {
+                                                  e.preventDefault();
+                                                  setEditingAssignee(null);
+                                                  setAssigneeSearchTerm('');
+                                                }
+                                              }}
+                                              onClick={(e) => e.stopPropagation()}
+                                              placeholder="Search people..."
+                                              style={styles.assigneeSearchInput}
+                                              autoFocus
+                                            />
+                                            <div style={styles.assigneeList}>
+                                              {people
+                                                .filter(p =>
+                                                  p.name.toLowerCase().includes(assigneeSearchTerm.toLowerCase()) ||
+                                                  (p.team && p.team.toLowerCase().includes(assigneeSearchTerm.toLowerCase()))
+                                                )
+                                                .slice(0, 5)
+                                                .map((person, idx) => (
+                                                  <div
+                                                    key={person.id || person.name}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleUpdateAssignee(task.id, subtask.id, person);
+                                                    }}
+                                                    onMouseEnter={() => setAssigneeFocusedIndex(idx)}
+                                                    style={{
+                                                      ...styles.assigneeOption,
+                                                      backgroundColor: idx === assigneeFocusedIndex ? 'var(--cream)' : 'transparent'
+                                                    }}
+                                                  >
+                                                    <User size={12} style={{ color: 'var(--stone)' }} />
+                                                    <span>{person.name}</span>
+                                                    {person.team && <span style={{ color: 'var(--stone)', fontSize: '11px' }}>({person.team})</span>}
+                                                  </div>
+                                                ))}
+                                              {subtask.assignee && (
+                                                <div
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleUpdateAssignee(task.id, subtask.id, null);
+                                                  }}
+                                                  style={{ ...styles.assigneeOption, color: 'var(--coral)' }}
+                                                >
+                                                  <X size={12} />
+                                                  <span>Remove assignee</span>
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setEditingAssignee(`subtask-${subtask.id}`);
+                                              setAssigneeSearchTerm('');
+                                              setAssigneeFocusedIndex(0);
+                                            }}
+                                            style={styles.assigneeButton}
+                                            title={subtask.assignee ? `Assigned to ${subtask.assignee.name}` : "Assign to someone"}
+                                          >
+                                            {subtask.assignee ? (
+                                              <span style={styles.assigneeBadge}>
+                                                {subtask.assignee.name.split(' ').map(n => n[0]).join('')}
+                                              </span>
+                                            ) : (
+                                              <UserCircle size={14} style={{ color: 'var(--stone)' }} />
+                                            )}
+                                          </button>
+                                        )}
+                                      </div>
+                                      {/* Subtask Comment Button with Tooltip */}
+                                      <div
+                                        style={{ position: 'relative' }}
+                                        onMouseEnter={() => setHoveredCommentItem(`subtask-${subtask.id}`)}
+                                        onMouseLeave={() => setHoveredCommentItem(null)}
                                       >
-                                        <MessageSquare size={14} />
-                                      </button>
+                                        <button
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            setCommentingOn(isCommenting ? null : subtask.id);
+                                            setSubtaskComment('');
+                                          }}
+                                          style={{
+                                            ...styles.commentButton,
+                                            color: getCommentsForItem(task.id, subtask.id).length > 0 ? 'var(--earth)' : 'var(--stone)'
+                                          }}
+                                          title="Add/view comments"
+                                          onMouseEnter={(e) => {
+                                            e.currentTarget.style.backgroundColor = 'var(--amber)' + '20';
+                                            e.currentTarget.style.color = 'var(--earth)';
+                                          }}
+                                          onMouseLeave={(e) => {
+                                            e.currentTarget.style.backgroundColor = 'transparent';
+                                            e.currentTarget.style.color = getCommentsForItem(task.id, subtask.id).length > 0 ? 'var(--earth)' : 'var(--stone)';
+                                          }}
+                                        >
+                                          <MessageSquare size={14} />
+                                          {getCommentsForItem(task.id, subtask.id).length > 0 && (
+                                            <span style={styles.commentCountBadge}>{getCommentsForItem(task.id, subtask.id).length}</span>
+                                          )}
+                                        </button>
+                                        {/* Comment Tooltip */}
+                                        {hoveredCommentItem === `subtask-${subtask.id}` && getCommentsForItem(task.id, subtask.id).length > 0 && (
+                                          <div style={styles.commentTooltip}>
+                                            <div style={styles.commentTooltipHeader}>Comments ({getCommentsForItem(task.id, subtask.id).length})</div>
+                                            {getCommentsForItem(task.id, subtask.id).slice(0, 5).map((comment, cIdx) => (
+                                              <div key={comment.id || cIdx} style={styles.commentTooltipItem}>
+                                                <div style={styles.commentTooltipAuthor}>{comment.author || 'Unknown'}</div>
+                                                <div style={styles.commentTooltipNote}>{comment.note}</div>
+                                                <div style={styles.commentTooltipDate}>{formatDateTime(comment.date)}</div>
+                                              </div>
+                                            ))}
+                                            {getCommentsForItem(task.id, subtask.id).length > 5 && (
+                                              <div style={styles.commentTooltipMore}>+{getCommentsForItem(task.id, subtask.id).length - 5} more</div>
+                                            )}
+                                          </div>
+                                        )}
+                                      </div>
                                       {taskEditEnabled && (
                                         <>
                                           <button
@@ -4817,19 +5240,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
                     </div>
                   </div>
 
-                  {thrustPendingActions.length > 0 && (
-                    <div style={styles.thrustStatusRow}>
-                      <div style={styles.thrustStatusHeading}>Applying actions:</div>
-                      <ul style={styles.thrustActionList}>
-                        {thrustPendingActions.map((action, idx) => (
-                          <li key={idx} style={styles.thrustActionListItem}>
-                            {describeActionPreview(action)}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-
                   <div style={styles.thrustChatFeed}>
                     {thrustConversation.length === 0 ? (
                       <div style={styles.emptyState}>
@@ -4869,35 +5279,108 @@ Keep tool calls granular (one discrete change per action), explain each action c
                             </div>
                             {message.actionResults && message.actionResults.length > 0 && (
                               <div style={styles.thrustActionStack}>
-                                {message.actionResults.map((action, actionIdx) => (
-                                  <div key={`${message.id}-action-${actionIdx}`} style={styles.thrustActionCard}>
-                                    <div style={styles.thrustActionRow}>
-                                      <span style={styles.thrustActionLabel}>{action.label}</span>
-                                      {action.deltas && action.deltas.length > 0 ? (
-                                        action.undone ? (
-                                          <span style={styles.thrustUndoTag}>Undone</span>
-                                        ) : (
-                                          <button
-                                            style={styles.thrustActionUndo}
-                                            onClick={() => undoThrustAction(message.id, actionIdx)}
-                                            aria-label="Undo AI changes"
-                                          >
-                                            <RotateCcw size={14} />
-                                            <span style={{ marginLeft: 6 }}>Undo</span>
-                                          </button>
-                                        )
-                                      ) : null}
+                                {message.actionResults.length <= 4 ? (
+                                  // Show all actions if 4 or fewer
+                                  message.actionResults.map((action, actionIdx) => (
+                                    <div key={`${message.id}-action-${actionIdx}`} style={styles.thrustActionCard}>
+                                      <div style={styles.thrustActionRow}>
+                                        <span style={styles.thrustActionLabel}>{action.label}</span>
+                                        {action.deltas && action.deltas.length > 0 ? (
+                                          action.undone ? (
+                                            <span style={styles.thrustUndoTag}>Undone</span>
+                                          ) : (
+                                            <button
+                                              style={styles.thrustActionUndo}
+                                              onClick={() => undoThrustAction(message.id, actionIdx)}
+                                              aria-label="Undo AI changes"
+                                            >
+                                              <RotateCcw size={14} />
+                                              <span style={{ marginLeft: 6 }}>Undo</span>
+                                            </button>
+                                          )
+                                        ) : null}
+                                      </div>
+                                      <div style={styles.thrustActionDetailText}>{action.detail}</div>
                                     </div>
-                                    <div style={styles.thrustActionDetailText}>{action.detail}</div>
-                                  </div>
-                                ))}
+                                  ))
+                                ) : (
+                                  // Show collapsed view with expandable callout for >4 actions
+                                  <>
+                                    <div
+                                      style={styles.thrustActionsCollapsed}
+                                      onClick={() => setExpandedActionMessages(prev => ({
+                                        ...prev,
+                                        [message.id]: !prev[message.id]
+                                      }))}
+                                    >
+                                      <span style={styles.thrustActionsCollapsedText}>
+                                        Performed {message.actionResults.length} actions
+                                      </span>
+                                      <ChevronDown
+                                        size={16}
+                                        style={{
+                                          color: 'var(--earth)',
+                                          transform: expandedActionMessages[message.id] ? 'rotate(180deg)' : 'rotate(0deg)',
+                                          transition: 'transform 0.2s ease'
+                                        }}
+                                      />
+                                    </div>
+                                    {expandedActionMessages[message.id] && (
+                                      <div style={styles.thrustActionsExpandedList}>
+                                        {message.actionResults.map((action, actionIdx) => (
+                                          <div key={`${message.id}-action-${actionIdx}`} style={styles.thrustActionCard}>
+                                            <div style={styles.thrustActionRow}>
+                                              <span style={styles.thrustActionLabel}>{action.label}</span>
+                                              {action.deltas && action.deltas.length > 0 ? (
+                                                action.undone ? (
+                                                  <span style={styles.thrustUndoTag}>Undone</span>
+                                                ) : (
+                                                  <button
+                                                    style={styles.thrustActionUndo}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      undoThrustAction(message.id, actionIdx);
+                                                    }}
+                                                    aria-label="Undo AI changes"
+                                                  >
+                                                    <RotateCcw size={14} />
+                                                    <span style={{ marginLeft: 6 }}>Undo</span>
+                                                  </button>
+                                                )
+                                              ) : null}
+                                            </div>
+                                            <div style={styles.thrustActionDetailText}>{action.detail}</div>
+                                          </div>
+                                        ))}
+                                      </div>
+                                    )}
+                                  </>
+                                )}
                               </div>
                             )}
                           </div>
                         );
                       })}
 
-                      {(thrustIsRequesting || thrustError) && (
+                      {/* Pending Actions - now in the conversation flow */}
+                      {thrustPendingActions.length > 0 && (
+                        <div style={styles.thrustPendingActionsCard}>
+                          <div style={styles.thrustPendingActionsHeader}>
+                            <Sparkles size={14} style={{ color: 'var(--earth)' }} />
+                            <span>Applying {thrustPendingActions.length} action{thrustPendingActions.length > 1 ? 's' : ''}...</span>
+                          </div>
+                          <ul style={styles.thrustPendingActionsList}>
+                            {thrustPendingActions.map((action, idx) => (
+                              <li key={idx} style={styles.thrustPendingActionsItem}>
+                                {describeActionPreview(action)}
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      )}
+
+                      {/* Status messages */}
+                      {(thrustIsRequesting || thrustError) && !thrustPendingActions.length && (
                         <div style={styles.thrustStatusCard}>
                           <div style={styles.thrustStatusInline}>
                             {thrustIsRequesting ? (
@@ -7780,6 +8263,145 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     transition: 'all 0.2s ease',
+    position: 'relative',
+    gap: '2px',
+  },
+
+  commentCountBadge: {
+    position: 'absolute',
+    top: '-2px',
+    right: '-2px',
+    backgroundColor: 'var(--earth)',
+    color: 'white',
+    fontSize: '9px',
+    fontWeight: '700',
+    borderRadius: '50%',
+    width: '14px',
+    height: '14px',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  commentTooltip: {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    zIndex: 1001,
+    backgroundColor: 'white',
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    boxShadow: '0 4px 16px rgba(0, 0, 0, 0.15)',
+    minWidth: '280px',
+    maxWidth: '350px',
+    maxHeight: '300px',
+    overflowY: 'auto',
+    marginTop: '4px',
+  },
+
+  commentTooltipHeader: {
+    padding: '10px 12px',
+    borderBottom: '1px solid var(--cloud)',
+    fontWeight: '600',
+    fontSize: '12px',
+    color: 'var(--charcoal)',
+    backgroundColor: 'var(--cream)',
+    borderRadius: '8px 8px 0 0',
+  },
+
+  commentTooltipItem: {
+    padding: '10px 12px',
+    borderBottom: '1px solid var(--cloud)',
+  },
+
+  commentTooltipAuthor: {
+    fontWeight: '600',
+    fontSize: '12px',
+    color: 'var(--earth)',
+    marginBottom: '4px',
+  },
+
+  commentTooltipNote: {
+    fontSize: '13px',
+    color: 'var(--charcoal)',
+    lineHeight: '1.4',
+    marginBottom: '4px',
+  },
+
+  commentTooltipDate: {
+    fontSize: '11px',
+    color: 'var(--stone)',
+  },
+
+  commentTooltipMore: {
+    padding: '8px 12px',
+    textAlign: 'center',
+    fontSize: '11px',
+    color: 'var(--stone)',
+    fontStyle: 'italic',
+  },
+
+  assigneeButton: {
+    padding: '4px 6px',
+    border: 'none',
+    borderRadius: '4px',
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.2s ease',
+  },
+
+  assigneeBadge: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '20px',
+    height: '20px',
+    borderRadius: '50%',
+    backgroundColor: 'var(--sage)',
+    color: 'white',
+    fontSize: '9px',
+    fontWeight: '600',
+  },
+
+  assigneeDropdown: {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    zIndex: 1000,
+    backgroundColor: 'white',
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+    minWidth: '200px',
+    overflow: 'hidden',
+  },
+
+  assigneeSearchInput: {
+    width: '100%',
+    padding: '8px 12px',
+    border: 'none',
+    borderBottom: '1px solid var(--cloud)',
+    fontSize: '13px',
+    outline: 'none',
+    boxSizing: 'border-box',
+  },
+
+  assigneeList: {
+    maxHeight: '200px',
+    overflowY: 'auto',
+  },
+
+  assigneeOption: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 12px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    transition: 'background-color 0.15s ease',
   },
 
   taskTitleInput: {
@@ -8451,6 +9073,39 @@ const styles = {
     alignItems: 'center',
     gap: '8px',
     color: 'var(--stone)',
+  },
+
+  thrustPendingActionsCard: {
+    border: '1px solid var(--earth)',
+    borderRadius: '10px',
+    padding: '12px 14px',
+    backgroundColor: 'var(--cream)',
+    animation: 'fadeIn 0.3s ease',
+  },
+
+  thrustPendingActionsHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontWeight: '600',
+    fontSize: '13px',
+    color: 'var(--earth)',
+    marginBottom: '8px',
+  },
+
+  thrustPendingActionsList: {
+    listStyle: 'none',
+    padding: 0,
+    margin: 0,
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+
+  thrustPendingActionsItem: {
+    color: 'var(--charcoal)',
+    paddingLeft: '22px',
+    position: 'relative',
     fontFamily: "'Inter', sans-serif",
     fontSize: '13px',
   },
@@ -8512,6 +9167,33 @@ const styles = {
     flexDirection: 'column',
     gap: '10px',
     marginTop: '12px',
+  },
+
+  thrustActionsCollapsed: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '10px 14px',
+    backgroundColor: 'var(--cream)',
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+
+  thrustActionsCollapsedText: {
+    fontSize: '13px',
+    fontWeight: '600',
+    color: 'var(--earth)',
+  },
+
+  thrustActionsExpandedList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    marginTop: '8px',
+    paddingLeft: '8px',
+    borderLeft: '3px solid var(--earth)',
   },
 
   thrustActionCard: {
