@@ -131,7 +131,8 @@ const PeopleGraph = ({
   onDeletePerson,
   onViewProject,
   onLoginAs,
-  loggedInUser
+  loggedInUser,
+  featuredPersonId = null
 }) => {
   const people = propPeople.length > 0 ? propPeople : SAMPLE_PEOPLE;
   const projects = propProjects.length > 0 ? propProjects : SAMPLE_PROJECTS;
@@ -313,6 +314,22 @@ const PeopleGraph = ({
     setNodes(initialNodes);
     setEdges(graphData.edges);
   }, [graphData]);
+
+  // Handle featured person from search - select and center on them
+  useEffect(() => {
+    if (featuredPersonId && nodes.length > 0) {
+      const featuredNode = nodes.find(n => n.id === featuredPersonId);
+      if (featuredNode) {
+        setSelectedNode(featuredNode);
+        // Center the graph on the featured person
+        const { width, height } = dimensions;
+        setGraphOffset({
+          x: width / 2 - featuredNode.x,
+          y: height / 2 - featuredNode.y
+        });
+      }
+    }
+  }, [featuredPersonId, nodes, dimensions]);
 
   useEffect(() => {
     if (nodes.length === 0) return;

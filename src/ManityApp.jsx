@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw } from 'lucide-react';
+import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, Search } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
 import ForceDirectedTimeline from './components/ForceDirectedTimeline';
@@ -97,6 +97,18 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [isGeneratingSummary, setIsGeneratingSummary] = useState(false);
   const [editingPerson, setEditingPerson] = useState(null);
   const [isEditingSlide, setIsEditingSlide] = useState(false);
+
+  // Global search state
+  const [globalSearchOpen, setGlobalSearchOpen] = useState(false);
+  const [globalSearchQuery, setGlobalSearchQuery] = useState('');
+  const [globalSearchSelectedIndex, setGlobalSearchSelectedIndex] = useState(0);
+  const globalSearchInputRef = useRef(null);
+
+  // Momentum highlight state - tracks recently updated projects from AI
+  const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState(new Set());
+
+  // People page featured node (for search navigation)
+  const [featuredPersonId, setFeaturedPersonId] = useState(null);
   const [hiddenSlideItems, setHiddenSlideItems] = useState({
     recentUpdates: [],
     recentlyCompleted: [],
@@ -489,6 +501,37 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [activeView, isEditingSlide, currentSlideIndex, projects, isGeneratingSummary]);
 
+  // Global search keyboard shortcut (Cmd/Ctrl+K to open, ESC to close)
+  useEffect(() => {
+    const handleGlobalSearchKeyDown = (e) => {
+      // Open search with Cmd/Ctrl+K
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        setGlobalSearchOpen(true);
+        setGlobalSearchQuery('');
+        setGlobalSearchSelectedIndex(0);
+        setTimeout(() => globalSearchInputRef.current?.focus(), 0);
+      }
+
+      // Close search with ESC (when search is open)
+      if (e.key === 'Escape' && globalSearchOpen) {
+        e.preventDefault();
+        setGlobalSearchOpen(false);
+        setGlobalSearchQuery('');
+      }
+    };
+
+    window.addEventListener('keydown', handleGlobalSearchKeyDown);
+    return () => window.removeEventListener('keydown', handleGlobalSearchKeyDown);
+  }, [globalSearchOpen]);
+
+  // Focus search input when opened
+  useEffect(() => {
+    if (globalSearchOpen && globalSearchInputRef.current) {
+      globalSearchInputRef.current.focus();
+    }
+  }, [globalSearchOpen]);
+
   const handleDailyCheckin = (projectId) => {
     if (checkinNote.trim()) {
       setProjects(projects.map(p =>
@@ -504,10 +547,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       ));
       setCheckinNote('');
 
-      // Move to next project or close if done
-      const currentIndex = visibleProjects.findIndex(p => p.id === projectId);
-      if (currentIndex < visibleProjects.length - 1) {
-        setSelectedProject(visibleProjects[currentIndex + 1]);
+      // Move to next project the user is a contributor on, or close if done
+      const currentIndex = userProjects.findIndex(p => p.id === projectId);
+      if (currentIndex < userProjects.length - 1) {
+        setSelectedProject(userProjects[currentIndex + 1]);
       } else {
         setShowDailyCheckin(false);
         setSelectedProject(null);
@@ -1164,6 +1207,103 @@ Write a professional executive summary that highlights the project's current sta
     return tags;
   };
 
+  // Global search - get filtered results based on query
+  const getGlobalSearchResults = (query) => {
+    if (!query.trim()) return [];
+
+    const lowerQuery = query.toLowerCase();
+    const results = [];
+
+    // Search people
+    people.forEach(person => {
+      if (person.name.toLowerCase().includes(lowerQuery) ||
+          (person.team && person.team.toLowerCase().includes(lowerQuery))) {
+        results.push({
+          type: 'person',
+          id: person.id,
+          name: person.name,
+          team: person.team,
+          display: `${person.name} (${person.team || 'Contributor'})`
+        });
+      }
+    });
+
+    // Search projects, tasks, subtasks
+    visibleProjects.forEach(project => {
+      // Match project name
+      if (project.name.toLowerCase().includes(lowerQuery)) {
+        results.push({
+          type: 'project',
+          id: project.id,
+          name: project.name,
+          display: project.name
+        });
+      }
+
+      // Match tasks
+      project.plan.forEach(task => {
+        if (task.title.toLowerCase().includes(lowerQuery)) {
+          results.push({
+            type: 'task',
+            id: task.id,
+            projectId: project.id,
+            name: task.title,
+            display: `${project.name} → ${task.title}`
+          });
+        }
+
+        // Match subtasks
+        task.subtasks.forEach(subtask => {
+          if (subtask.title.toLowerCase().includes(lowerQuery)) {
+            results.push({
+              type: 'subtask',
+              id: subtask.id,
+              taskId: task.id,
+              projectId: project.id,
+              name: subtask.title,
+              display: `${project.name} → ${task.title} → ${subtask.title}`
+            });
+          }
+        });
+      });
+    });
+
+    return results.slice(0, 10); // Limit to 10 results
+  };
+
+  // Handle selecting a global search result
+  const handleGlobalSearchSelect = (result) => {
+    setGlobalSearchOpen(false);
+    setGlobalSearchQuery('');
+
+    if (result.type === 'person') {
+      // Navigate to people page and feature the selected person
+      setActiveView('people');
+      setViewingProjectId(null);
+      setFeaturedPersonId(result.id);
+      // Clear featured person after animation completes
+      setTimeout(() => setFeaturedPersonId(null), 3000);
+    } else if (result.type === 'project') {
+      // Navigate to project details
+      setActiveView('overview');
+      setViewingProjectId(result.id);
+      // Expand the first task if any
+      const project = visibleProjects.find(p => p.id === result.id);
+      if (project && project.plan.length > 0) {
+        setExpandedTasks(prev => ({ ...prev, [project.plan[0].id]: true }));
+      }
+    } else if (result.type === 'task' || result.type === 'subtask') {
+      // Navigate to project details and expand the task
+      setActiveView('overview');
+      setViewingProjectId(result.projectId);
+      if (result.taskId) {
+        setExpandedTasks(prev => ({ ...prev, [result.taskId]: true }));
+      } else if (result.type === 'task') {
+        setExpandedTasks(prev => ({ ...prev, [result.id]: true }));
+      }
+    }
+  };
+
   const handleTimelineUpdateChange = (e) => {
     const text = e.target.value;
     const cursorPos = e.target.selectionStart;
@@ -1658,10 +1798,10 @@ Write a professional executive summary that highlights the project's current sta
 
   const applyThrustActions = async (actions = []) => {
     if (!actions.length) {
-      return { deltas: [], actionResults: [] };
+      return { deltas: [], actionResults: [], updatedProjectIds: [] };
     }
 
-    const result = { deltas: [], actionResults: [] };
+    const result = { deltas: [], actionResults: [], updatedProjectIds: new Set() };
     const workingProjects = projects.map(cloneProjectDeep);
     const projectLookup = new Map();
     workingProjects.forEach(project => {
@@ -1817,6 +1957,7 @@ Write a professional executive summary that highlights the project's current sta
         label = `Created new project "${projectName}"`;
         detail = `Created new project "${projectName}" with status ${newProject.status} and priority ${newProject.priority}`;
         projectsChanged = true;
+        result.updatedProjectIds.add(newId);
 
         appendActionResult(label, detail, actionDeltas);
         await syncStakeholdersToPeople(newProject.stakeholders);
@@ -1847,6 +1988,7 @@ Write a professional executive summary that highlights the project's current sta
           label = `Commented on ${project.name}`;
           detail = `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author}`;
           projectsChanged = true;
+          result.updatedProjectIds.add(project.id);
           break;
         }
         case 'add_task': {
@@ -1869,6 +2011,7 @@ Write a professional executive summary that highlights the project's current sta
           label = `Added task "${newTask.title}" to ${project.name}`;
           detail = `Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)}) to ${project.name}`;
           projectsChanged = true;
+          result.updatedProjectIds.add(project.id);
           break;
         }
         case 'update_task': {
@@ -1903,6 +2046,7 @@ Write a professional executive summary that highlights the project's current sta
           label = `Updated task "${task.title}" in ${project.name}`;
           detail = `Updated task "${task.title}" in ${project.name}: ${changes.join('; ') || 'no tracked changes'}`;
           projectsChanged = true;
+          result.updatedProjectIds.add(project.id);
           break;
         }
         case 'add_subtask': {
@@ -1925,6 +2069,7 @@ Write a professional executive summary that highlights the project's current sta
           label = `Added subtask "${newSubtask.title}" to ${task.title}`;
           detail = `Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)}) under ${task.title} in ${project.name}`;
           projectsChanged = true;
+          result.updatedProjectIds.add(project.id);
           break;
         }
         case 'update_subtask': {
@@ -1966,6 +2111,7 @@ Write a professional executive summary that highlights the project's current sta
           label = `Updated subtask "${subtask.title}" in ${task.title}`;
           detail = `Updated subtask "${subtask.title}" in ${task.title}: ${changes.join('; ') || 'no tracked changes'}`;
           projectsChanged = true;
+          result.updatedProjectIds.add(project.id);
           break;
         }
         case 'update_project': {
@@ -1998,6 +2144,7 @@ Write a professional executive summary that highlights the project's current sta
           label = `Updated ${project.name}`;
           detail = `Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`;
           projectsChanged = true;
+          result.updatedProjectIds.add(project.id);
           break;
         }
         case 'send_email': {
@@ -2060,7 +2207,8 @@ Write a professional executive summary that highlights the project's current sta
 
     return {
       deltas: result.deltas,
-      actionResults: result.actionResults
+      actionResults: result.actionResults,
+      updatedProjectIds: Array.from(result.updatedProjectIds)
     };
   };
 
@@ -2129,23 +2277,52 @@ Write a professional executive summary that highlights the project's current sta
   // Show all projects, but organize by who is on them
   const visibleProjects = projects.filter(project => project.status !== 'deleted');
 
+  // Filter projects by search query when search is open on portfolio page
+  const searchFilterProjects = (projectList) => {
+    if (!globalSearchOpen || !globalSearchQuery.trim() || activeView !== 'overview' || viewingProjectId) {
+      return projectList;
+    }
+    const lowerQuery = globalSearchQuery.toLowerCase();
+    return projectList.filter(project => {
+      // Match project name
+      if (project.name.toLowerCase().includes(lowerQuery)) return true;
+      // Match task titles
+      if (project.plan.some(task => task.title.toLowerCase().includes(lowerQuery))) return true;
+      // Match subtask titles
+      if (project.plan.some(task =>
+        task.subtasks.some(subtask => subtask.title.toLowerCase().includes(lowerQuery))
+      )) return true;
+      // Match stakeholder names
+      if (project.stakeholders.some(s => s.name.toLowerCase().includes(lowerQuery))) return true;
+      return false;
+    });
+  };
+
   // Projects the logged-in user is on
   const userProjects = visibleProjects.filter(project =>
     isAdminUser(loggedInUser) || project.stakeholders.some(stakeholder => stakeholder.name === loggedInUser)
   );
 
-  // Split active and completed for user's projects
-  const userActiveProjects = userProjects.filter(project => !['completed', 'closed'].includes(project.status));
-  const userCompletedProjects = userProjects.filter(project => ['completed', 'closed'].includes(project.status));
+  // Split active and completed for user's projects (with search filter applied)
+  const userActiveProjects = searchFilterProjects(
+    userProjects.filter(project => !['completed', 'closed'].includes(project.status))
+  );
+  const userCompletedProjects = searchFilterProjects(
+    userProjects.filter(project => ['completed', 'closed'].includes(project.status))
+  );
 
   // Projects the logged-in user is NOT on
   const otherProjects = visibleProjects.filter(project =>
     !isAdminUser(loggedInUser) && !project.stakeholders.some(stakeholder => stakeholder.name === loggedInUser)
   );
 
-  // Split active and completed for other projects
-  const otherActiveProjects = otherProjects.filter(project => !['completed', 'closed'].includes(project.status));
-  const otherCompletedProjects = otherProjects.filter(project => ['completed', 'closed'].includes(project.status));
+  // Split active and completed for other projects (with search filter applied)
+  const otherActiveProjects = searchFilterProjects(
+    otherProjects.filter(project => !['completed', 'closed'].includes(project.status))
+  );
+  const otherCompletedProjects = searchFilterProjects(
+    otherProjects.filter(project => ['completed', 'closed'].includes(project.status))
+  );
 
   // For backwards compatibility (used in slides, daily update, etc.)
   const activeProjects = userActiveProjects;
@@ -2298,7 +2475,24 @@ Keep tool calls granular (one discrete change per action), explain each action c
     try {
       const { parsed, content } = await requestMomentumActions(messages);
       setThrustPendingActions(parsed.actions || []);
-      const { deltas, actionResults } = await applyThrustActions(parsed.actions || []);
+      const { deltas, actionResults, updatedProjectIds } = await applyThrustActions(parsed.actions || []);
+
+      // Track recently updated projects for highlighting
+      if (updatedProjectIds && updatedProjectIds.length > 0) {
+        setRecentlyUpdatedProjects(new Set(updatedProjectIds));
+        // Expand all updated projects in the momentum view
+        setExpandedMomentumProjects(prev => {
+          const newExpanded = { ...prev };
+          updatedProjectIds.forEach(id => {
+            newExpanded[String(id)] = true;
+          });
+          return newExpanded;
+        });
+        // Clear highlights after 5 seconds
+        setTimeout(() => {
+          setRecentlyUpdatedProjects(new Set());
+        }, 5000);
+      }
 
       const assistantMessage = {
         id: responseId,
@@ -2412,18 +2606,19 @@ Keep tool calls granular (one discrete change per action), explain each action c
     }
   }, [loggedInUser, viewingProjectId, visibleProjects]);
 
+  // Daily Update should only show projects the logged-in user is a contributor on
   useEffect(() => {
     if (!showDailyCheckin) return;
 
-    if (visibleProjects.length > 0 && (!selectedProject || !visibleProjects.some(p => p.id === selectedProject.id))) {
-      setSelectedProject(visibleProjects[0]);
+    if (userProjects.length > 0 && (!selectedProject || !userProjects.some(p => p.id === selectedProject.id))) {
+      setSelectedProject(userProjects[0]);
     }
 
-    if (showDailyCheckin && visibleProjects.length === 0) {
+    if (showDailyCheckin && userProjects.length === 0) {
       setShowDailyCheckin(false);
       setSelectedProject(null);
     }
-  }, [showDailyCheckin, visibleProjects, selectedProject]);
+  }, [showDailyCheckin, userProjects, selectedProject]);
 
   useEffect(() => {
     if (visibleProjects.length === 0) {
@@ -2909,8 +3104,118 @@ Keep tool calls granular (one discrete change per action), explain each action c
             transform: translateX(0);
           }
         }
+
+        @keyframes momentumPulse {
+          0%, 100% {
+            box-shadow: 0 4px 20px rgba(122, 155, 118, 0.25);
+          }
+          50% {
+            box-shadow: 0 4px 30px rgba(122, 155, 118, 0.45);
+          }
+        }
       `}</style>
-      
+
+      {/* Global Search Modal */}
+      {globalSearchOpen && (
+        <div
+          style={styles.globalSearchOverlay}
+          onClick={() => {
+            setGlobalSearchOpen(false);
+            setGlobalSearchQuery('');
+          }}
+        >
+          <div
+            style={styles.globalSearchModal}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={styles.globalSearchInputWrapper}>
+              <Search size={20} style={{ color: 'var(--stone)' }} />
+              <input
+                ref={globalSearchInputRef}
+                type="text"
+                value={globalSearchQuery}
+                onChange={(e) => {
+                  setGlobalSearchQuery(e.target.value);
+                  setGlobalSearchSelectedIndex(0);
+                }}
+                onKeyDown={(e) => {
+                  const results = getGlobalSearchResults(globalSearchQuery);
+                  if (e.key === 'ArrowDown') {
+                    e.preventDefault();
+                    setGlobalSearchSelectedIndex(prev =>
+                      prev < results.length - 1 ? prev + 1 : prev
+                    );
+                  } else if (e.key === 'ArrowUp') {
+                    e.preventDefault();
+                    setGlobalSearchSelectedIndex(prev => prev > 0 ? prev - 1 : 0);
+                  } else if (e.key === 'Enter' && results[globalSearchSelectedIndex]) {
+                    e.preventDefault();
+                    handleGlobalSearchSelect(results[globalSearchSelectedIndex]);
+                  } else if (e.key === 'Escape') {
+                    e.preventDefault();
+                    setGlobalSearchOpen(false);
+                    setGlobalSearchQuery('');
+                  }
+                }}
+                placeholder="Search projects, tasks, people..."
+                style={styles.globalSearchInput}
+                autoFocus
+              />
+              <span style={styles.globalSearchEscHint}>ESC to close</span>
+            </div>
+
+            {globalSearchQuery && (
+              <div style={styles.globalSearchResults}>
+                {(() => {
+                  const results = getGlobalSearchResults(globalSearchQuery);
+                  if (results.length === 0) {
+                    return (
+                      <div style={styles.globalSearchNoResults}>
+                        No results for "{globalSearchQuery}"
+                      </div>
+                    );
+                  }
+                  return results.map((result, idx) => (
+                    <div
+                      key={`${result.type}-${result.id}`}
+                      style={{
+                        ...styles.globalSearchResultItem,
+                        backgroundColor: idx === globalSearchSelectedIndex ? 'var(--cream)' : 'transparent'
+                      }}
+                      onClick={() => handleGlobalSearchSelect(result)}
+                      onMouseEnter={() => setGlobalSearchSelectedIndex(idx)}
+                    >
+                      <span style={{
+                        ...styles.globalSearchResultType,
+                        backgroundColor:
+                          result.type === 'person' ? 'var(--sage)20' :
+                          result.type === 'project' ? 'var(--earth)20' :
+                          result.type === 'task' ? 'var(--amber)20' :
+                          'var(--coral)20',
+                        color:
+                          result.type === 'person' ? 'var(--sage)' :
+                          result.type === 'project' ? 'var(--earth)' :
+                          result.type === 'task' ? 'var(--amber)' :
+                          'var(--coral)'
+                      }}>
+                        {result.type}
+                      </span>
+                      <span style={styles.globalSearchResultDisplay}>{result.display}</span>
+                    </div>
+                  ));
+                })()}
+              </div>
+            )}
+
+            {activeView === 'overview' && globalSearchQuery && !viewingProjectId && (
+              <div style={styles.globalSearchFilterHint}>
+                <span>💡 Search is filtering visible portfolio cards</span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       <div style={styles.container}>
       {/* Daily Check-in Modal */}
       {showDailyCheckin && selectedProject && (
@@ -3097,10 +3402,10 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 </button>
                 <button
                   onClick={() => {
-                    // Skip to next project
-                    const currentIndex = visibleProjects.findIndex(p => p.id === selectedProject.id);
-                    if (currentIndex < visibleProjects.length - 1) {
-                      setSelectedProject(visibleProjects[currentIndex + 1]);
+                    // Skip to next project the user is a contributor on
+                    const currentIndex = userProjects.findIndex(p => p.id === selectedProject.id);
+                    if (currentIndex < userProjects.length - 1) {
+                      setSelectedProject(userProjects[currentIndex + 1]);
                       setCheckinNote('');
                     } else {
                       setShowDailyCheckin(false);
@@ -3140,13 +3445,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
               </p>
 
               <div style={styles.progressIndicator}>
-                {visibleProjects.map((p, idx) => (
+                {userProjects.map((p, idx) => (
                   <div
                     key={p.id}
                     style={{
                       ...styles.progressDot,
                       backgroundColor: p.id === selectedProject.id ? 'var(--amber)' : 'var(--cloud)',
-                      opacity: idx <= visibleProjects.indexOf(selectedProject) ? 1 : 0.3
+                      opacity: idx <= userProjects.indexOf(selectedProject) ? 1 : 0.3
                     }}
                   />
                 ))}
@@ -3326,24 +3631,35 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
       <main style={styles.main}>
         <div style={styles.topBar}>
-          <div />
+          <button
+            onClick={() => {
+              setGlobalSearchOpen(true);
+              setGlobalSearchQuery('');
+              setGlobalSearchSelectedIndex(0);
+            }}
+            style={styles.globalSearchTrigger}
+          >
+            <Search size={16} />
+            <span style={styles.globalSearchTriggerText}>Search...</span>
+            <span style={styles.globalSearchShortcut}>⌘K</span>
+          </button>
           <div style={styles.topBarRight}>
             {activeView === 'thrust' && (
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', marginRight: '12px' }}>
                 <button
                   onClick={() => {
-                    if (visibleProjects.length > 0) {
-                      setSelectedProject(visibleProjects[0]);
+                    if (userProjects.length > 0) {
+                      setSelectedProject(userProjects[0]);
                       setShowDailyCheckin(true);
                     }
                   }}
                   style={{
                     ...styles.dailyUpdateButton,
-                    opacity: visibleProjects.length === 0 ? 0.5 : 1,
-                    cursor: visibleProjects.length === 0 ? 'not-allowed' : 'pointer'
+                    opacity: userProjects.length === 0 ? 0.5 : 1,
+                    cursor: userProjects.length === 0 ? 'not-allowed' : 'pointer'
                   }}
-                  disabled={visibleProjects.length === 0}
-                  title={visibleProjects.length === 0 ? 'No projects available for check-in' : 'Start a daily check-in'}
+                  disabled={userProjects.length === 0}
+                  title={userProjects.length === 0 ? 'No projects you are a contributor on' : 'Start a daily check-in for your projects'}
                 >
                   Daily Update
                 </button>
@@ -4663,14 +4979,28 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
                 {visibleProjects.length > 0 ? (
                   <div style={styles.thrustInfoContent}>
-                    {visibleProjects.map(project => {
+                    {/* Sort projects with recently updated ones first */}
+                    {[...visibleProjects].sort((a, b) => {
+                      const aUpdated = recentlyUpdatedProjects.has(a.id);
+                      const bUpdated = recentlyUpdatedProjects.has(b.id);
+                      if (aUpdated && !bUpdated) return -1;
+                      if (!aUpdated && bUpdated) return 1;
+                      return 0;
+                    }).map(project => {
                       const projectId = String(project.id);
                       const isExpanded = expandedMomentumProjects[projectId] ?? true;
                       const dueSoonTasks = getProjectDueSoonTasks(project);
                       const recentUpdates = project.recentActivity.slice(0, 3);
+                      const isRecentlyUpdated = recentlyUpdatedProjects.has(project.id);
 
                       return (
-                        <div key={project.id} style={styles.momentumProjectCard}>
+                        <div
+                          key={project.id}
+                          style={{
+                            ...styles.momentumProjectCard,
+                            ...(isRecentlyUpdated ? styles.momentumProjectCardHighlighted : {})
+                          }}
+                        >
                           <button
                             style={styles.momentumProjectToggle}
                             onClick={() => setExpandedMomentumProjects(prev => ({
@@ -5087,6 +5417,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                   localStorage.setItem('manity_logged_in_user', personName);
                 }}
                 loggedInUser={loggedInUser}
+                featuredPersonId={featuredPersonId}
               />
             </div>
           </>
@@ -5547,6 +5878,133 @@ const styles = {
     gap: '12px',
   },
 
+  // Global Search Styles
+  globalSearchTrigger: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 16px',
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    backgroundColor: '#FFFFFF',
+    cursor: 'pointer',
+    color: 'var(--stone)',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    transition: 'all 0.2s ease',
+    minWidth: '200px',
+  },
+
+  globalSearchTriggerText: {
+    flex: 1,
+    textAlign: 'left',
+    color: 'var(--stone)',
+    opacity: 0.7,
+  },
+
+  globalSearchShortcut: {
+    fontSize: '11px',
+    padding: '2px 6px',
+    backgroundColor: 'var(--cream)',
+    borderRadius: '4px',
+    color: 'var(--stone)',
+    fontWeight: 500,
+  },
+
+  globalSearchOverlay: {
+    position: 'fixed',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    backgroundColor: 'rgba(0, 0, 0, 0.5)',
+    display: 'flex',
+    alignItems: 'flex-start',
+    justifyContent: 'center',
+    paddingTop: '120px',
+    zIndex: 9999,
+  },
+
+  globalSearchModal: {
+    width: '100%',
+    maxWidth: '560px',
+    backgroundColor: '#FFFFFF',
+    borderRadius: '12px',
+    boxShadow: '0 16px 48px rgba(0, 0, 0, 0.2)',
+    overflow: 'hidden',
+  },
+
+  globalSearchInputWrapper: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '16px 20px',
+    borderBottom: '1px solid var(--cloud)',
+  },
+
+  globalSearchInput: {
+    flex: 1,
+    border: 'none',
+    outline: 'none',
+    fontSize: '16px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    backgroundColor: 'transparent',
+  },
+
+  globalSearchEscHint: {
+    fontSize: '11px',
+    color: 'var(--stone)',
+    opacity: 0.7,
+  },
+
+  globalSearchResults: {
+    maxHeight: '320px',
+    overflowY: 'auto',
+    padding: '8px',
+  },
+
+  globalSearchResultItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    padding: '10px 12px',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'background-color 0.15s ease',
+  },
+
+  globalSearchResultType: {
+    fontSize: '11px',
+    fontWeight: 600,
+    padding: '3px 8px',
+    borderRadius: '4px',
+    textTransform: 'capitalize',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  globalSearchResultDisplay: {
+    fontSize: '14px',
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  globalSearchNoResults: {
+    padding: '24px',
+    textAlign: 'center',
+    color: 'var(--stone)',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  globalSearchFilterHint: {
+    padding: '12px 16px',
+    backgroundColor: 'var(--cream)',
+    borderTop: '1px solid var(--cloud)',
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
 
   userIndicator: {
     display: 'flex',
@@ -8017,6 +8475,13 @@ const styles = {
     boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
     transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
     animation: 'fadeInUp 0.6s cubic-bezier(0.4, 0, 0.2, 1) backwards',
+  },
+
+  momentumProjectCardHighlighted: {
+    border: '2px solid var(--sage)',
+    boxShadow: '0 4px 20px rgba(122, 155, 118, 0.25)',
+    animation: 'momentumPulse 2s ease-in-out infinite',
+    backgroundColor: 'rgba(122, 155, 118, 0.05)',
   },
 
   momentumProjectToggle: {
