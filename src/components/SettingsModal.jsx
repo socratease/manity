@@ -1,4 +1,4 @@
-import React, { useState, useRef } from "react";
+import React, { useState, useRef, useEffect } from "react";
 import { Download, Upload } from "lucide-react";
 
 export default function SettingsModal({
@@ -10,9 +10,34 @@ export default function SettingsModal({
   loggedInUser,
   setLoggedInUser,
   allStakeholders,
+  emailSettings,
+  onSaveEmailSettings,
+  onRefreshEmailSettings,
 }) {
   const [exportTarget, setExportTarget] = useState("all");
   const importInputRef = useRef(null);
+  const [emailForm, setEmailForm] = useState({
+    smtpServer: "",
+    smtpPort: 587,
+    username: "",
+    password: "",
+    fromAddress: "",
+    useTLS: true
+  });
+  const [isSavingEmail, setIsSavingEmail] = useState(false);
+  const [emailStatus, setEmailStatus] = useState("");
+
+  useEffect(() => {
+    if (!emailSettings) return;
+    setEmailForm({
+      smtpServer: emailSettings.smtpServer || "",
+      smtpPort: emailSettings.smtpPort || 587,
+      username: emailSettings.username || "",
+      password: "",
+      fromAddress: emailSettings.fromAddress || "",
+      useTLS: emailSettings.useTLS ?? true
+    });
+  }, [emailSettings]);
 
   if (!isOpen) return null;
 
@@ -37,6 +62,40 @@ export default function SettingsModal({
       if (importInputRef.current) {
         importInputRef.current.value = '';
       }
+    }
+  };
+
+  const updateEmailField = (field, value) => {
+    setEmailForm(prev => ({ ...prev, [field]: value }));
+    setEmailStatus('');
+  };
+
+  const handleSaveEmail = async () => {
+    if (!onSaveEmailSettings) return;
+    setIsSavingEmail(true);
+    setEmailStatus('');
+    try {
+      await onSaveEmailSettings({ ...emailForm, password: emailForm.password || undefined });
+      setEmailStatus('Email settings saved');
+      setEmailForm(prev => ({ ...prev, password: '' }));
+    } catch (error) {
+      setEmailStatus(error?.message || 'Unable to save email settings');
+    } finally {
+      setIsSavingEmail(false);
+    }
+  };
+
+  const handleRefreshEmail = async () => {
+    if (!onRefreshEmailSettings) return;
+    setEmailStatus('');
+    try {
+      const data = await onRefreshEmailSettings();
+      if (data) {
+        setEmailForm(prev => ({ ...prev, password: '' }));
+        setEmailStatus('Email settings refreshed');
+      }
+    } catch (error) {
+      setEmailStatus(error?.message || 'Unable to refresh email settings');
     }
   };
 
@@ -131,6 +190,105 @@ export default function SettingsModal({
             />
           </div>
         </div>
+
+        {/* Email Settings */}
+        {onSaveEmailSettings && (
+          <div style={styles.section}>
+            <h3 style={styles.sectionTitle}>Email server</h3>
+            <p style={styles.description}>
+              Configure the SMTP server Momentum should use when sending emails on your behalf.
+            </p>
+
+            <div style={styles.flexRow}>
+              <div style={{ flex: 2 }}>
+                <label style={styles.label} htmlFor="smtp-server">SMTP server</label>
+                <input
+                  id="smtp-server"
+                  type="text"
+                  value={emailForm.smtpServer}
+                  onChange={(e) => updateEmailField('smtpServer', e.target.value)}
+                  style={styles.input}
+                  placeholder="smtp.example.com"
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={styles.label} htmlFor="smtp-port">Port</label>
+                <input
+                  id="smtp-port"
+                  type="number"
+                  value={emailForm.smtpPort}
+                  onChange={(e) => updateEmailField('smtpPort', Number(e.target.value) || 0)}
+                  style={styles.input}
+                  min={1}
+                />
+              </div>
+            </div>
+
+            <div style={styles.flexRow}>
+              <div style={{ flex: 1 }}>
+                <label style={styles.label} htmlFor="smtp-username">Username</label>
+                <input
+                  id="smtp-username"
+                  type="text"
+                  value={emailForm.username}
+                  onChange={(e) => updateEmailField('username', e.target.value)}
+                  style={styles.input}
+                  placeholder="bot@example.com"
+                />
+              </div>
+              <div style={{ flex: 1 }}>
+                <label style={styles.label} htmlFor="smtp-password">Password</label>
+                <input
+                  id="smtp-password"
+                  type="password"
+                  value={emailForm.password}
+                  onChange={(e) => updateEmailField('password', e.target.value)}
+                  style={styles.input}
+                  placeholder={emailSettings?.hasPassword ? '••••••••' : 'Enter password'}
+                />
+              </div>
+            </div>
+
+            <div style={styles.flexRow}>
+              <div style={{ flex: 1 }}>
+                <label style={styles.label} htmlFor="smtp-from">From address</label>
+                <input
+                  id="smtp-from"
+                  type="email"
+                  value={emailForm.fromAddress}
+                  onChange={(e) => updateEmailField('fromAddress', e.target.value)}
+                  style={styles.input}
+                  placeholder="alerts@example.com"
+                />
+              </div>
+              <div style={{ ...styles.toggleRow, flex: 1 }}>
+                <label style={styles.label} htmlFor="smtp-tls">Connection security</label>
+                <div style={styles.toggleGroup}>
+                  <input
+                    id="smtp-tls"
+                    type="checkbox"
+                    checked={emailForm.useTLS}
+                    onChange={(e) => updateEmailField('useTLS', e.target.checked)}
+                  />
+                  <span>Use STARTTLS</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={styles.actions}>
+              <button onClick={handleSaveEmail} style={styles.primaryButton} disabled={isSavingEmail}>
+                {isSavingEmail ? 'Saving…' : 'Save email settings'}
+              </button>
+              {onRefreshEmailSettings && (
+                <button onClick={handleRefreshEmail} style={styles.secondaryButton}>
+                  Refresh from server
+                </button>
+              )}
+              {emailStatus && <span style={styles.statusText}>{emailStatus}</span>}
+            </div>
+            <p style={styles.helperText}>Password is optional; leave blank to keep the existing secret.</p>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -276,4 +434,36 @@ const styles = {
   hiddenFileInput: {
     display: "none",
   },
+  flexRow: {
+    display: "flex",
+    gap: 12,
+    alignItems: "flex-end",
+    marginBottom: 12,
+    flexWrap: "wrap"
+  },
+  toggleRow: {
+    display: "flex",
+    flexDirection: "column",
+    justifyContent: "flex-end",
+    gap: 6
+  },
+  toggleGroup: {
+    display: "flex",
+    gap: 8,
+    alignItems: "center",
+    padding: "10px 12px",
+    border: "1px solid #e8e3d8",
+    borderRadius: 10,
+    backgroundColor: "#faf8f3",
+  },
+  statusText: {
+    fontSize: "13px",
+    color: "#6b6554",
+    alignSelf: "center",
+  },
+  helperText: {
+    fontSize: "13px",
+    color: "#6b6554",
+    marginTop: 8,
+  }
 };

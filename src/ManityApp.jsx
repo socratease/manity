@@ -17,7 +17,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const recentlyCompletedRef = useRef(null);
   const nextUpRef = useRef(null);
 
-  const { projects, setProjects, people, createPerson, updatePerson, deletePerson } = usePortfolioData();
+  const { projects, setProjects, people, createPerson, updatePerson, deletePerson, sendEmail } = usePortfolioData();
 
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
@@ -128,7 +128,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
               properties: {
                 type: {
                   type: "string",
-                  enum: ["comment", "add_task", "update_task", "add_subtask", "update_subtask", "update_project", "create_project"],
+                  enum: ["comment", "add_task", "update_task", "add_subtask", "update_subtask", "update_project", "create_project", "add_person", "send_email"],
                   description: "The type of action"
                 },
                 projectId: {
@@ -150,6 +150,24 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                 author: {
                   type: "string",
                   description: "Author of the comment"
+                },
+                recipients: {
+                  description: "Email recipients (comma-separated or array)",
+                  anyOf: [
+                    { type: "string" },
+                    {
+                      type: "array",
+                      items: { type: "string" }
+                    }
+                  ]
+                },
+                subject: {
+                  type: "string",
+                  description: "Email subject"
+                },
+                body: {
+                  type: "string",
+                  description: "Email body content"
                 },
                 title: {
                   type: "string",
@@ -1732,11 +1750,14 @@ Write a professional executive summary that highlights the project's current sta
         continue;
       }
 
-      const project = resolveProject(action.projectId || action.projectName);
+      let project = null;
+      if (action.type !== 'send_email') {
+        project = resolveProject(action.projectId || action.projectName);
 
-      if (!project) {
-        appendActionResult('Skipped action: unknown project', 'Skipped action because the project was not found.', actionDeltas);
-        continue;
+        if (!project) {
+          appendActionResult('Skipped action: unknown project', 'Skipped action because the project was not found.', actionDeltas);
+          continue;
+        }
       }
 
       switch (action.type) {
@@ -1906,6 +1927,46 @@ Write a professional executive summary that highlights the project's current sta
           projectsChanged = true;
           break;
         }
+        case 'send_email': {
+          const recipients = Array.isArray(action.recipients)
+            ? action.recipients
+            : `${action.recipients || ''}`.split(',');
+
+          const normalizedRecipients = recipients
+            .map(recipient => recipient?.trim())
+            .filter(Boolean)
+            .map(recipient => {
+              if (recipient.includes('@')) return recipient;
+              const person = findPersonByName(recipient);
+              return person?.email || recipient;
+            })
+            .filter(Boolean);
+
+          if (!normalizedRecipients.length) {
+            appendActionResult('Skipped action: missing recipients', 'Skipped send_email because no recipients were provided.', actionDeltas);
+            continue;
+          }
+
+          if (!action.subject || !action.body) {
+            appendActionResult('Skipped action: incomplete email', 'Skipped send_email because subject or body was missing.', actionDeltas);
+            continue;
+          }
+
+          try {
+            await sendEmail({
+              recipients: normalizedRecipients,
+              subject: action.subject,
+              body: action.body
+            });
+            label = `Email sent to ${normalizedRecipients.join(', ')}`;
+            detail = `Sent email "${action.subject}"`;
+          } catch (error) {
+            appendActionResult('Failed to send email', error?.message || 'Email service returned an error.', actionDeltas);
+            continue;
+          }
+
+          break;
+        }
         default:
           label = 'Skipped action: unsupported type';
           detail = `Skipped unsupported action type: ${action.type}`;
@@ -1944,6 +2005,8 @@ Write a professional executive summary that highlights the project's current sta
         return `Update project ${projectName}: status/progress/date tweaks`;
       case 'add_person':
         return `Add ${action.name || action.personName || 'a new person'} to People`;
+      case 'send_email':
+        return `Email ${action.recipients?.join ? action.recipients.join(', ') : action.recipients || 'recipients'} about "${action.subject || ''}"`;
       default:
         return `Action queued: ${action.type || 'unknown'} for ${projectName}`;
     }
@@ -2129,6 +2192,7 @@ Supported atomic actions (never combine multiple changes into one action):
 - update_project: change project status/progress/dates. Fields: projectId, status, progress (0-100), targetDate, lastUpdate.
 - create_project: create a new project. Fields: name (required), description (optional), priority (low/medium/high, default medium), status (planning/active/on-hold/cancelled, default planning), targetDate (optional), stakeholders (comma-separated names, optional).
 - add_person: add a person to the People database. Fields: name (required), team (optional), email (optional). If the person already exists, update their info instead of duplicating.
+- send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People, comma separated or array), subject (required), body (required).
 
 Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project. When creating projects, if you lack required information like name or description, ask the user for these details before proceeding with the action.`;
     const context = buildThrustContext();

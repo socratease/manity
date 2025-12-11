@@ -4,7 +4,7 @@ import SettingsModal from "./components/SettingsModal";
 import { PortfolioProvider, usePortfolioData } from "./hooks/usePortfolioData";
 
 function AppContent() {
-  const { projects, handleExport, handleImport } = usePortfolioData();
+  const { projects, handleExport, handleImport, emailSettings, refreshEmailSettings, saveEmailSettings } = usePortfolioData();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsData, setSettingsData] = useState({});
 
@@ -37,6 +37,9 @@ function AppContent() {
         loggedInUser={settingsData.loggedInUser}
         setLoggedInUser={settingsData.setLoggedInUser}
         allStakeholders={settingsData.allStakeholders}
+        emailSettings={emailSettings}
+        onSaveEmailSettings={saveEmailSettings}
+        onRefreshEmailSettings={refreshEmailSettings}
       />
     </>
   );

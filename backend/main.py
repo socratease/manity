@@ -3,8 +3,10 @@ import os
 import uuid
 from datetime import datetime
 from enum import Enum
+from email.message import EmailMessage
+import smtplib
 from pathlib import Path
-from typing import List, Optional
+from typing import List, Optional, Sequence
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
@@ -218,6 +220,16 @@ class Person(PersonBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
 
 
+class EmailSettings(SQLModel, table=True):
+    id: Optional[int] = Field(default=1, primary_key=True)
+    smtp_server: str = ""
+    smtp_port: int = 587
+    username: Optional[str] = None
+    password: Optional[str] = None
+    use_tls: bool = True
+    from_address: Optional[str] = None
+
+
 class SubtaskPayload(SubtaskBase):
     id: Optional[str] = None
 
@@ -245,6 +257,96 @@ class ImportPayload(BaseModel):
     projects: List[ProjectPayload]
     people: List[PersonPayload] = Field(default_factory=list)
     mode: str = "replace"
+
+
+class EmailSettingsPayload(BaseModel):
+    smtpServer: str
+    smtpPort: int = 587
+    username: Optional[str] = None
+    password: Optional[str] = None
+    useTLS: bool = True
+    fromAddress: Optional[str] = None
+
+
+class EmailSettingsResponse(BaseModel):
+    smtpServer: str
+    smtpPort: int
+    username: Optional[str] = None
+    fromAddress: Optional[str] = None
+    useTLS: bool = True
+    hasPassword: bool = False
+
+
+class EmailSendPayload(BaseModel):
+    recipients: List[str] | str
+    subject: str
+    body: str
+
+
+def get_email_settings(session: Session) -> EmailSettings:
+    settings = session.get(EmailSettings, 1)
+    if settings is None:
+        settings = EmailSettings(id=1)
+        session.add(settings)
+        session.commit()
+        session.refresh(settings)
+    return settings
+
+
+def serialize_email_settings(settings: EmailSettings) -> dict:
+    return {
+        "smtpServer": settings.smtp_server,
+        "smtpPort": settings.smtp_port,
+        "username": settings.username or "",
+        "fromAddress": settings.from_address or "",
+        "useTLS": settings.use_tls,
+        "hasPassword": bool(settings.password),
+    }
+
+
+def normalize_recipients(raw: Sequence[str] | str) -> list[str]:
+    if isinstance(raw, str):
+        candidates = [raw]
+    else:
+        candidates = list(raw)
+
+    recipients: list[str] = []
+    for candidate in candidates:
+        if not candidate:
+            continue
+        if isinstance(candidate, str):
+            parts = candidate.replace(";", ",").split(",")
+            for part in parts:
+                normalized = part.strip()
+                if normalized:
+                    recipients.append(normalized)
+    return recipients
+
+
+def dispatch_email(settings: EmailSettings, recipients: list[str], subject: str, body: str) -> None:
+    if not settings.smtp_server:
+        raise ValueError("SMTP server is not configured")
+    if not settings.from_address:
+        raise ValueError("Sender address is not configured")
+    if not recipients:
+        raise ValueError("At least one recipient is required")
+
+    message = EmailMessage()
+    message["Subject"] = subject
+    message["From"] = settings.from_address
+    message["To"] = ", ".join(recipients)
+    message.set_content(body)
+
+    try:
+        with smtplib.SMTP(settings.smtp_server, settings.smtp_port, timeout=10) as smtp:
+            if settings.use_tls:
+                smtp.starttls()
+            if settings.username or settings.password:
+                smtp.login(settings.username or "", settings.password or "")
+            smtp.send_message(message)
+    except Exception as exc:  # pragma: no cover - defensive wrapper
+        logger.exception("Failed to send email")
+        raise exc
 
 
 class ChatRole(str, Enum):
@@ -572,6 +674,45 @@ def delete_person(person_id: str, session: Session = Depends(get_session)):
     session.delete(person)
     session.commit()
     return None
+
+
+@app.get("/settings/email", response_model=EmailSettingsResponse)
+def read_email_settings(session: Session = Depends(get_session)):
+    settings = get_email_settings(session)
+    return serialize_email_settings(settings)
+
+
+@app.put("/settings/email", response_model=EmailSettingsResponse)
+def update_email_settings(payload: EmailSettingsPayload, session: Session = Depends(get_session)):
+    settings = get_email_settings(session)
+    settings.smtp_server = payload.smtpServer
+    settings.smtp_port = payload.smtpPort
+    settings.username = payload.username or None
+    settings.from_address = payload.fromAddress or None
+    settings.use_tls = payload.useTLS
+
+    if payload.password is not None:
+        settings.password = payload.password
+
+    session.add(settings)
+    session.commit()
+    session.refresh(settings)
+    return serialize_email_settings(settings)
+
+
+@app.post("/actions/email", status_code=status.HTTP_202_ACCEPTED)
+def send_email_action(payload: EmailSendPayload, session: Session = Depends(get_session)):
+    settings = get_email_settings(session)
+    recipients = normalize_recipients(payload.recipients)
+
+    try:
+        dispatch_email(settings, recipients, payload.subject, payload.body)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
+    except smtplib.SMTPException as exc:  # pragma: no cover - rely on network behavior
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=str(exc))
+
+    return {"status": "sent", "recipients": recipients}
 
 
 @app.get("/projects")

@@ -12,6 +12,14 @@ const resolveUrl = (path) => {
 export const PortfolioProvider = ({ children }) => {
   const [projects, setProjectsState] = useState([]);
   const [people, setPeopleState] = useState([]);
+  const [emailSettings, setEmailSettings] = useState({
+    smtpServer: '',
+    smtpPort: 587,
+    username: '',
+    fromAddress: '',
+    useTLS: true,
+    hasPassword: false
+  });
   const hasInitializedRef = useRef(false);
 
   const dedupePeople = useCallback((list = []) => {
@@ -102,10 +110,35 @@ export const PortfolioProvider = ({ children }) => {
     }
   }, [apiRequest, dedupePeople]);
 
+  const refreshEmailSettings = useCallback(async () => {
+    const data = await apiRequest('/settings/email');
+    if (data) {
+      setEmailSettings(data);
+    }
+    return data;
+  }, [apiRequest]);
+
+  const saveEmailSettings = useCallback(async (settings) => {
+    const updated = await apiRequest('/settings/email', {
+      method: 'PUT',
+      body: JSON.stringify(settings)
+    });
+    setEmailSettings(updated);
+    return updated;
+  }, [apiRequest]);
+
+  const sendEmail = useCallback(async ({ recipients, subject, body }) => {
+    return apiRequest('/actions/email', {
+      method: 'POST',
+      body: JSON.stringify({ recipients, subject, body })
+    });
+  }, [apiRequest]);
+
   useEffect(() => {
     refreshProjects();
     refreshPeople();
-  }, [refreshProjects, refreshPeople]);
+    refreshEmailSettings();
+  }, [refreshProjects, refreshPeople, refreshEmailSettings]);
 
   const updateProjects = useCallback((updater) => {
     setProjectsState(prevProjects => {
@@ -328,7 +361,11 @@ export const PortfolioProvider = ({ children }) => {
     createPerson,
     updatePerson,
     deletePerson,
-    refreshPeople
+    refreshPeople,
+    emailSettings,
+    refreshEmailSettings,
+    saveEmailSettings,
+    sendEmail
   }), [
     projects,
     updateProjects,
@@ -351,7 +388,11 @@ export const PortfolioProvider = ({ children }) => {
     createPerson,
     updatePerson,
     deletePerson,
-    refreshPeople
+    refreshPeople,
+    emailSettings,
+    refreshEmailSettings,
+    saveEmailSettings,
+    sendEmail
   ]);
 
   return <PortfolioContext.Provider value={value}>{children}</PortfolioContext.Provider>;
