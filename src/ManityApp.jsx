@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, Search } from 'lucide-react';
+import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, Search, User, UserCircle } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
 import ForceDirectedTimeline from './components/ForceDirectedTimeline';
@@ -39,6 +39,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [newTaskDueDate, setNewTaskDueDate] = useState('');
   const [editingDueDate, setEditingDueDate] = useState(null);
   const [tempDueDate, setTempDueDate] = useState('');
+  const [editingCompletedDate, setEditingCompletedDate] = useState(false); // true when editing done date instead of due date
+  const [editingAssignee, setEditingAssignee] = useState(null); // 'task-{id}' or 'subtask-{id}' when editing assignee
+  const [assigneeSearchTerm, setAssigneeSearchTerm] = useState('');
+  const [assigneeFocusedIndex, setAssigneeFocusedIndex] = useState(0);
   const [timelineUpdate, setTimelineUpdate] = useState('');
   const [showTagSuggestions, setShowTagSuggestions] = useState(false);
   const [tagSearchTerm, setTagSearchTerm] = useState('');
@@ -549,6 +553,22 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }
   }, [globalSearchSelectedIndex, globalSearchOpen]);
 
+  // Close assignee dropdown when clicking outside
+  useEffect(() => {
+    if (!editingAssignee) return;
+    const handleClickOutside = (e) => {
+      // Check if click is outside the assignee dropdown
+      const dropdown = document.querySelector('[data-assignee-dropdown]');
+      if (dropdown && !dropdown.contains(e.target)) {
+        setEditingAssignee(null);
+        setAssigneeSearchTerm('');
+        setAssigneeFocusedIndex(0);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [editingAssignee]);
+
   const handleDailyCheckin = (projectId) => {
     if (checkinNote.trim()) {
       setProjects(projects.map(p =>
@@ -821,6 +841,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const handleUpdateDueDate = (taskId, subtaskId = null) => {
     if (tempDueDate) {
+      const fieldToUpdate = editingCompletedDate ? 'completedDate' : 'dueDate';
       setProjects(projects.map(p =>
         p.id === viewingProjectId
           ? {
@@ -832,11 +853,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                         ...task,
                         subtasks: task.subtasks.map(st =>
                           st.id === subtaskId
-                            ? { ...st, dueDate: tempDueDate }
+                            ? { ...st, [fieldToUpdate]: tempDueDate }
                             : st
                         )
                       }
-                    : { ...task, dueDate: tempDueDate }
+                    : { ...task, [fieldToUpdate]: tempDueDate }
                   : task
               )
             }
@@ -844,7 +865,35 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       ));
       setEditingDueDate(null);
       setTempDueDate('');
+      setEditingCompletedDate(false);
     }
+  };
+
+  const handleUpdateAssignee = (taskId, subtaskId, person) => {
+    setProjects(projects.map(p =>
+      p.id === viewingProjectId
+        ? {
+            ...p,
+            plan: p.plan.map(task =>
+              task.id === taskId
+                ? subtaskId
+                  ? {
+                      ...task,
+                      subtasks: task.subtasks.map(st =>
+                        st.id === subtaskId
+                          ? { ...st, assignee: person }
+                          : st
+                      )
+                    }
+                  : { ...task, assignee: person }
+                : task
+            )
+          }
+        : p
+    ));
+    setEditingAssignee(null);
+    setAssigneeSearchTerm('');
+    setAssigneeFocusedIndex(0);
   };
 
   const handleSubtaskComment = (taskId, subtaskId, taskTitle, subtaskTitle) => {
@@ -1067,10 +1116,19 @@ Write a professional executive summary that highlights the project's current sta
     }));
   };
 
+  // Helper to parse date string as local date (fixes timezone off-by-one bug)
+  const parseLocalDate = (dateString) => {
+    if (!dateString) return null;
+    // Handle ISO format with time (e.g., "2025-12-11T14:30:00")
+    const datePart = dateString.split('T')[0];
+    const [year, month, day] = datePart.split('-').map(Number);
+    return new Date(year, month - 1, day);
+  };
+
   const formatDueDate = (dateString, status, completedDate) => {
     // If completed, show completion date with green checkmark
     if (status === 'completed' && completedDate) {
-      const date = new Date(completedDate);
+      const date = parseLocalDate(completedDate);
       return {
         text: `Done ${date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`,
         color: 'var(--sage)',
@@ -1081,13 +1139,16 @@ Write a professional executive summary that highlights the project's current sta
       };
     }
 
-    const date = new Date(dateString);
+    const date = parseLocalDate(dateString);
+    if (!date) {
+      return { text: 'No date', color: 'var(--stone)', isOverdue: false, isCompleted: false, formattedDate: '', isDueSoon: false };
+    }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const dueDate = new Date(date);
     dueDate.setHours(0, 0, 0, 0);
     const diffTime = dueDate - today;
-    const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
+    const diffDays = Math.round(diffTime / (1000 * 60 * 60 * 24));
     const formattedDate = date.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
     const isDueSoon = diffDays >= 0 && diffDays <= 7;
 
@@ -4041,9 +4102,9 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                   autoFocus
                                 />
                               ) : (
-                                <span 
+                                <span
                                   style={{
-                                    ...styles.dueDateBadge, 
+                                    ...styles.dueDateBadge,
                                     color: dueDateInfo.color,
                                     cursor: 'pointer',
                                     display: 'flex',
@@ -4053,9 +4114,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                   onClick={(e) => {
                                     e.stopPropagation();
                                     setEditingDueDate(`task-${task.id}`);
-                                    setTempDueDate(task.dueDate);
+                                    // Edit completedDate when done, dueDate when not done
+                                    const isCompleted = task.status === 'completed';
+                                    setEditingCompletedDate(isCompleted);
+                                    setTempDueDate(isCompleted ? (task.completedDate || '') : (task.dueDate || ''));
                                   }}
-                                  title="Click to edit due date"
+                                  title={task.status === 'completed' ? "Click to edit completion date" : "Click to edit due date"}
                                 >
                                   {dueDateInfo.isCompleted && <Check size={12} style={{ color: 'var(--sage)' }} />}
                                   {dueDateInfo.text}
@@ -4063,6 +4127,102 @@ Keep tool calls granular (one discrete change per action), explain each action c
                               )}
                             </div>
                             <div style={styles.taskHeaderRight}>
+                              {/* Task Assignee picker */}
+                              <div style={{ position: 'relative' }}>
+                                {editingAssignee === `task-${task.id}` ? (
+                                  <div style={styles.assigneeDropdown} data-assignee-dropdown>
+                                    <input
+                                      type="text"
+                                      value={assigneeSearchTerm}
+                                      onChange={(e) => {
+                                        setAssigneeSearchTerm(e.target.value);
+                                        setAssigneeFocusedIndex(0);
+                                      }}
+                                      onKeyDown={(e) => {
+                                        const filtered = people.filter(p =>
+                                          p.name.toLowerCase().includes(assigneeSearchTerm.toLowerCase()) ||
+                                          (p.team && p.team.toLowerCase().includes(assigneeSearchTerm.toLowerCase()))
+                                        ).slice(0, 5);
+                                        if (e.key === 'ArrowDown') {
+                                          e.preventDefault();
+                                          setAssigneeFocusedIndex(prev => prev < filtered.length - 1 ? prev + 1 : prev);
+                                        } else if (e.key === 'ArrowUp') {
+                                          e.preventDefault();
+                                          setAssigneeFocusedIndex(prev => prev > 0 ? prev - 1 : 0);
+                                        } else if (e.key === 'Enter' && filtered[assigneeFocusedIndex]) {
+                                          e.preventDefault();
+                                          handleUpdateAssignee(task.id, null, filtered[assigneeFocusedIndex]);
+                                        } else if (e.key === 'Escape') {
+                                          e.preventDefault();
+                                          setEditingAssignee(null);
+                                          setAssigneeSearchTerm('');
+                                        }
+                                      }}
+                                      onClick={(e) => e.stopPropagation()}
+                                      placeholder="Search people..."
+                                      style={styles.assigneeSearchInput}
+                                      autoFocus
+                                    />
+                                    <div style={styles.assigneeList}>
+                                      {people
+                                        .filter(p =>
+                                          p.name.toLowerCase().includes(assigneeSearchTerm.toLowerCase()) ||
+                                          (p.team && p.team.toLowerCase().includes(assigneeSearchTerm.toLowerCase()))
+                                        )
+                                        .slice(0, 5)
+                                        .map((person, idx) => (
+                                          <div
+                                            key={person.id || person.name}
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              handleUpdateAssignee(task.id, null, person);
+                                            }}
+                                            onMouseEnter={() => setAssigneeFocusedIndex(idx)}
+                                            style={{
+                                              ...styles.assigneeOption,
+                                              backgroundColor: idx === assigneeFocusedIndex ? 'var(--cream)' : 'transparent'
+                                            }}
+                                          >
+                                            <User size={12} style={{ color: 'var(--stone)' }} />
+                                            <span>{person.name}</span>
+                                            {person.team && <span style={{ color: 'var(--stone)', fontSize: '11px' }}>({person.team})</span>}
+                                          </div>
+                                        ))}
+                                      {task.assignee && (
+                                        <div
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleUpdateAssignee(task.id, null, null);
+                                          }}
+                                          style={{ ...styles.assigneeOption, color: 'var(--coral)' }}
+                                        >
+                                          <X size={12} />
+                                          <span>Remove assignee</span>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={(e) => {
+                                      e.stopPropagation();
+                                      setEditingAssignee(`task-${task.id}`);
+                                      setAssigneeSearchTerm('');
+                                      setAssigneeFocusedIndex(0);
+                                    }}
+                                    style={styles.assigneeButton}
+                                    title={task.assignee ? `Assigned to ${task.assignee.name}` : "Assign to someone"}
+                                  >
+                                    {task.assignee ? (
+                                      <span style={styles.assigneeBadge}>
+                                        {task.assignee.name.split(' ').map(n => n[0]).join('')}
+                                      </span>
+                                    ) : (
+                                      <UserCircle size={16} style={{ color: 'var(--stone)' }} />
+                                    )}
+                                  </button>
+                                )}
+                              </div>
                               {taskEditEnabled && (
                                 <>
                                   <button
@@ -4161,7 +4321,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                           autoFocus
                                         />
                                       ) : (
-                                        <span 
+                                        <span
                                           style={{
                                             ...styles.subtaskDueDate,
                                             color: subtaskDueDate.color,
@@ -4174,14 +4334,113 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                           onClick={(e) => {
                                             e.stopPropagation();
                                             setEditingDueDate(`subtask-${subtask.id}`);
-                                            setTempDueDate(subtask.dueDate);
+                                            // Edit completedDate when done, dueDate when not done
+                                            const isCompleted = subtask.status === 'completed';
+                                            setEditingCompletedDate(isCompleted);
+                                            setTempDueDate(isCompleted ? (subtask.completedDate || '') : (subtask.dueDate || ''));
                                           }}
-                                          title="Click to edit due date"
+                                          title={subtask.status === 'completed' ? "Click to edit completion date" : "Click to edit due date"}
                                         >
                                           {subtaskDueDate.isCompleted && <Check size={10} style={{ color: 'var(--sage)' }} />}
                                           {subtaskDueDate.text}
                                         </span>
                                       )}
+                                      {/* Assignee picker */}
+                                      <div style={{ position: 'relative' }}>
+                                        {editingAssignee === `subtask-${subtask.id}` ? (
+                                          <div style={styles.assigneeDropdown} data-assignee-dropdown>
+                                            <input
+                                              type="text"
+                                              value={assigneeSearchTerm}
+                                              onChange={(e) => {
+                                                setAssigneeSearchTerm(e.target.value);
+                                                setAssigneeFocusedIndex(0);
+                                              }}
+                                              onKeyDown={(e) => {
+                                                const filtered = people.filter(p =>
+                                                  p.name.toLowerCase().includes(assigneeSearchTerm.toLowerCase()) ||
+                                                  (p.team && p.team.toLowerCase().includes(assigneeSearchTerm.toLowerCase()))
+                                                ).slice(0, 5);
+                                                if (e.key === 'ArrowDown') {
+                                                  e.preventDefault();
+                                                  setAssigneeFocusedIndex(prev => prev < filtered.length - 1 ? prev + 1 : prev);
+                                                } else if (e.key === 'ArrowUp') {
+                                                  e.preventDefault();
+                                                  setAssigneeFocusedIndex(prev => prev > 0 ? prev - 1 : 0);
+                                                } else if (e.key === 'Enter' && filtered[assigneeFocusedIndex]) {
+                                                  e.preventDefault();
+                                                  handleUpdateAssignee(task.id, subtask.id, filtered[assigneeFocusedIndex]);
+                                                } else if (e.key === 'Escape') {
+                                                  e.preventDefault();
+                                                  setEditingAssignee(null);
+                                                  setAssigneeSearchTerm('');
+                                                }
+                                              }}
+                                              onClick={(e) => e.stopPropagation()}
+                                              placeholder="Search people..."
+                                              style={styles.assigneeSearchInput}
+                                              autoFocus
+                                            />
+                                            <div style={styles.assigneeList}>
+                                              {people
+                                                .filter(p =>
+                                                  p.name.toLowerCase().includes(assigneeSearchTerm.toLowerCase()) ||
+                                                  (p.team && p.team.toLowerCase().includes(assigneeSearchTerm.toLowerCase()))
+                                                )
+                                                .slice(0, 5)
+                                                .map((person, idx) => (
+                                                  <div
+                                                    key={person.id || person.name}
+                                                    onClick={(e) => {
+                                                      e.stopPropagation();
+                                                      handleUpdateAssignee(task.id, subtask.id, person);
+                                                    }}
+                                                    onMouseEnter={() => setAssigneeFocusedIndex(idx)}
+                                                    style={{
+                                                      ...styles.assigneeOption,
+                                                      backgroundColor: idx === assigneeFocusedIndex ? 'var(--cream)' : 'transparent'
+                                                    }}
+                                                  >
+                                                    <User size={12} style={{ color: 'var(--stone)' }} />
+                                                    <span>{person.name}</span>
+                                                    {person.team && <span style={{ color: 'var(--stone)', fontSize: '11px' }}>({person.team})</span>}
+                                                  </div>
+                                                ))}
+                                              {subtask.assignee && (
+                                                <div
+                                                  onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    handleUpdateAssignee(task.id, subtask.id, null);
+                                                  }}
+                                                  style={{ ...styles.assigneeOption, color: 'var(--coral)' }}
+                                                >
+                                                  <X size={12} />
+                                                  <span>Remove assignee</span>
+                                                </div>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ) : (
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setEditingAssignee(`subtask-${subtask.id}`);
+                                              setAssigneeSearchTerm('');
+                                              setAssigneeFocusedIndex(0);
+                                            }}
+                                            style={styles.assigneeButton}
+                                            title={subtask.assignee ? `Assigned to ${subtask.assignee.name}` : "Assign to someone"}
+                                          >
+                                            {subtask.assignee ? (
+                                              <span style={styles.assigneeBadge}>
+                                                {subtask.assignee.name.split(' ').map(n => n[0]).join('')}
+                                              </span>
+                                            ) : (
+                                              <UserCircle size={14} style={{ color: 'var(--stone)' }} />
+                                            )}
+                                          </button>
+                                        )}
+                                      </div>
                                       <button
                                         onClick={(e) => {
                                           e.stopPropagation();
@@ -7780,6 +8039,69 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     transition: 'all 0.2s ease',
+  },
+
+  assigneeButton: {
+    padding: '4px 6px',
+    border: 'none',
+    borderRadius: '4px',
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    transition: 'all 0.2s ease',
+  },
+
+  assigneeBadge: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '20px',
+    height: '20px',
+    borderRadius: '50%',
+    backgroundColor: 'var(--sage)',
+    color: 'white',
+    fontSize: '9px',
+    fontWeight: '600',
+  },
+
+  assigneeDropdown: {
+    position: 'absolute',
+    top: '100%',
+    right: 0,
+    zIndex: 1000,
+    backgroundColor: 'white',
+    border: '1px solid var(--cloud)',
+    borderRadius: '8px',
+    boxShadow: '0 4px 12px rgba(0, 0, 0, 0.1)',
+    minWidth: '200px',
+    overflow: 'hidden',
+  },
+
+  assigneeSearchInput: {
+    width: '100%',
+    padding: '8px 12px',
+    border: 'none',
+    borderBottom: '1px solid var(--cloud)',
+    fontSize: '13px',
+    outline: 'none',
+    boxSizing: 'border-box',
+  },
+
+  assigneeList: {
+    maxHeight: '200px',
+    overflowY: 'auto',
+  },
+
+  assigneeOption: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 12px',
+    cursor: 'pointer',
+    fontSize: '13px',
+    transition: 'background-color 0.15s ease',
   },
 
   taskTitleInput: {
