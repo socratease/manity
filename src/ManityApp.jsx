@@ -6757,11 +6757,6 @@ const styles = {
     fontFamily: "'Inter', sans-serif",
   },
 
-  editingAsName: {
-    fontWeight: 600,
-    color: 'var(--charcoal)',
-  },
-
   shortcutHint: {
     marginTop: '4px',
     fontSize: '12px',

@@ -35,6 +35,48 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
     return priorityColors[priority] || colors.stone;
   }, [colors]);
 
+  const normalizedProjects = useMemo(() => {
+    if (!Array.isArray(projects)) return [];
+
+    return projects.map((project, index) => ({
+      name: project.name || `Project ${index + 1}`,
+      priority: project.priority || 'medium',
+      progress: typeof project.progress === 'number' ? project.progress : 0,
+      stakeholders: project.stakeholders || [],
+      ...project,
+      id: project.id ?? `project-${index + 1}`,
+    }));
+  }, [projects]);
+
+  const jugglePeople = useMemo(() => {
+    if (Array.isArray(people) && people.length > 0) {
+      return people.map((person, index) => ({
+        ...person,
+        id: person.id ?? `person-${index + 1}`,
+        name: person.name || `Person ${index + 1}`,
+        team: person.team || 'Contributor',
+      }));
+    }
+
+    // Derive people from project stakeholders when no explicit people are provided
+    const stakeholderMap = new Map();
+    normalizedProjects.forEach(project => {
+      (project.stakeholders || []).forEach((stakeholder, idx) => {
+        const key = (stakeholder.id || stakeholder.name || `${project.id}-${idx}`).toString().toLowerCase();
+        if (!stakeholderMap.has(key)) {
+          stakeholderMap.set(key, {
+            ...stakeholder,
+            id: stakeholder.id ?? `stakeholder-${stakeholderMap.size + 1}`,
+            name: stakeholder.name || 'Stakeholder',
+            team: stakeholder.team || 'Contributor',
+          });
+        }
+      });
+    });
+
+    return Array.from(stakeholderMap.values());
+  }, [people, normalizedProjects]);
+
   // Initialize simulation state
   const initializeState = useCallback(() => {
     const width = dimensions.width;
@@ -47,14 +89,14 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
     const verticalRange = groundY - 100;
 
     // Initialize project physics
-    const projectStates = projects.map((project, index) => {
-      const spacing = width / (projects.length + 1);
+    const projectStates = normalizedProjects.map((project, index) => {
+      const spacing = width / (normalizedProjects.length + 1);
       return {
         id: project.id,
         project,
         x: spacing * (index + 1),
         // Spread projects evenly across vertical space with slight randomization
-        y: 30 + (verticalRange * (index / projects.length)) + (Math.random() - 0.5) * 40,
+        y: 30 + (verticalRange * (index / normalizedProjects.length)) + (Math.random() - 0.5) * 40,
         vy: 0.05 + Math.random() * 0.1, // Very slow initial fall
         vx: (Math.random() - 0.5) * 0.3, // Tiny horizontal drift
         width: projectCardWidth,
@@ -64,8 +106,8 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
 
     // Initialize people states
     const personRadius = 22;
-    const peopleStates = people.map((person, index) => {
-      const spacing = width / (people.length + 1);
+    const peopleStates = jugglePeople.map((person, index) => {
+      const spacing = width / (jugglePeople.length + 1);
       return {
         id: person.id,
         person,
@@ -91,7 +133,7 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
       bouncePower: -5, // Upward velocity when bumped (fast acceleration up is fine)
       catchDistance: 100, // How close to ground before someone catches
     };
-  }, [projects, people, dimensions]);
+  }, [normalizedProjects, jugglePeople, dimensions]);
 
   // Main animation loop
   const animate = useCallback(() => {
@@ -393,7 +435,7 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
 
   // Initialize and start animation
   useEffect(() => {
-    if (projects.length === 0 || people.length === 0) return;
+    if (normalizedProjects.length === 0 || jugglePeople.length === 0) return;
 
     stateRef.current = initializeState();
     animationRef.current = requestAnimationFrame(animate);
@@ -403,7 +445,7 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [projects, people, initializeState, animate]);
+  }, [normalizedProjects, jugglePeople, initializeState, animate]);
 
   // Handle canvas context
   useEffect(() => {
@@ -421,10 +463,18 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
     ctx.scale(dpr, dpr);
   }, [dimensions]);
 
-  if (projects.length === 0 || people.length === 0) {
+  if (normalizedProjects.length === 0) {
     return (
       <div style={styles.emptyState}>
-        <p>Add some projects and people to see them juggle!</p>
+        <p>Add some projects to see them juggle!</p>
+      </div>
+    );
+  }
+
+  if (jugglePeople.length === 0) {
+    return (
+      <div style={styles.emptyState}>
+        <p>Add some people to get the juggling started!</p>
       </div>
     );
   }
