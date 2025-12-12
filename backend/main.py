@@ -122,6 +122,7 @@ def serialize_person(person: "Person") -> dict:
         "name": person.name,
         "team": person.team,
         "email": person.email,
+        "profilePicture": person.profilePicture,
     }
 
 
@@ -144,6 +145,8 @@ def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "P
     if existing:
         existing.team = payload.team or existing.team
         existing.email = payload.email
+        if payload.profilePicture is not None:
+            existing.profilePicture = payload.profilePicture or None
         session.add(existing)
         session.commit()
         session.refresh(existing)
@@ -154,6 +157,7 @@ def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "P
         name=normalized_name,
         team=payload.team,
         email=payload.email,
+        profilePicture=payload.profilePicture,
     )
     session.add(person)
     session.commit()
@@ -232,6 +236,7 @@ class PersonBase(SQLModel):
     name: str = Field(sa_column=Column(String, unique=True, index=True))
     team: str
     email: Optional[str] = None
+    profilePicture: Optional[str] = None
 
 
 class Person(PersonBase, table=True):
@@ -761,6 +766,7 @@ def list_people(session: Session = Depends(get_session)):
         legacy = unique_people[key]
         legacy.team = legacy.team or person.team
         legacy.email = legacy.email or person.email
+        legacy.profilePicture = legacy.profilePicture or person.profilePicture
         session.delete(person)
 
     session.commit()

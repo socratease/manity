@@ -376,7 +376,8 @@ export const PortfolioProvider = ({ children }) => {
     if (existing) {
       const needsUpdate =
         (person.team && person.team !== existing.team) ||
-        (person.email && person.email !== existing.email);
+        (person.email && person.email !== existing.email) ||
+        (person.profilePicture !== undefined && person.profilePicture !== existing.profilePicture);
 
       if (needsUpdate) {
         const updated = await apiRequest(`/people/${existing.id}`, {
