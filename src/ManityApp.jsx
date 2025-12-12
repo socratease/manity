@@ -7,6 +7,7 @@ import PeopleGraph from './components/PeopleGraph';
 import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
 import PortfolioSpotlight from './components/PortfolioSpotlight';
+import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
@@ -2539,6 +2540,8 @@ Write a professional executive summary that highlights the project's current sta
       return false;
     });
   };
+
+  const filteredPortfolioProjects = searchFilterProjects(visibleProjects);
 
   // Clear the persistent portfolio filter
   const clearPortfolioFilter = () => {
@@ -6072,9 +6075,15 @@ Keep tool calls granular (one discrete change per action), explain each action c
         ) : (
           // Projects Overview
           <>
+            <div style={{ marginBottom: '20px' }}>
+              <PeopleProjectsJuggle
+                projects={filteredPortfolioProjects}
+                people={people}
+              />
+            </div>
             <PortfolioSpotlight
               people={people}
-              projects={searchFilterProjects(visibleProjects)}
+              projects={filteredPortfolioProjects}
               onSelectProject={(projectId) => {
                 setActiveView('overview');
                 setViewingProjectId(projectId);
