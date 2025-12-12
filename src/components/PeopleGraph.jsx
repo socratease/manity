@@ -15,114 +15,6 @@ import {
 } from 'lucide-react';
 import { HelpTooltip } from './ui';
 
-const SAMPLE_PEOPLE = [
-  { id: 'p1', name: 'Sarah Chen', team: 'Engineering', email: 'sarah@company.com' },
-  { id: 'p2', name: 'Marcus Johnson', team: 'Design', email: 'marcus@company.com' },
-  { id: 'p3', name: 'Elena Rodriguez', team: 'Product', email: 'elena@company.com' },
-  { id: 'p4', name: 'James Wilson', team: 'Engineering', email: 'james@company.com' },
-  { id: 'p5', name: 'Aisha Patel', team: 'Marketing', email: 'aisha@company.com' },
-  { id: 'p6', name: 'David Kim', team: 'Engineering', email: 'david@company.com' },
-  { id: 'p7', name: 'Rachel Thompson', team: 'Design', email: 'rachel@company.com' },
-  { id: 'p8', name: 'Chris Graves', team: 'Admin', email: 'chris@company.com' },
-  { id: 'p9', name: 'Nina Foster', team: 'Product', email: 'nina@company.com' },
-  { id: 'p10', name: 'Alex Rivera', team: 'Sales', email: 'alex@company.com' }
-];
-
-const SAMPLE_PROJECTS = [
-  {
-    id: 'proj1',
-    name: 'Mobile App Redesign',
-    status: 'active',
-    priority: 'high',
-    stakeholders: [
-      { name: 'Sarah Chen' },
-      { name: 'Marcus Johnson' },
-      { name: 'Elena Rodriguez' },
-      { name: 'Rachel Thompson' }
-    ],
-    recentActivity: [
-      { id: 'a1', author: 'Sarah Chen', note: 'Completed the new authentication flow', date: new Date(Date.now() - 86400000).toISOString() },
-      { id: 'a2', author: 'Marcus Johnson', note: 'Updated design system components', date: new Date(Date.now() - 172800000).toISOString() },
-      { id: 'a3', author: 'Elena Rodriguez', note: 'Reviewed sprint backlog priorities', date: new Date(Date.now() - 259200000).toISOString() }
-    ]
-  },
-  {
-    id: 'proj2',
-    name: 'API Infrastructure',
-    status: 'active',
-    priority: 'high',
-    stakeholders: [
-      { name: 'Sarah Chen' },
-      { name: 'James Wilson' },
-      { name: 'David Kim' },
-      { name: 'Chris Graves' }
-    ],
-    recentActivity: [
-      { id: 'a4', author: 'James Wilson', note: 'Deployed new caching layer', date: new Date(Date.now() - 43200000).toISOString() },
-      { id: 'a5', author: 'David Kim', note: 'Fixed rate limiting issues', date: new Date(Date.now() - 129600000).toISOString() }
-    ]
-  },
-  {
-    id: 'proj3',
-    name: 'Marketing Campaign Q1',
-    status: 'active',
-    priority: 'medium',
-    stakeholders: [
-      { name: 'Aisha Patel' },
-      { name: 'Elena Rodriguez' },
-      { name: 'Alex Rivera' },
-      { name: 'Marcus Johnson' }
-    ],
-    recentActivity: [
-      { id: 'a6', author: 'Aisha Patel', note: 'Finalized campaign creative assets', date: new Date(Date.now() - 21600000).toISOString() },
-      { id: 'a7', author: 'Alex Rivera', note: 'Updated sales enablement docs', date: new Date(Date.now() - 345600000).toISOString() }
-    ]
-  },
-  {
-    id: 'proj4',
-    name: 'Customer Portal',
-    status: 'planning',
-    priority: 'medium',
-    stakeholders: [
-      { name: 'Nina Foster' },
-      { name: 'Rachel Thompson' },
-      { name: 'David Kim' },
-      { name: 'Chris Graves' }
-    ],
-    recentActivity: [
-      { id: 'a8', author: 'Nina Foster', note: 'Completed requirements gathering', date: new Date(Date.now() - 518400000).toISOString() },
-      { id: 'a9', author: 'Rachel Thompson', note: 'Created initial wireframes', date: new Date(Date.now() - 604800000).toISOString() }
-    ]
-  },
-  {
-    id: 'proj5',
-    name: 'Data Analytics Dashboard',
-    status: 'active',
-    priority: 'high',
-    stakeholders: [
-      { name: 'James Wilson' },
-      { name: 'Nina Foster' },
-      { name: 'Elena Rodriguez' }
-    ],
-    recentActivity: [
-      { id: 'a10', author: 'James Wilson', note: 'Implemented real-time data pipeline', date: new Date(Date.now() - 64800000).toISOString() }
-    ]
-  },
-  {
-    id: 'proj6',
-    name: 'Brand Refresh',
-    status: 'completed',
-    priority: 'low',
-    stakeholders: [
-      { name: 'Marcus Johnson' },
-      { name: 'Aisha Patel' },
-      { name: 'Chris Graves' }
-    ],
-    recentActivity: [
-      { id: 'a11', author: 'Marcus Johnson', note: 'Delivered final brand guidelines', date: new Date(Date.now() - 1209600000).toISOString() }
-    ]
-  }
-];
 
 const PeopleGraph = ({
   people: propPeople = [],
@@ -134,8 +26,8 @@ const PeopleGraph = ({
   loggedInUser,
   featuredPersonId = null
 }) => {
-  const people = propPeople.length > 0 ? propPeople : SAMPLE_PEOPLE;
-  const projects = propProjects.length > 0 ? propProjects : SAMPLE_PROJECTS;
+  const people = propPeople;
+  const projects = propProjects;
   const svgRef = useRef(null);
   const containerRef = useRef(null);
   const animationRef = useRef(null);
