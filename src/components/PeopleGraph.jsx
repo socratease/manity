@@ -148,7 +148,7 @@ const PeopleGraph = ({
   const [isDragging, setIsDragging] = useState(false);
   const [graphOffset, setGraphOffset] = useState({ x: 0, y: 0 });
   const [isEditing, setIsEditing] = useState(false);
-  const [editForm, setEditForm] = useState({ name: '', team: '', email: '' });
+  const [editForm, setEditForm] = useState({ name: '', team: '', email: '', profilePicture: '' });
   const [loginFeedback, setLoginFeedback] = useState(null);
 
   const teamColors = useMemo(() => {
@@ -206,6 +206,7 @@ const PeopleGraph = ({
         name: person.name,
         team: person.team,
         email: person.email,
+        profilePicture: person.profilePicture,
         projectCount: 0,
         projects: [],
         activities: [],
@@ -508,6 +509,39 @@ const PeopleGraph = ({
     return parts.map(p => p.charAt(0)).join('').toUpperCase().slice(0, 2);
   };
 
+  const renderAvatar = (person, size = 56, color = '#6B6554') => {
+    const baseStyle = {
+      width: `${size}px`,
+      height: `${size}px`,
+      borderRadius: '50%',
+      backgroundColor: `${color}20`,
+      border: `3px solid ${color}`,
+      display: 'flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      fontSize: `${Math.max(12, Math.min(18, size / 3))}px`,
+      fontWeight: '700',
+      fontFamily: "'Inter', sans-serif",
+      color: color,
+      flexShrink: 0,
+      overflow: 'hidden'
+    };
+
+    if (person?.profilePicture) {
+      return (
+        <div style={baseStyle}>
+          <img
+            src={person.profilePicture}
+            alt={`${person.name}'s avatar`}
+            style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+          />
+        </div>
+      );
+    }
+
+    return <div style={baseStyle}>{getAvatarInitials(person?.name || '')}</div>;
+  };
+
   const getTeamColor = (team) => {
     return teamColors.get(team) || '#6B6554';
   };
@@ -549,7 +583,8 @@ const PeopleGraph = ({
     setEditForm({
       name: node.name,
       team: node.team,
-      email: node.email || ''
+      email: node.email || '',
+      profilePicture: node.profilePicture || ''
     });
     setIsEditing(false);
   }, [isDragging]);
@@ -1042,26 +1077,8 @@ const PeopleGraph = ({
                     <X size={16} />
                   </button>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
-                    <div
-                      style={{
-                        width: '56px',
-                        height: '56px',
-                        borderRadius: '50%',
-                        backgroundColor: `${teamColor}20`,
-                        border: `3px solid ${teamColor}`,
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        fontSize: '18px',
-                        fontWeight: '700',
-                        fontFamily: "'Inter', sans-serif",
-                        color: teamColor,
-                        flexShrink: 0
-                      }}
-                    >
-                      {getAvatarInitials(selectedNode.name)}
-                    </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '14px' }}>
+                    {renderAvatar(selectedNode, 56, teamColor)}
 
                     {isEditing ? (
                       <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '8px' }}>
@@ -1085,6 +1102,13 @@ const PeopleGraph = ({
                           value={editForm.email}
                           onChange={e => setEditForm(f => ({ ...f, email: e.target.value }))}
                           placeholder="Email"
+                          style={styles.calloutInput}
+                        />
+                        <input
+                          type="url"
+                          value={editForm.profilePicture}
+                          onChange={e => setEditForm(f => ({ ...f, profilePicture: e.target.value }))}
+                          placeholder="Profile picture URL"
                           style={styles.calloutInput}
                         />
                       </div>
@@ -1309,28 +1333,13 @@ const PeopleGraph = ({
                               setEditForm({
                                 name: connNode.name,
                                 team: connNode.team,
-                                email: connNode.email || ''
+                                email: connNode.email || '',
+                                profilePicture: connNode.profilePicture || ''
                               });
                               setIsEditing(false);
                             }}
                           >
-                            <div
-                              style={{
-                                width: '22px',
-                                height: '22px',
-                                borderRadius: '50%',
-                                backgroundColor: `${getTeamColor(connNode.team)}20`,
-                                color: getTeamColor(connNode.team),
-                                display: 'flex',
-                                alignItems: 'center',
-                                justifyContent: 'center',
-                                fontSize: '9px',
-                                fontWeight: '700',
-                                fontFamily: "'Inter', sans-serif"
-                              }}
-                            >
-                              {getAvatarInitials(connNode.name)}
-                            </div>
+                            {renderAvatar(connNode, 22, getTeamColor(connNode.team))}
                             <span style={{ fontSize: '12px', fontWeight: '500', color: '#3A3631' }}>
                               {connNode.name.split(' ')[0]}
                             </span>

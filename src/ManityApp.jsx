@@ -7,6 +7,7 @@ import PeopleGraph from './components/PeopleGraph';
 import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
 import PortfolioSpotlight from './components/PortfolioSpotlight';
+import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
@@ -1619,6 +1620,35 @@ Write a professional executive summary that highlights the project's current sta
     return people.find(person => person.name.toLowerCase() === lower) || null;
   };
 
+  const getAssigneeInitials = (name) => {
+    if (!name) return '?';
+    const parts = name.split(' ').filter(Boolean);
+    if (parts.length === 1) return parts[0].charAt(0).toUpperCase();
+    return parts.map(p => p[0]).join('').toUpperCase().slice(0, 2);
+  };
+
+  const renderAssigneeAvatar = (assignee) => {
+    if (!assignee) return null;
+
+    if (assignee.profilePicture) {
+      return (
+        <span style={styles.assigneeBadge}>
+          <img
+            src={assignee.profilePicture}
+            alt={`${assignee.name}'s avatar`}
+            style={styles.assigneeImage}
+          />
+        </span>
+      );
+    }
+
+    return (
+      <span style={styles.assigneeBadge}>
+        {getAssigneeInitials(assignee.name)}
+      </span>
+    );
+  };
+
   const normalizeStakeholderEntry = (person) => {
     if (!person || !person.name) return null;
     const existing = findPersonByName(person.name);
@@ -2120,7 +2150,9 @@ Write a professional executive summary that highlights the project's current sta
             const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
             if (assigneeName) {
               const person = findPersonByName(assigneeName);
-              taskAssignee = person ? { name: person.name, team: person.team } : { name: assigneeName };
+              taskAssignee = person
+                ? { name: person.name, team: person.team, profilePicture: person.profilePicture }
+                : { name: assigneeName };
             }
           }
           const newTask = {
@@ -2214,7 +2246,9 @@ Write a professional executive summary that highlights the project's current sta
             const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
             if (assigneeName) {
               const person = findPersonByName(assigneeName);
-              subtaskAssignee = person ? { name: person.name, team: person.team } : { name: assigneeName };
+              subtaskAssignee = person
+                ? { name: person.name, team: person.team, profilePicture: person.profilePicture }
+                : { name: assigneeName };
             }
           }
           const newSubtask = {
@@ -2506,6 +2540,8 @@ Write a professional executive summary that highlights the project's current sta
       return false;
     });
   };
+
+  const filteredPortfolioProjects = searchFilterProjects(visibleProjects);
 
   // Clear the persistent portfolio filter
   const clearPortfolioFilter = () => {
@@ -4345,9 +4381,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                     title={task.assignee ? `Assigned to ${task.assignee.name}` : "Assign to someone"}
                                   >
                                     {task.assignee ? (
-                                      <span style={styles.assigneeBadge}>
-                                        {task.assignee.name.split(' ').map(n => n[0]).join('')}
-                                      </span>
+                                      renderAssigneeAvatar(task.assignee)
                                     ) : (
                                       <UserCircle size={16} style={{ color: 'var(--stone)' }} />
                                     )}
@@ -4654,9 +4688,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                             title={subtask.assignee ? `Assigned to ${subtask.assignee.name}` : "Assign to someone"}
                                           >
                                             {subtask.assignee ? (
-                                              <span style={styles.assigneeBadge}>
-                                                {subtask.assignee.name.split(' ').map(n => n[0]).join('')}
-                                              </span>
+                                              renderAssigneeAvatar(subtask.assignee)
                                             ) : (
                                               <UserCircle size={14} style={{ color: 'var(--stone)' }} />
                                             )}
@@ -6043,9 +6075,15 @@ Keep tool calls granular (one discrete change per action), explain each action c
         ) : (
           // Projects Overview
           <>
+            <div style={{ marginBottom: '20px' }}>
+              <PeopleProjectsJuggle
+                projects={filteredPortfolioProjects}
+                people={people}
+              />
+            </div>
             <PortfolioSpotlight
               people={people}
-              projects={searchFilterProjects(visibleProjects)}
+              projects={filteredPortfolioProjects}
               onSelectProject={(projectId) => {
                 setActiveView('overview');
                 setViewingProjectId(projectId);
@@ -8453,9 +8491,9 @@ const styles = {
   },
 
   assigneeButton: {
-    padding: '4px 6px',
+    padding: '6px 8px',
     border: 'none',
-    borderRadius: '4px',
+    borderRadius: '8px',
     backgroundColor: 'transparent',
     cursor: 'pointer',
     display: 'flex',
@@ -8468,13 +8506,20 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    width: '20px',
-    height: '20px',
+    width: '28px',
+    height: '28px',
     borderRadius: '50%',
     backgroundColor: 'var(--sage)',
     color: 'white',
-    fontSize: '9px',
-    fontWeight: '600',
+    fontSize: '11px',
+    fontWeight: '700',
+  },
+
+  assigneeImage: {
+    width: '100%',
+    height: '100%',
+    objectFit: 'cover',
+    borderRadius: '50%'
   },
 
   assigneeDropdown: {

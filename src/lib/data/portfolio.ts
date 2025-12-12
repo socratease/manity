@@ -1,6 +1,7 @@
 export interface User {
   name: string;
   team: string;
+  profilePicture?: string;
 }
 
 export interface Activity {
