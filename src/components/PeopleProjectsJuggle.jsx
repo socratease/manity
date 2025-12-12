@@ -13,6 +13,28 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
   const stateRef = useRef(null);
   const [dimensions, setDimensions] = useState({ width: 800, height: 500 });
 
+  const drawRoundRect = useCallback((ctx, x, y, width, height, radius) => {
+    if (typeof ctx.roundRect === 'function') {
+      ctx.roundRect(x, y, width, height, radius);
+      return;
+    }
+
+    const [r1, r2, r3, r4] = Array.isArray(radius)
+      ? radius
+      : [radius, radius, radius, radius];
+
+    ctx.beginPath();
+    ctx.moveTo(x + r1, y);
+    ctx.lineTo(x + width - r2, y);
+    ctx.quadraticCurveTo(x + width, y, x + width, y + r2);
+    ctx.lineTo(x + width, y + height - r3);
+    ctx.quadraticCurveTo(x + width, y + height, x + width - r3, y + height);
+    ctx.lineTo(x + r4, y + height);
+    ctx.quadraticCurveTo(x, y + height, x, y + height - r4);
+    ctx.lineTo(x, y + r1);
+    ctx.quadraticCurveTo(x, y, x + r1, y);
+  }, []);
+
   // Color palette matching the app's design
   const colors = useMemo(() => ({
     earth: '#8B6F47',
@@ -215,13 +237,13 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
       // Card shadow
       ctx.fillStyle = 'rgba(0, 0, 0, 0.08)';
       ctx.beginPath();
-      ctx.roundRect(-proj.width / 2 + 3, -proj.height / 2 + 3, proj.width, proj.height, 6);
+      drawRoundRect(ctx, -proj.width / 2 + 3, -proj.height / 2 + 3, proj.width, proj.height, 6);
       ctx.fill();
 
       // Card background
       ctx.fillStyle = '#FFFFFF';
       ctx.beginPath();
-      ctx.roundRect(-proj.width / 2, -proj.height / 2, proj.width, proj.height, 6);
+      drawRoundRect(ctx, -proj.width / 2, -proj.height / 2, proj.width, proj.height, 6);
       ctx.fill();
 
       // Card border
@@ -233,7 +255,7 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
       const priorityColor = getPriorityColor(proj.project.priority);
       ctx.fillStyle = priorityColor;
       ctx.beginPath();
-      ctx.roundRect(-proj.width / 2, -proj.height / 2, proj.width, 5, [6, 6, 0, 0]);
+      drawRoundRect(ctx, -proj.width / 2, -proj.height / 2, proj.width, 5, [6, 6, 0, 0]);
       ctx.fill();
 
       // Project title
@@ -251,14 +273,14 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
       const barHeight = 4;
       ctx.fillStyle = colors.cloud;
       ctx.beginPath();
-      ctx.roundRect(-barWidth / 2, 5, barWidth, barHeight, 2);
+      drawRoundRect(ctx, -barWidth / 2, 5, barWidth, barHeight, 2);
       ctx.fill();
 
       // Progress bar fill
       const progress = proj.project.progress || 0;
       ctx.fillStyle = priorityColor;
       ctx.beginPath();
-      ctx.roundRect(-barWidth / 2, 5, barWidth * (progress / 100), barHeight, 2);
+      drawRoundRect(ctx, -barWidth / 2, 5, barWidth * (progress / 100), barHeight, 2);
       ctx.fill();
 
       // Progress text
@@ -414,7 +436,7 @@ export default function PeopleProjectsJuggle({ projects = [], people = [] }) {
     }
 
     animationRef.current = requestAnimationFrame(animate);
-  }, [dimensions, colors, getPriorityColor]);
+  }, [dimensions, colors, getPriorityColor, drawRoundRect]);
 
   // Handle resize
   useEffect(() => {
