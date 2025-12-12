@@ -21,6 +21,7 @@ const AddPersonCallout = ({
   const [name, setName] = useState(initialName);
   const [team, setTeam] = useState('');
   const [email, setEmail] = useState('');
+  const [profilePicture, setProfilePicture] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const calloutRef = useRef(null);
   const nameInputRef = useRef(null);
@@ -31,6 +32,7 @@ const AddPersonCallout = ({
       setName(initialName);
       setTeam('');
       setEmail('');
+      setProfilePicture('');
       setIsSubmitting(false);
       // Focus the first input
       setTimeout(() => nameInputRef.current?.focus(), 50);
@@ -73,7 +75,8 @@ const AddPersonCallout = ({
       await onSave({
         name: name.trim(),
         team: team.trim(),
-        email: email.trim() || undefined
+        email: email.trim() || undefined,
+        profilePicture: profilePicture.trim() || undefined
       });
       onClose();
     } catch (error) {
@@ -156,6 +159,17 @@ const AddPersonCallout = ({
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="sarah@company.com (optional)"
+              style={styles.input}
+            />
+          </div>
+
+          <div style={styles.fieldGroup}>
+            <label style={styles.label}>Profile picture URL</label>
+            <input
+              type="url"
+              value={profilePicture}
+              onChange={(e) => setProfilePicture(e.target.value)}
+              placeholder="https://... (optional)"
               style={styles.input}
             />
           </div>
