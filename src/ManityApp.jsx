@@ -9,6 +9,8 @@ import AddPersonCallout from './components/AddPersonCallout';
 import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 import MomentumChat from './MomentumChat';
+import SnowEffect from './components/SnowEffect';
+import ChristmasConfetti from './components/ChristmasConfetti';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -137,6 +139,12 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     recentUpdates: 3,
     recentlyCompleted: 3,
     nextUp: 3
+  });
+
+  // Santa-fy mode state (default: enabled)
+  const [isSantafied, setIsSantafied] = useState(() => {
+    const saved = localStorage.getItem('manity_santafied');
+    return saved !== null ? saved === 'true' : true; // Default to true
   });
 
   // JSON Schema for structured output - ensures LLM returns properly formatted actions
@@ -321,6 +329,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       nextUp: 3
     });
   }, [currentSlideIndex, activeView]);
+
+  // Persist Santa-fy mode to localStorage
+  useEffect(() => {
+    localStorage.setItem('manity_santafied', isSantafied.toString());
+  }, [isSantafied]);
 
   // Sync people from projects whenever projects change (handles imports and updates)
   useEffect(() => {
@@ -3486,7 +3499,19 @@ Keep tool calls granular (one discrete change per action), explain each action c
         </div>
       )}
 
-      <div style={styles.container}>
+      <div style={{
+        ...styles.container,
+        ...(isSantafied && {
+          '--earth': '#8B4513',     // Saddle brown
+          '--sage': '#165B33',      // Forest green
+          '--coral': '#C41E3A',     // Christmas red
+          '--amber': '#FFD700',     // Gold
+          '--cream': '#FFF5EE',     // Seashell (warm white)
+          '--cloud': '#F0E6E0',     // Light pink/beige
+          '--stone': '#654321',     // Dark brown
+          '--charcoal': '#2C1810',  // Very dark brown
+        })
+      }}>
       {/* Daily Check-in Modal */}
       {showDailyCheckin && selectedProject && (
         <div style={styles.modalOverlay}>
@@ -3957,6 +3982,18 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 </div>
               </div>
             )}
+            <button
+              onClick={() => setIsSantafied(!isSantafied)}
+              style={{
+                ...styles.settingsIconButton,
+                marginRight: '8px',
+                fontSize: '18px'
+              }}
+              title={isSantafied ? 'Disable Santa-fy mode' : 'Enable Santa-fy mode'}
+              aria-label={isSantafied ? 'Disable Santa-fy mode' : 'Enable Santa-fy mode'}
+            >
+              {isSantafied ? '🎅' : '❄️'}
+            </button>
             <button
               onClick={() => onOpenSettings({
                 loggedInUser,
@@ -5955,6 +5992,14 @@ Keep tool calls granular (one discrete change per action), explain each action c
         onClose={handleClosePersonModal}
         onSave={handleCreateNewPerson}
       />
+
+      {/* Santa-fy Effects */}
+      {isSantafied && (
+        <>
+          <SnowEffect />
+          <ChristmasConfetti />
+        </>
+      )}
     </div>
     </>
   );
