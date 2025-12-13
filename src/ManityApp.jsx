@@ -6,6 +6,7 @@ import ForceDirectedTimeline from './components/ForceDirectedTimeline';
 import PeopleGraph from './components/PeopleGraph';
 import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
+import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
@@ -6042,6 +6043,9 @@ Keep tool calls granular (one discrete change per action), explain each action c
         ) : (
           // Projects Overview
           <>
+            <div style={{ marginBottom: '24px' }}>
+              <PeopleProjectsJuggle projects={visibleProjects} people={people} />
+            </div>
             <header style={styles.header}>
               <div>
                 <h2 style={styles.pageTitle}>Your Projects</h2>
