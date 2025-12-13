@@ -20,6 +20,8 @@ const getPriorityColor = (priority) => {
   return priorityColors[priority] || colors.stone;
 };
 
+const normalizeName = (name = '') => name.trim().toLowerCase();
+
 function PeopleProjectsJuggle({ projects = [], people = [] }) {
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
@@ -61,6 +63,34 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
     const ctx = canvas.getContext('2d');
     ctx.scale(dpr, dpr);
 
+    const assignmentByProject = new Map();
+    projects.forEach(project => {
+      const assignedNames = new Set();
+
+      (project.stakeholders || []).forEach(stakeholder => {
+        if (stakeholder?.name) assignedNames.add(normalizeName(stakeholder.name));
+      });
+
+      (project.plan || []).forEach(task => {
+        if (task?.assignee?.name) assignedNames.add(normalizeName(task.assignee.name));
+        (task?.subtasks || []).forEach(subtask => {
+          if (subtask?.assignee?.name) assignedNames.add(normalizeName(subtask.assignee.name));
+        });
+      });
+
+      assignmentByProject.set(project.id, assignedNames);
+    });
+
+    const avatarImages = new Map();
+    people.forEach(person => {
+      if (person?.avatarUrl) {
+        const img = new Image();
+        img.crossOrigin = 'anonymous';
+        img.src = person.avatarUrl;
+        avatarImages.set(person.id || person.name, img);
+      }
+    });
+
     const projectStates = projects.map((project, index) => {
       const col = index % 5;
       const row = Math.floor(index / 5);
@@ -81,8 +111,17 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
 
     const peopleStates = people.map((person, index) => {
       const spacing = width / (people.length + 1);
+      const personId = person.id || person.name;
+      const assignments = new Set();
+
+      assignmentByProject.forEach((names, projectId) => {
+        if (names.has(normalizeName(person.name))) {
+          assignments.add(projectId);
+        }
+      });
+
       return {
-        id: person.id || person.name,
+        id: personId,
         person,
         x: spacing * (index + 1),
         homeX: spacing * (index + 1),
@@ -95,6 +134,9 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
         isJumping: false,
         jumpY: 0,
         jumpVelocity: 0,
+        assignedProjectIds: assignments,
+        assignmentOffset: (index - (people.length - 1) / 2) * 6,
+        avatarImage: avatarImages.get(personId) || null,
       };
     });
 
@@ -208,8 +250,12 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
         let bestProject = null;
         let bestScore = Infinity;
 
-        if (personState.cooldown === 0) {
+        if (personState.cooldown === 0 && personState.assignedProjectIds.size > 0) {
           state.projects.forEach(proj => {
+            if (personState.assignedProjectIds.size > 0 && !personState.assignedProjectIds.has(proj.id)) {
+              return;
+            }
+
             const projBottom = proj.y + proj.height / 2;
             const distToBottom = state.bottomY - projBottom;
 
@@ -228,7 +274,8 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
         }
 
         if (bestProject) {
-          personState.targetX = bestProject.x;
+          const offsetTarget = bestProject.x + (personState.assignmentOffset || 0);
+          personState.targetX = Math.max(personState.radius + 8, Math.min(width - personState.radius - 8, offsetTarget));
         } else {
           personState.targetX = personState.homeX;
         }
@@ -237,9 +284,14 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
         const targetVx = Math.sign(dx) * Math.min(Math.abs(dx) * 0.12, personState.speed);
         personState.vx += (targetVx - personState.vx) * 0.18;
         personState.x += personState.vx;
+        personState.x = Math.max(personState.radius + 8, Math.min(width - personState.radius - 8, personState.x));
 
-        if (personState.cooldown === 0 && !personState.isJumping) {
+        if (personState.cooldown === 0 && !personState.isJumping && personState.assignedProjectIds.size > 0) {
           state.projects.forEach(proj => {
+            if (personState.assignedProjectIds.size > 0 && !personState.assignedProjectIds.has(proj.id)) {
+              return;
+            }
+
             const pdx = Math.abs(personState.x - proj.x);
             const projBottom = proj.y + proj.height / 2;
             const personTop = personState.y - personState.radius;
@@ -265,39 +317,82 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
           }
         }
 
-        const drawY = personState.y - personState.jumpY;
+        personState.drawY = personState.y - personState.jumpY;
+      });
 
-        const personGradient = ctx.createLinearGradient(
-          personState.x - personState.radius,
-          drawY - personState.radius,
-          personState.x + personState.radius,
-          drawY + personState.radius
-        );
-        personGradient.addColorStop(0, colors.earth);
-        personGradient.addColorStop(1, colors.amber);
+      for (let i = 0; i < state.people.length; i++) {
+        for (let j = i + 1; j < state.people.length; j++) {
+          const personA = state.people[i];
+          const personB = state.people[j];
+          const dx = personB.x - personA.x;
+          const minSpacing = personA.radius + personB.radius + 8;
 
-        ctx.fillStyle = personGradient;
-        ctx.beginPath();
-        ctx.arc(personState.x, drawY, personState.radius, 0, Math.PI * 2);
-        ctx.fill();
+          if (Math.abs(dx) < minSpacing) {
+            const push = (minSpacing - Math.abs(dx)) * 0.5;
+            const direction = dx >= 0 ? 1 : -1;
+            personA.x -= direction * push * 0.6;
+            personB.x += direction * push * 0.6;
+          }
+        }
+      }
 
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
+      state.people.forEach(personState => {
+        personState.x = Math.max(personState.radius + 8, Math.min(width - personState.radius - 8, personState.x));
 
-        const initials = (personState.person.name || '')
-          .split(' ')
-          .map(n => n[0])
-          .filter(Boolean)
-          .join('')
-          .toUpperCase()
-          .substring(0, 2);
+        const drawY = personState.drawY ?? (personState.y - personState.jumpY);
 
-        ctx.fillStyle = '#FFFFFF';
-        ctx.font = 'bold 8px Inter, sans-serif';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(initials || '?', personState.x, drawY);
+        if (personState.avatarImage && personState.avatarImage.complete && personState.avatarImage.naturalWidth > 0) {
+          ctx.save();
+          ctx.beginPath();
+          ctx.arc(personState.x, drawY, personState.radius, 0, Math.PI * 2);
+          ctx.clip();
+          ctx.drawImage(
+            personState.avatarImage,
+            personState.x - personState.radius,
+            drawY - personState.radius,
+            personState.radius * 2,
+            personState.radius * 2
+          );
+          ctx.restore();
+
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.arc(personState.x, drawY, personState.radius, 0, Math.PI * 2);
+          ctx.stroke();
+        } else {
+          const personGradient = ctx.createLinearGradient(
+            personState.x - personState.radius,
+            drawY - personState.radius,
+            personState.x + personState.radius,
+            drawY + personState.radius
+          );
+          personGradient.addColorStop(0, colors.earth);
+          personGradient.addColorStop(1, colors.amber);
+
+          ctx.fillStyle = personGradient;
+          ctx.beginPath();
+          ctx.arc(personState.x, drawY, personState.radius, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.strokeStyle = 'rgba(255, 255, 255, 0.4)';
+          ctx.lineWidth = 1.5;
+          ctx.stroke();
+
+          const initials = (personState.person.name || '')
+            .split(' ')
+            .map(n => n[0])
+            .filter(Boolean)
+            .join('')
+            .toUpperCase()
+            .substring(0, 2);
+
+          ctx.fillStyle = '#FFFFFF';
+          ctx.font = 'bold 8px Inter, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(initials || '?', personState.x, drawY);
+        }
       });
 
       const time = Date.now() / 1000;

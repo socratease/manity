@@ -8,12 +8,12 @@ import smtplib
 from pathlib import Path
 from typing import List, Optional, Sequence
 
-from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
+from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, Response, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field as PydanticField
 import httpx
-from sqlalchemy import Column, String, delete, event, func
+from sqlalchemy import Column, LargeBinary, String, delete, event, func
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import selectinload
@@ -122,6 +122,8 @@ def serialize_person(person: "Person") -> dict:
         "name": person.name,
         "team": person.team,
         "email": person.email,
+        "hasAvatar": bool(person.avatar),
+        "avatarUrl": f"/people/{person.id}/avatar" if person.avatar else None,
     }
 
 
@@ -236,6 +238,8 @@ class PersonBase(SQLModel):
 
 class Person(PersonBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
+    avatar: Optional[bytes] = Field(default=None, sa_column=Column(LargeBinary))
+    avatar_content_type: Optional[str] = None
 
 
 class EmailSettings(SQLModel, table=True):
@@ -818,6 +822,62 @@ def delete_person(person_id: str, request: Request, session: Session = Depends(g
     session.commit()
     log_action(session, "delete_person", "person", person_id, deleted_data, request)
     return None
+
+
+@app.post("/people/{person_id}/avatar")
+async def upload_person_avatar(
+    person_id: str,
+    file: UploadFile = File(...),
+    session: Session = Depends(get_session),
+):
+    person = session.exec(select(Person).where(Person.id == person_id)).first()
+    if not person:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
+
+    if not file:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No file uploaded")
+
+    if not file.content_type or not file.content_type.startswith("image/"):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Only image uploads are supported")
+
+    content = await file.read()
+    if not content:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Empty file uploaded")
+
+    max_size_bytes = 5 * 1024 * 1024
+    if len(content) > max_size_bytes:
+        raise HTTPException(status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, detail="Avatar exceeds 5MB limit")
+
+    person.avatar = content
+    person.avatar_content_type = file.content_type
+    session.add(person)
+    session.commit()
+    session.refresh(person)
+
+    return serialize_person(person)
+
+
+@app.delete("/people/{person_id}/avatar", status_code=status.HTTP_204_NO_CONTENT)
+def delete_person_avatar(person_id: str, session: Session = Depends(get_session)):
+    person = session.exec(select(Person).where(Person.id == person_id)).first()
+    if not person:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
+
+    person.avatar = None
+    person.avatar_content_type = None
+    session.add(person)
+    session.commit()
+    return None
+
+
+@app.get("/people/{person_id}/avatar")
+def get_person_avatar(person_id: str, session: Session = Depends(get_session)):
+    person = session.exec(select(Person).where(Person.id == person_id)).first()
+    if not person or not person.avatar:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Avatar not found")
+
+    media_type = person.avatar_content_type or "application/octet-stream"
+    return Response(content=person.avatar, media_type=media_type)
 
 
 @app.get("/settings/email", response_model=EmailSettingsResponse)
