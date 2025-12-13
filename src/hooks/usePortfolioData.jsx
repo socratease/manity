@@ -77,16 +77,12 @@ export const PortfolioProvider = ({ children }) => {
       if (!key) return;
 
       const existing = map.get(key) || {};
-      const normalizedAvatarUrl = person.avatarUrl ? resolveUrl(person.avatarUrl) : existing.avatarUrl;
-
       map.set(key, {
         ...existing,
         ...person,
         name: person.name || existing.name,
         team: person.team || existing.team || 'Contributor',
-        email: person.email ?? existing.email ?? null,
-        hasAvatar: person.hasAvatar ?? existing.hasAvatar ?? false,
-        avatarUrl: normalizedAvatarUrl || null
+        email: person.email ?? existing.email ?? null
       });
     });
 
@@ -411,30 +407,6 @@ export const PortfolioProvider = ({ children }) => {
     return updated;
   }, [apiRequest]);
 
-  const uploadPersonAvatar = useCallback(async (personId, file) => {
-    const formData = new FormData();
-    formData.append('file', file);
-
-    const response = await fetch(resolveUrl(`/people/${personId}/avatar`), {
-      method: 'POST',
-      body: formData
-    });
-
-    if (!response.ok) {
-      throw new Error(await response.text() || 'Failed to upload avatar');
-    }
-
-    const updated = await response.json();
-    const normalized = dedupePeople([updated])[0] || updated;
-    setPeopleState(prev => prev.map(person => person.id === personId ? normalized : person));
-    return normalized;
-  }, [dedupePeople]);
-
-  const removePersonAvatar = useCallback(async (personId) => {
-    await apiRequest(`/people/${personId}/avatar`, { method: 'DELETE' });
-    setPeopleState(prev => prev.map(person => person.id === personId ? { ...person, avatarUrl: null, hasAvatar: false } : person));
-  }, [apiRequest]);
-
   const deletePerson = useCallback(async (personId) => {
     await apiRequest(`/people/${personId}`, { method: 'DELETE' });
     setPeopleState(prev => prev.filter(person => person.id !== personId));
@@ -461,8 +433,6 @@ export const PortfolioProvider = ({ children }) => {
     people,
     createPerson,
     updatePerson,
-    uploadPersonAvatar,
-    removePersonAvatar,
     deletePerson,
     refreshPeople,
     emailSettings,

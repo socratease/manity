@@ -15,7 +15,6 @@ const Avatar = ({
   color = '#6B6554',
   size = 'md',
   bordered = true,
-  src = null,
   style = {},
 }) => {
   const getInitials = (name) => {
@@ -54,15 +53,7 @@ const Avatar = ({
 
   return (
     <div style={avatarStyle}>
-      {src ? (
-        <img
-          src={src}
-          alt={name}
-          style={{ width: '100%', height: '100%', borderRadius: '50%', objectFit: 'cover' }}
-        />
-      ) : (
-        getInitials(name)
-      )}
+      {getInitials(name)}
     </div>
   );
 };
