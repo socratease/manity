@@ -2644,14 +2644,15 @@ Write a professional executive summary that highlights the project's current sta
     return requestMomentumActions(retryMessages, attempt + 1);
   };
 
-  const handleSendThrustMessage = async () => {
-    if (!thrustDraft.trim() || thrustIsRequesting) return;
+  const handleSendThrustMessage = async (messageText = thrustDraft) => {
+    const draftToSend = (messageText ?? '').trim();
+    if (!draftToSend || thrustIsRequesting) return null;
 
     const userMessage = {
       id: generateActivityId(),
       role: 'user',
       author: loggedInUser || 'You',
-      note: thrustDraft,
+      note: draftToSend,
       date: new Date().toISOString(),
     };
 
@@ -2732,8 +2733,11 @@ Keep tool calls granular (one discrete change per action), explain each action c
       }
 
       setThrustMessages(prev => [...prev, assistantMessage]);
+
+      return { assistantMessage, actionResults };
     } catch (error) {
       setThrustError(error?.message || 'Failed to send Momentum request.');
+      return null;
     } finally {
       setThrustRequestStart(null);
       setThrustPendingActions([]);
