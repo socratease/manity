@@ -120,6 +120,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   // Momentum highlight state - tracks recently updated projects from AI
   const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState(new Set());
 
+  // Momentum chat redesign - portfolio panel state
+  const [portfolioMinimized, setPortfolioMinimized] = useState(true);
+  const [activeProjectInChat, setActiveProjectInChat] = useState(null);
+  const [hoveredMessageProject, setHoveredMessageProject] = useState(null);
+
   // People page featured node (for search navigation)
   const [featuredPersonId, setFeaturedPersonId] = useState(null);
   const [hiddenSlideItems, setHiddenSlideItems] = useState({
@@ -2715,8 +2720,15 @@ Keep tool calls granular (one discrete change per action), explain each action c
         note: parsed.display || content,
         date: new Date().toISOString(),
         actionResults,
-        deltas
+        deltas,
+        updatedProjectIds: updatedProjectIds || []
       };
+
+      // Auto-expand portfolio panel if projects were updated
+      if (updatedProjectIds && updatedProjectIds.length > 0) {
+        setPortfolioMinimized(false);
+        setActiveProjectInChat(updatedProjectIds[0]);
+      }
 
       setThrustMessages(prev => [...prev, assistantMessage]);
     } catch (error) {
@@ -3326,6 +3338,40 @@ Keep tool calls granular (one discrete change per action), explain each action c
           50% {
             box-shadow: 0 4px 30px rgba(122, 155, 118, 0.45);
           }
+        }
+
+        @keyframes typingBounce {
+          0%, 80%, 100% {
+            transform: translateY(0);
+            opacity: 0.4;
+          }
+          40% {
+            transform: translateY(-6px);
+            opacity: 1;
+          }
+        }
+
+        @keyframes portfolioPulse {
+          0%, 100% {
+            border-color: var(--earth);
+            box-shadow: 0 2px 12px rgba(139, 111, 71, 0.15);
+          }
+          50% {
+            border-color: var(--sage);
+            box-shadow: 0 4px 20px rgba(139, 111, 71, 0.25);
+          }
+        }
+
+        .momentum-suggestion-chip:hover {
+          background-color: var(--cream);
+          border-color: var(--earth);
+          transform: translateY(-2px);
+        }
+
+        .portfolio-toggle-btn:hover {
+          background-color: var(--sage);
+          color: #FFFFFF;
+          border-color: var(--sage);
         }
       `}</style>
 
@@ -5310,410 +5356,539 @@ Keep tool calls granular (one discrete change per action), explain each action c
           </>
         ) : activeView === 'thrust' ? (
           <>
-            <header style={styles.header}>
-              <div>
-                <h2 style={styles.pageTitle}>Momentum</h2>
-                <p style={styles.pageSubtitle}>
-                  dialectic project planning
-                </p>
-              </div>
-            </header>
-
-            <div style={styles.thrustLayout}>
-                <div style={styles.thrustChatPanel}>
-                  <div style={styles.sectionHeaderRow}>
+            {/* Modern Chat Interface - Full Width */}
+            <div style={styles.momentumContainer}>
+              {/* Main Chat Area */}
+              <div style={{
+                ...styles.momentumChatArea,
+                flex: portfolioMinimized ? 1 : '1 1 65%'
+              }}>
+                {/* Minimal Header */}
+                <div style={styles.momentumChatHeader}>
+                  <div style={styles.momentumHeaderLeft}>
+                    <div style={styles.momentumAvatar}>
+                      <Sparkles size={18} style={{ color: '#FFFFFF' }} />
+                    </div>
                     <div>
-                      <h3 style={styles.sectionTitle}>Interlocutor</h3>
+                      <div style={styles.momentumHeaderTitle}>Momentum</div>
+                      <div style={styles.momentumHeaderSubtitle}>
+                        {thrustIsRequesting ? 'thinking...' : 'AI Project Manager'}
+                      </div>
                     </div>
                   </div>
+                  <button
+                    style={styles.portfolioToggleButton}
+                    onClick={() => setPortfolioMinimized(!portfolioMinimized)}
+                    title={portfolioMinimized ? 'Show portfolio' : 'Hide portfolio'}
+                  >
+                    <TrendingUp size={16} />
+                    <span>{portfolioMinimized ? 'Portfolio' : 'Hide'}</span>
+                    <ChevronRight
+                      size={14}
+                      style={{
+                        transform: portfolioMinimized ? 'rotate(0deg)' : 'rotate(180deg)',
+                        transition: 'transform 0.2s ease'
+                      }}
+                    />
+                  </button>
+                </div>
 
-                  <div style={styles.thrustChatFeed}>
-                    {thrustConversation.length === 0 ? (
-                      <div style={styles.emptyState}>
-                        Start the conversation with a quick update.
+                {/* Messages Container */}
+                <div style={styles.momentumMessagesContainer}>
+                  {thrustConversation.length === 0 ? (
+                    <div style={styles.momentumEmptyChat}>
+                      <div style={styles.momentumEmptyIcon}>
+                        <MessageCircle size={48} style={{ color: 'var(--cloud)' }} />
                       </div>
+                      <div style={styles.momentumEmptyTitle}>Start a conversation</div>
+                      <div style={styles.momentumEmptyText}>
+                        Share updates, ask questions, or request changes to your projects.
+                        Momentum can add tasks, update statuses, and keep your portfolio organized.
+                      </div>
+                      <div style={styles.momentumSuggestions}>
+                        {['What tasks are overdue?', 'Add a new task to...', 'Update the status of...'].map((suggestion, idx) => (
+                          <button
+                            key={idx}
+                            style={styles.momentumSuggestionChip}
+                            onClick={() => setThrustDraft(suggestion)}
+                          >
+                            {suggestion}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
                   ) : (
-                    <>
+                    <div style={styles.momentumMessagesList}>
                       {thrustConversation.map((message, idx) => {
-                        const authorName = message.author || (message.role === 'assistant' ? 'Momentum' : 'You');
+                        const isUser = message.role === 'user';
+                        const messageProjects = message.updatedProjectIds || [];
+                        const projectsForMessage = visibleProjects.filter(p =>
+                          messageProjects.includes(p.id) || messageProjects.includes(String(p.id))
+                        );
 
                         return (
                           <div
                             key={message.id || idx}
                             style={{
-                              ...styles.thrustMessageCard,
-                              animationDelay: `${idx * 30}ms`
+                              ...styles.momentumMessageRow,
+                              justifyContent: isUser ? 'flex-end' : 'flex-start',
+                              animationDelay: `${idx * 50}ms`
                             }}
                           >
-                            <div style={styles.thrustMessageHeader}>
-                              <div style={styles.activityAuthorCompact}>
-                                <div style={styles.activityAvatarSmall}>
-                                  {authorName.split(' ').map(n => n[0]).join('')}
+                            {/* Assistant Avatar */}
+                            {!isUser && (
+                              <div style={styles.momentumMessageAvatar}>
+                                <Sparkles size={14} style={{ color: 'var(--earth)' }} />
+                              </div>
+                            )}
+
+                            <div style={styles.momentumMessageContent}>
+                              {/* Chat Bubble */}
+                              <div style={{
+                                ...styles.momentumBubble,
+                                ...(isUser ? styles.momentumBubbleUser : styles.momentumBubbleAssistant)
+                              }}>
+                                <div style={styles.momentumBubbleText}>
+                                  {renderRichTextWithTags(message.note || message.content)}
                                 </div>
-                                <div>
-                                  <span style={styles.activityAuthorNameCompact}>{authorName}</span>
-                                  <div style={styles.thrustMetaRow}>
-                                    <span style={styles.activityTimeCompact}>{formatDateTime(message.date)}</span>
-                                    {message.projectName && (
-                                      <span style={styles.projectBadgeSmall}>{message.projectName}</span>
-                                    )}
-                                  </div>
+                                <div style={{
+                                  ...styles.momentumBubbleTime,
+                                  textAlign: isUser ? 'right' : 'left'
+                                }}>
+                                  {formatDateTime(message.date)}
                                 </div>
                               </div>
-                            </div>
-                            <div style={styles.thrustMessageBody}>
-                              {renderRichTextWithTags(message.note || message.content)}
-                            </div>
-                            {message.actionResults && message.actionResults.length > 0 && (
-                              <div style={styles.thrustActionStack}>
-                                {message.actionResults.length <= 4 ? (
-                                  // Show all actions if 4 or fewer
-                                  message.actionResults.map((action, actionIdx) => (
-                                    <div key={`${message.id}-action-${actionIdx}`} style={styles.thrustActionCard}>
-                                      <div style={styles.thrustActionRow}>
-                                        <span style={styles.thrustActionLabel}>{action.label}</span>
-                                        {action.deltas && action.deltas.length > 0 ? (
-                                          action.undone ? (
-                                            <span style={styles.thrustUndoTag}>Undone</span>
-                                          ) : (
-                                            <button
-                                              style={styles.thrustActionUndo}
-                                              onClick={() => undoThrustAction(message.id, actionIdx)}
-                                              aria-label="Undo AI changes"
-                                            >
-                                              <RotateCcw size={14} />
-                                              <span style={{ marginLeft: 6 }}>Undo</span>
-                                            </button>
-                                          )
-                                        ) : null}
+
+                              {/* Inline Project Cards - Only for assistant messages with actions */}
+                              {!isUser && projectsForMessage.length > 0 && (
+                                <div style={styles.momentumInlineProjects}>
+                                  {projectsForMessage.map(project => {
+                                    const isActive = activeProjectInChat === project.id || activeProjectInChat === String(project.id);
+                                    const isHovered = hoveredMessageProject === project.id;
+
+                                    return (
+                                      <div
+                                        key={project.id}
+                                        style={{
+                                          ...styles.momentumInlineProjectCard,
+                                          ...(isActive ? styles.momentumInlineProjectCardActive : {}),
+                                          ...(isHovered ? styles.momentumInlineProjectCardHover : {})
+                                        }}
+                                        onMouseEnter={() => setHoveredMessageProject(project.id)}
+                                        onMouseLeave={() => setHoveredMessageProject(null)}
+                                        onClick={() => {
+                                          setActiveProjectInChat(project.id);
+                                          setPortfolioMinimized(false);
+                                          setExpandedMomentumProjects(prev => ({
+                                            ...prev,
+                                            [String(project.id)]: true
+                                          }));
+                                        }}
+                                      >
+                                        <div style={styles.momentumInlineProjectHeader}>
+                                          <div style={styles.momentumInlineProjectIcon}>
+                                            <TrendingUp size={12} />
+                                          </div>
+                                          <span style={styles.momentumInlineProjectName}>{project.name}</span>
+                                          <div style={{
+                                            ...styles.momentumInlineProjectBadge,
+                                            backgroundColor: getPriorityColor(project.priority) + '20',
+                                            color: getPriorityColor(project.priority)
+                                          }}>
+                                            {project.priority}
+                                          </div>
+                                        </div>
+                                        <div style={styles.momentumInlineProjectMeta}>
+                                          <span style={styles.momentumInlineProjectStatus}>{project.status}</span>
+                                          <span style={styles.momentumInlineProjectProgress}>
+                                            {project.progress}% complete
+                                          </span>
+                                        </div>
+                                        <div style={styles.momentumInlineProjectConnector}>
+                                          <ChevronRight size={12} />
+                                          <span>View in portfolio</span>
+                                        </div>
                                       </div>
-                                      <div style={styles.thrustActionDetailText}>{action.detail}</div>
-                                    </div>
-                                  ))
-                                ) : (
-                                  // Show collapsed view with expandable callout for >4 actions
-                                  <>
+                                    );
+                                  })}
+                                </div>
+                              )}
+
+                              {/* Action Pills - Compact inline display */}
+                              {!isUser && message.actionResults && message.actionResults.length > 0 && (
+                                <div style={styles.momentumActionPills}>
+                                  {message.actionResults.slice(0, 3).map((action, actionIdx) => (
                                     <div
-                                      style={styles.thrustActionsCollapsed}
+                                      key={`${message.id}-action-${actionIdx}`}
+                                      style={{
+                                        ...styles.momentumActionPill,
+                                        opacity: action.undone ? 0.5 : 1
+                                      }}
+                                    >
+                                      <CheckCircle2 size={12} style={{ color: action.undone ? 'var(--stone)' : 'var(--sage)' }} />
+                                      <span>{action.label}</span>
+                                      {action.deltas && action.deltas.length > 0 && !action.undone && (
+                                        <button
+                                          style={styles.momentumActionPillUndo}
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            undoThrustAction(message.id, actionIdx);
+                                          }}
+                                          title="Undo"
+                                        >
+                                          <RotateCcw size={10} />
+                                        </button>
+                                      )}
+                                    </div>
+                                  ))}
+                                  {message.actionResults.length > 3 && (
+                                    <button
+                                      style={styles.momentumMoreActions}
                                       onClick={() => setExpandedActionMessages(prev => ({
                                         ...prev,
                                         [message.id]: !prev[message.id]
                                       }))}
                                     >
-                                      <span style={styles.thrustActionsCollapsedText}>
-                                        Performed {message.actionResults.length} actions
-                                      </span>
-                                      <ChevronDown
-                                        size={16}
-                                        style={{
-                                          color: 'var(--earth)',
-                                          transform: expandedActionMessages[message.id] ? 'rotate(180deg)' : 'rotate(0deg)',
-                                          transition: 'transform 0.2s ease'
-                                        }}
-                                      />
-                                    </div>
-                                    {expandedActionMessages[message.id] && (
-                                      <div style={styles.thrustActionsExpandedList}>
-                                        {message.actionResults.map((action, actionIdx) => (
-                                          <div key={`${message.id}-action-${actionIdx}`} style={styles.thrustActionCard}>
-                                            <div style={styles.thrustActionRow}>
-                                              <span style={styles.thrustActionLabel}>{action.label}</span>
-                                              {action.deltas && action.deltas.length > 0 ? (
-                                                action.undone ? (
-                                                  <span style={styles.thrustUndoTag}>Undone</span>
-                                                ) : (
-                                                  <button
-                                                    style={styles.thrustActionUndo}
-                                                    onClick={(e) => {
-                                                      e.stopPropagation();
-                                                      undoThrustAction(message.id, actionIdx);
-                                                    }}
-                                                    aria-label="Undo AI changes"
-                                                  >
-                                                    <RotateCcw size={14} />
-                                                    <span style={{ marginLeft: 6 }}>Undo</span>
-                                                  </button>
-                                                )
-                                              ) : null}
-                                            </div>
-                                            <div style={styles.thrustActionDetailText}>{action.detail}</div>
-                                          </div>
-                                        ))}
+                                      +{message.actionResults.length - 3} more
+                                    </button>
+                                  )}
+                                </div>
+                              )}
+
+                              {/* Expanded Actions */}
+                              {!isUser && expandedActionMessages[message.id] && message.actionResults && message.actionResults.length > 3 && (
+                                <div style={styles.momentumExpandedActions}>
+                                  {message.actionResults.slice(3).map((action, actionIdx) => (
+                                    <div
+                                      key={`${message.id}-action-exp-${actionIdx}`}
+                                      style={{
+                                        ...styles.momentumExpandedAction,
+                                        opacity: action.undone ? 0.5 : 1
+                                      }}
+                                    >
+                                      <div style={styles.momentumExpandedActionRow}>
+                                        <CheckCircle2 size={14} style={{ color: action.undone ? 'var(--stone)' : 'var(--sage)' }} />
+                                        <span style={styles.momentumExpandedActionLabel}>{action.label}</span>
+                                        {action.deltas && action.deltas.length > 0 && !action.undone && (
+                                          <button
+                                            style={styles.momentumActionPillUndo}
+                                            onClick={() => undoThrustAction(message.id, actionIdx + 3)}
+                                            title="Undo"
+                                          >
+                                            <RotateCcw size={12} />
+                                          </button>
+                                        )}
                                       </div>
-                                    )}
-                                  </>
-                                )}
+                                      <div style={styles.momentumExpandedActionDetail}>{action.detail}</div>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+
+                            {/* User Avatar */}
+                            {isUser && (
+                              <div style={styles.momentumMessageAvatarUser}>
+                                <User size={14} style={{ color: '#FFFFFF' }} />
                               </div>
                             )}
                           </div>
                         );
                       })}
 
-                      {/* Pending Actions - now in the conversation flow */}
-                      {thrustPendingActions.length > 0 && (
-                        <div style={styles.thrustPendingActionsCard}>
-                          <div style={styles.thrustPendingActionsHeader}>
+                      {/* Typing Indicator */}
+                      {thrustIsRequesting && (
+                        <div style={styles.momentumMessageRow}>
+                          <div style={styles.momentumMessageAvatar}>
                             <Sparkles size={14} style={{ color: 'var(--earth)' }} />
-                            <span>Applying {thrustPendingActions.length} action{thrustPendingActions.length > 1 ? 's' : ''}...</span>
                           </div>
-                          <ul style={styles.thrustPendingActionsList}>
-                            {thrustPendingActions.map((action, idx) => (
-                              <li key={idx} style={styles.thrustPendingActionsItem}>
-                                {describeActionPreview(action)}
-                              </li>
-                            ))}
-                          </ul>
+                          <div style={styles.momentumTypingIndicator}>
+                            <div style={styles.momentumTypingDot} />
+                            <div style={{ ...styles.momentumTypingDot, animationDelay: '0.2s' }} />
+                            <div style={{ ...styles.momentumTypingDot, animationDelay: '0.4s' }} />
+                          </div>
                         </div>
                       )}
 
-                      {/* Status messages */}
-                      {(thrustIsRequesting || thrustError) && !thrustPendingActions.length && (
-                        <div style={styles.thrustStatusCard}>
-                          <div style={styles.thrustStatusInline}>
-                            {thrustIsRequesting ? (
-                              <>
-                                <Clock size={16} style={{ color: 'var(--earth)' }} />
-                                <span style={styles.thrustStatusText}>
-                                  Momentum is planning… <strong>{formatElapsedTime(thrustElapsedMs)}</strong>
-                                </span>
-                              </>
-                            ) : (
-                              <>
-                                <AlertCircle size={16} style={{ color: 'var(--coral)' }} />
-                                <span style={styles.thrustStatusText}>Momentum couldn't respond: {thrustError}</span>
-                              </>
-                            )}
+                      {/* Pending Actions */}
+                      {thrustPendingActions.length > 0 && (
+                        <div style={styles.momentumMessageRow}>
+                          <div style={styles.momentumMessageAvatar}>
+                            <Sparkles size={14} style={{ color: 'var(--earth)' }} />
+                          </div>
+                          <div style={styles.momentumPendingCard}>
+                            <div style={styles.momentumPendingHeader}>
+                              <Clock size={14} style={{ color: 'var(--amber)' }} />
+                              <span>Applying {thrustPendingActions.length} action{thrustPendingActions.length > 1 ? 's' : ''}...</span>
+                            </div>
+                            <div style={styles.momentumPendingList}>
+                              {thrustPendingActions.map((action, idx) => (
+                                <div key={idx} style={styles.momentumPendingItem}>
+                                  <Circle size={8} style={{ color: 'var(--amber)' }} />
+                                  <span>{describeActionPreview(action)}</span>
+                                </div>
+                              ))}
+                            </div>
                           </div>
                         </div>
                       )}
-                    </>
+
+                      {/* Error Message */}
+                      {thrustError && (
+                        <div style={styles.momentumErrorCard}>
+                          <AlertCircle size={16} style={{ color: 'var(--coral)' }} />
+                          <span>{thrustError}</span>
+                        </div>
+                      )}
+                    </div>
                   )}
                 </div>
 
-                <div style={styles.timelineInputWrapper}>
-                  <textarea
-                    value={thrustDraft}
-                    onChange={handleThrustDraftChange}
-                    onFocus={() => setFocusedField('thrust-draft')}
-                    onBlur={() => setFocusedField(null)}
-                    onKeyDown={(e) => {
-                      if (showThrustTagSuggestions) {
-                        const filteredTags = getAllTags()
+                {/* Input Area - Fixed at Bottom */}
+                <div style={styles.momentumInputArea}>
+                  <div style={styles.momentumInputWrapper}>
+                    <textarea
+                      value={thrustDraft}
+                      onChange={handleThrustDraftChange}
+                      onFocus={() => setFocusedField('thrust-draft')}
+                      onBlur={() => setFocusedField(null)}
+                      onKeyDown={(e) => {
+                        if (showThrustTagSuggestions) {
+                          const filteredTags = getAllTags()
+                            .filter(tag =>
+                              tag.display.toLowerCase().includes(thrustTagSearchTerm.toLowerCase())
+                            )
+                            .slice(0, 8);
+
+                          if (e.key === 'ArrowDown') {
+                            e.preventDefault();
+                            setSelectedThrustTagIndex(prev =>
+                              prev < filteredTags.length - 1 ? prev + 1 : prev
+                            );
+                          } else if (e.key === 'ArrowUp') {
+                            e.preventDefault();
+                            setSelectedThrustTagIndex(prev => prev > 0 ? prev - 1 : 0);
+                          } else if (e.key === 'Enter' && !e.shiftKey) {
+                            e.preventDefault();
+                            if (filteredTags[selectedThrustTagIndex]) {
+                              insertThrustTag(filteredTags[selectedThrustTagIndex]);
+                            }
+                            return;
+                          } else if (e.key === 'Escape') {
+                            e.preventDefault();
+                            setShowThrustTagSuggestions(false);
+                          }
+                        } else if (e.key === 'Enter' && !e.shiftKey) {
+                          e.preventDefault();
+                          handleSendThrustMessage();
+                        }
+                      }}
+                      placeholder="Message Momentum... (@ to mention)"
+                      style={styles.momentumInput}
+                      rows={1}
+                    />
+
+                    {/* Tag Suggestions */}
+                    {showThrustTagSuggestions && (
+                      <div style={styles.momentumTagSuggestions}>
+                        {getAllTags()
                           .filter(tag =>
                             tag.display.toLowerCase().includes(thrustTagSearchTerm.toLowerCase())
                           )
-                          .slice(0, 8);
+                          .slice(0, 6)
+                          .map((tag, idx) => (
+                            <div
+                              key={idx}
+                              style={{
+                                ...styles.momentumTagItem,
+                                backgroundColor: idx === selectedThrustTagIndex ? 'var(--cream)' : 'transparent'
+                              }}
+                              onClick={() => insertThrustTag(tag)}
+                              onMouseEnter={() => setSelectedThrustTagIndex(idx)}
+                            >
+                              <span style={{
+                                ...styles.momentumTagType,
+                                backgroundColor:
+                                  tag.type === 'person' ? 'var(--sage)' + '25' :
+                                  tag.type === 'project' ? 'var(--earth)' + '25' :
+                                  'var(--amber)' + '25',
+                                color:
+                                  tag.type === 'person' ? 'var(--sage)' :
+                                  tag.type === 'project' ? 'var(--earth)' :
+                                  'var(--amber)'
+                              }}>
+                                {tag.type === 'person' ? <User size={10} /> : <TrendingUp size={10} />}
+                              </span>
+                              <span style={styles.momentumTagName}>{tag.display}</span>
+                            </div>
+                          ))}
+                      </div>
+                    )}
 
-                        if (e.key === 'ArrowDown') {
-                          e.preventDefault();
-                          setSelectedThrustTagIndex(prev =>
-                            prev < filteredTags.length - 1 ? prev + 1 : prev
-                          );
-                        } else if (e.key === 'ArrowUp') {
-                          e.preventDefault();
-                          setSelectedThrustTagIndex(prev => prev > 0 ? prev - 1 : 0);
-                        } else if (e.key === 'Enter') {
-                          e.preventDefault();
-                          if (filteredTags[selectedThrustTagIndex]) {
-                            insertThrustTag(filteredTags[selectedThrustTagIndex]);
-                          }
-                          return;
-                        } else if (e.key === 'Escape') {
-                          e.preventDefault();
-                          setShowThrustTagSuggestions(false);
-                        }
-                      } else if (e.ctrlKey && e.key === 'Enter') {
-                        e.preventDefault();
-                        handleSendThrustMessage();
-                      }
-                    }}
-                    placeholder="share a work update... Use @ to tag people, projects, or tasks"
-                    style={{ ...styles.timelineInput, minHeight: '96px' }}
-                  />
-                  {renderEditingHint('thrust-draft')}
-
-                  {/* Tag Suggestions Dropdown for Momentum */}
-                  {showThrustTagSuggestions && (
-                    <div style={styles.tagSuggestions}>
-                      {getAllTags()
-                        .filter(tag =>
-                          tag.display.toLowerCase().includes(thrustTagSearchTerm.toLowerCase())
-                        )
-                        .slice(0, 8)
-                        .map((tag, idx) => (
-                          <div
-                            key={idx}
-                            style={{
-                              ...styles.tagSuggestionItem,
-                              backgroundColor: idx === selectedThrustTagIndex ? 'var(--cream)' : '#FFFFFF'
-                            }}
-                            onClick={() => insertThrustTag(tag)}
-                            onMouseEnter={() => setSelectedThrustTagIndex(idx)}
-                          >
-                            <span style={{
-                              ...styles.tagTypeLabel,
-                              backgroundColor:
-                                tag.type === 'person' ? 'var(--sage)' + '20' :
-                                tag.type === 'project' ? 'var(--earth)' + '20' :
-                                tag.type === 'task' ? 'var(--amber)' + '20' :
-                                'var(--coral)' + '20',
-                              color:
-                                tag.type === 'person' ? 'var(--sage)' :
-                                tag.type === 'project' ? 'var(--earth)' :
-                                tag.type === 'task' ? 'var(--amber)' :
-                                'var(--coral)'
-                            }}>
-                              {tag.type}
-                            </span>
-                            <span style={styles.tagSuggestionDisplay}>{tag.display}</span>
-                          </div>
-                        ))}
-                    </div>
-                  )}
-                  {renderCtrlEnterHint('send to Momentum')}
-                  <button
-                    onClick={handleSendThrustMessage}
-                    disabled={!thrustDraft.trim() || thrustIsRequesting}
-                    style={{
-                      ...styles.timelineSubmitButtonCompact,
-                      opacity: thrustDraft.trim() && !thrustIsRequesting ? 1 : 0.4
-                    }}
-                    title="Send update"
-                  >
-                    <Send size={18} />
-                  </button>
+                    <button
+                      onClick={handleSendThrustMessage}
+                      disabled={!thrustDraft.trim() || thrustIsRequesting}
+                      style={{
+                        ...styles.momentumSendButton,
+                        opacity: thrustDraft.trim() && !thrustIsRequesting ? 1 : 0.4,
+                        cursor: thrustDraft.trim() && !thrustIsRequesting ? 'pointer' : 'not-allowed'
+                      }}
+                      title="Send message"
+                    >
+                      <Send size={18} />
+                    </button>
+                  </div>
+                  <div style={styles.momentumInputHint}>
+                    Press Enter to send, Shift+Enter for new line
+                  </div>
                 </div>
               </div>
 
-              <div style={styles.thrustInfoPanel}>
-                <div style={styles.thrustInfoHeader}>
-                  <div style={styles.thrustInfoTitle}>
-                    <Sparkles size={16} style={{ color: 'var(--earth)' }} />
-                    <div>
-                      <div style={styles.thrustInfoLabel}>Portfolio</div>
-                      <div style={styles.thrustInfoSubtle}>Expand a project for a daily update snapshot</div>
+              {/* Portfolio Side Panel - Collapsible */}
+              <div style={{
+                ...styles.momentumPortfolioPanel,
+                ...(portfolioMinimized ? styles.momentumPortfolioPanelMinimized : {})
+              }}>
+                {!portfolioMinimized && (
+                  <>
+                    <div style={styles.momentumPortfolioHeader}>
+                      <div style={styles.momentumPortfolioTitle}>
+                        <TrendingUp size={16} style={{ color: 'var(--earth)' }} />
+                        <span>Portfolio</span>
+                      </div>
+                      <button
+                        style={styles.momentumPortfolioClose}
+                        onClick={() => setPortfolioMinimized(true)}
+                      >
+                        <X size={16} />
+                      </button>
                     </div>
-                  </div>
-                </div>
 
-                {visibleProjects.length > 0 ? (
-                  <div style={styles.thrustInfoContent}>
-                    {/* Sort projects with recently updated ones first */}
-                    {[...visibleProjects].sort((a, b) => {
-                      const aUpdated = recentlyUpdatedProjects.has(a.id);
-                      const bUpdated = recentlyUpdatedProjects.has(b.id);
-                      if (aUpdated && !bUpdated) return -1;
-                      if (!aUpdated && bUpdated) return 1;
-                      return 0;
-                    }).map(project => {
-                      const projectId = String(project.id);
-                      const isExpanded = expandedMomentumProjects[projectId] ?? true;
-                      const dueSoonTasks = getProjectDueSoonTasks(project);
-                      const recentUpdates = project.recentActivity.slice(0, 3);
-                      const isRecentlyUpdated = recentlyUpdatedProjects.has(project.id);
+                    <div style={styles.momentumPortfolioContent}>
+                      {visibleProjects.length > 0 ? (
+                        [...visibleProjects].sort((a, b) => {
+                          // Active project first
+                          const aActive = activeProjectInChat === a.id || activeProjectInChat === String(a.id);
+                          const bActive = activeProjectInChat === b.id || activeProjectInChat === String(b.id);
+                          if (aActive && !bActive) return -1;
+                          if (!aActive && bActive) return 1;
+                          // Then recently updated
+                          const aUpdated = recentlyUpdatedProjects.has(a.id);
+                          const bUpdated = recentlyUpdatedProjects.has(b.id);
+                          if (aUpdated && !bUpdated) return -1;
+                          if (!aUpdated && bUpdated) return 1;
+                          return 0;
+                        }).map(project => {
+                          const projectId = String(project.id);
+                          const isExpanded = expandedMomentumProjects[projectId] ?? false;
+                          const isActive = activeProjectInChat === project.id || activeProjectInChat === projectId;
+                          const isRecentlyUpdated = recentlyUpdatedProjects.has(project.id);
+                          const dueSoonTasks = getProjectDueSoonTasks(project);
+                          const recentUpdates = project.recentActivity.slice(0, 2);
 
-                      return (
-                        <div
-                          key={project.id}
-                          style={{
-                            ...styles.momentumProjectCard,
-                            ...(isRecentlyUpdated ? styles.momentumProjectCardHighlighted : {})
-                          }}
-                        >
-                          <button
-                            style={styles.momentumProjectToggle}
-                            onClick={() => setExpandedMomentumProjects(prev => ({
-                              ...prev,
-                              [projectId]: !(prev[projectId] ?? true)
-                            }))}
-                            onMouseEnter={(e) => {
-                              e.currentTarget.style.backgroundColor = 'var(--cream)';
-                            }}
-                            onMouseLeave={(e) => {
-                              e.currentTarget.style.backgroundColor = 'transparent';
-                            }}
-                            type="button"
-                            aria-expanded={isExpanded}
-                          >
-                            <div style={styles.momentumProjectHeader}>
-                              <div>
-                                <div style={styles.momentumProjectName}>{project.name}</div>
-                              </div>
-                              <div style={styles.momentumProjectMetaRight}>
-                                <div style={{
-                                  ...styles.priorityBadgeLarge,
-                                  backgroundColor: getPriorityColor(project.priority) + '20',
-                                  color: getPriorityColor(project.priority)
-                                }}>
-                                  {project.priority} priority
-                                </div>
-                                <div style={styles.statusBadgeSmall}>{project.status}</div>
-                              </div>
-                            </div>
-                            <ChevronDown
-                              size={16}
+                          return (
+                            <div
+                              key={project.id}
                               style={{
-                                transition: 'transform 0.2s ease',
-                                transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                                color: 'var(--stone)'
+                                ...styles.momentumPortfolioCard,
+                                ...(isActive ? styles.momentumPortfolioCardActive : {}),
+                                ...(isRecentlyUpdated ? styles.momentumPortfolioCardHighlight : {})
                               }}
-                            />
-                          </button>
+                            >
+                              <button
+                                style={styles.momentumPortfolioCardHeader}
+                                onClick={() => {
+                                  setExpandedMomentumProjects(prev => ({
+                                    ...prev,
+                                    [projectId]: !isExpanded
+                                  }));
+                                  setActiveProjectInChat(project.id);
+                                }}
+                              >
+                                <div style={styles.momentumPortfolioCardTitle}>
+                                  <div style={{
+                                    ...styles.momentumPortfolioCardDot,
+                                    backgroundColor: getPriorityColor(project.priority)
+                                  }} />
+                                  <span>{project.name}</span>
+                                </div>
+                                <div style={styles.momentumPortfolioCardMeta}>
+                                  <span style={styles.momentumPortfolioCardStatus}>{project.status}</span>
+                                  <ChevronDown
+                                    size={14}
+                                    style={{
+                                      transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
+                                      transition: 'transform 0.2s ease',
+                                      color: 'var(--stone)'
+                                    }}
+                                  />
+                                </div>
+                              </button>
 
-                          {isExpanded && (
-                            <div style={styles.momentumProjectBody}>
-                              <div style={styles.momentumSummarySection}>
-                                <div style={styles.momentumSummaryTitle}>Recent updates</div>
-                                {recentUpdates.length > 0 ? (
-                                  <ul style={styles.momentumList}>
-                                    {recentUpdates.map((activity, idx) => (
-                                      <li key={activity.id || idx} style={styles.momentumListItem}>
-                                        <div style={styles.momentumListRow}>
-                                          <span style={styles.momentumListStrong}>{activity.author}</span>
-                                          <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
-                                        </div>
-                                        <div style={styles.momentumListText}>{activity.note}</div>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : (
-                                  <div style={styles.momentumEmptyText}>No updates yet.</div>
-                                )}
+                              {/* Progress Bar */}
+                              <div style={styles.momentumPortfolioProgress}>
+                                <div
+                                  style={{
+                                    ...styles.momentumPortfolioProgressFill,
+                                    width: `${project.progress || 0}%`,
+                                    backgroundColor: getPriorityColor(project.priority)
+                                  }}
+                                />
                               </div>
 
-                              <div style={{
-                                ...styles.momentumSummarySection,
-                                borderLeft: dueSoonTasks.some(task => task.dueDateInfo.isOverdue)
-                                  ? '3px solid var(--coral)'
-                                  : '3px solid var(--amber)'
-                              }}>
-                                <div style={styles.momentumSummaryTitle}>Due soon or overdue</div>
-                                {dueSoonTasks.length > 0 ? (
-                                  <ul style={styles.momentumList}>
-                                    {dueSoonTasks.map((task, idx) => (
-                                      <li key={`${task.taskTitle}-${task.title}-${idx}`} style={styles.momentumListItem}>
-                                        <div style={styles.momentumListRow}>
-                                          <span style={styles.momentumListStrong}>{task.taskTitle} → {task.title}</span>
-                                          <span style={{ ...styles.actionDueText, color: task.dueDateInfo.color }}>
+                              {/* Expanded Content */}
+                              {isExpanded && (
+                                <div style={styles.momentumPortfolioCardBody}>
+                                  {/* Recent Updates */}
+                                  <div style={styles.momentumPortfolioSection}>
+                                    <div style={styles.momentumPortfolioSectionTitle}>Recent Updates</div>
+                                    {recentUpdates.length > 0 ? (
+                                      recentUpdates.map((activity, idx) => (
+                                        <div key={activity.id || idx} style={styles.momentumPortfolioActivity}>
+                                          <div style={styles.momentumPortfolioActivityHeader}>
+                                            <span style={styles.momentumPortfolioActivityAuthor}>{activity.author}</span>
+                                            <span style={styles.momentumPortfolioActivityTime}>{formatDateTime(activity.date)}</span>
+                                          </div>
+                                          <div style={styles.momentumPortfolioActivityText}>{activity.note}</div>
+                                        </div>
+                                      ))
+                                    ) : (
+                                      <div style={styles.momentumPortfolioEmpty}>No updates yet</div>
+                                    )}
+                                  </div>
+
+                                  {/* Due Soon */}
+                                  {dueSoonTasks.length > 0 && (
+                                    <div style={styles.momentumPortfolioSection}>
+                                      <div style={{
+                                        ...styles.momentumPortfolioSectionTitle,
+                                        color: dueSoonTasks.some(t => t.dueDateInfo.isOverdue) ? 'var(--coral)' : 'var(--amber)'
+                                      }}>
+                                        <AlertCircle size={12} />
+                                        <span>Due Soon</span>
+                                      </div>
+                                      {dueSoonTasks.slice(0, 2).map((task, idx) => (
+                                        <div key={idx} style={styles.momentumPortfolioDueTask}>
+                                          <span>{task.title}</span>
+                                          <span style={{ color: task.dueDateInfo.color, fontSize: '11px' }}>
                                             {task.dueDateInfo.text}
                                           </span>
                                         </div>
-                                        <div style={styles.momentumListText}>Due {task.dueDateInfo.formattedDate}</div>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : (
-                                  <div style={styles.momentumEmptyText}>No near-term work flagged.</div>
-                                )}
-                              </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              )}
                             </div>
-                          )}
+                          );
+                        })
+                      ) : (
+                        <div style={styles.momentumPortfolioEmpty}>
+                          No projects to display
                         </div>
-                      );
-                    })}
-                  </div>
-                ) : (
-                  <div style={styles.emptyState}>No visible projects to summarize.</div>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             </div>
@@ -10054,5 +10229,754 @@ const styles = {
     border: '1px solid var(--cloud)',
     borderRadius: '8px',
     cursor: 'pointer',
+  },
+
+  // ==========================================
+  // Modern Momentum Chat Styles
+  // ==========================================
+
+  momentumContainer: {
+    display: 'flex',
+    height: 'calc(100vh - 100px)',
+    gap: '0',
+    overflow: 'hidden',
+  },
+
+  momentumChatArea: {
+    display: 'flex',
+    flexDirection: 'column',
+    backgroundColor: '#FAFAF8',
+    borderRadius: '20px 0 0 20px',
+    overflow: 'hidden',
+    transition: 'flex 0.3s ease',
+  },
+
+  momentumChatHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '16px 24px',
+    backgroundColor: '#FFFFFF',
+    borderBottom: '1px solid var(--cloud)',
+    flexShrink: 0,
+  },
+
+  momentumHeaderLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+  },
+
+  momentumAvatar: {
+    width: '40px',
+    height: '40px',
+    borderRadius: '12px',
+    background: 'linear-gradient(135deg, var(--earth) 0%, var(--sage) 100%)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 4px 12px rgba(139, 111, 71, 0.2)',
+  },
+
+  momentumHeaderTitle: {
+    fontSize: '16px',
+    fontWeight: '700',
+    color: 'var(--charcoal)',
+    letterSpacing: '-0.3px',
+  },
+
+  momentumHeaderSubtitle: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  portfolioToggleButton: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    padding: '8px 14px',
+    backgroundColor: 'var(--cream)',
+    border: '1px solid var(--cloud)',
+    borderRadius: '10px',
+    color: 'var(--earth)',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    fontWeight: '600',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+
+  momentumMessagesContainer: {
+    flex: 1,
+    overflowY: 'auto',
+    padding: '24px',
+    display: 'flex',
+    flexDirection: 'column',
+  },
+
+  momentumEmptyChat: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    textAlign: 'center',
+    padding: '40px',
+    gap: '16px',
+  },
+
+  momentumEmptyIcon: {
+    width: '80px',
+    height: '80px',
+    borderRadius: '24px',
+    backgroundColor: 'var(--cloud)' + '30',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginBottom: '8px',
+  },
+
+  momentumEmptyTitle: {
+    fontSize: '20px',
+    fontWeight: '700',
+    color: 'var(--charcoal)',
+    letterSpacing: '-0.3px',
+  },
+
+  momentumSuggestions: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '8px',
+    justifyContent: 'center',
+    marginTop: '12px',
+  },
+
+  momentumSuggestionChip: {
+    padding: '8px 16px',
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '20px',
+    color: 'var(--charcoal)',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+
+  momentumMessagesList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '20px',
+    paddingBottom: '20px',
+  },
+
+  momentumMessageRow: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '12px',
+    animation: 'fadeInUp 0.4s ease backwards',
+  },
+
+  momentumMessageAvatar: {
+    width: '32px',
+    height: '32px',
+    borderRadius: '10px',
+    backgroundColor: 'var(--cream)',
+    border: '1px solid var(--cloud)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+  },
+
+  momentumMessageAvatarUser: {
+    width: '32px',
+    height: '32px',
+    borderRadius: '10px',
+    background: 'linear-gradient(135deg, #5B8DEF 0%, #3B6FD9 100%)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    flexShrink: 0,
+    boxShadow: '0 2px 8px rgba(91, 141, 239, 0.3)',
+  },
+
+  momentumMessageContent: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    maxWidth: '70%',
+  },
+
+  momentumBubble: {
+    padding: '14px 18px',
+    borderRadius: '18px',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    lineHeight: '1.6',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+  },
+
+  momentumBubbleUser: {
+    background: 'linear-gradient(135deg, #5B8DEF 0%, #3B6FD9 100%)',
+    color: '#FFFFFF',
+    borderBottomRightRadius: '6px',
+  },
+
+  momentumBubbleAssistant: {
+    backgroundColor: '#FFFFFF',
+    color: 'var(--charcoal)',
+    border: '1px solid var(--cloud)',
+    borderBottomLeftRadius: '6px',
+  },
+
+  momentumBubbleText: {
+    margin: 0,
+    wordBreak: 'break-word',
+  },
+
+  momentumBubbleTime: {
+    fontSize: '11px',
+    marginTop: '6px',
+    opacity: 0.7,
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumInlineProjects: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    marginTop: '4px',
+  },
+
+  momentumInlineProjectCard: {
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '12px',
+    padding: '12px 14px',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
+  },
+
+  momentumInlineProjectCardActive: {
+    borderColor: 'var(--sage)',
+    boxShadow: '0 4px 16px rgba(122, 155, 118, 0.2)',
+  },
+
+  momentumInlineProjectCardHover: {
+    transform: 'translateX(4px)',
+    borderColor: 'var(--earth)',
+  },
+
+  momentumInlineProjectHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+
+  momentumInlineProjectIcon: {
+    width: '22px',
+    height: '22px',
+    borderRadius: '6px',
+    backgroundColor: 'var(--earth)' + '15',
+    color: 'var(--earth)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+
+  momentumInlineProjectName: {
+    fontSize: '13px',
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+    flex: 1,
+  },
+
+  momentumInlineProjectBadge: {
+    padding: '3px 8px',
+    borderRadius: '6px',
+    fontSize: '10px',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: '0.3px',
+  },
+
+  momentumInlineProjectMeta: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '12px',
+    marginTop: '6px',
+    paddingLeft: '30px',
+  },
+
+  momentumInlineProjectStatus: {
+    fontSize: '11px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    textTransform: 'capitalize',
+  },
+
+  momentumInlineProjectProgress: {
+    fontSize: '11px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumInlineProjectConnector: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    marginTop: '8px',
+    paddingTop: '8px',
+    borderTop: '1px dashed var(--cloud)',
+    color: 'var(--earth)',
+    fontSize: '11px',
+    fontWeight: '600',
+  },
+
+  momentumActionPills: {
+    display: 'flex',
+    flexWrap: 'wrap',
+    gap: '6px',
+    marginTop: '4px',
+  },
+
+  momentumActionPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 10px',
+    backgroundColor: 'var(--sage)' + '15',
+    borderRadius: '8px',
+    fontSize: '12px',
+    fontWeight: '500',
+    color: 'var(--charcoal)',
+    fontFamily: "'Inter', sans-serif",
+    transition: 'opacity 0.2s ease',
+  },
+
+  momentumActionPillUndo: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '18px',
+    height: '18px',
+    padding: 0,
+    backgroundColor: 'transparent',
+    border: 'none',
+    borderRadius: '4px',
+    color: 'var(--stone)',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+    marginLeft: '2px',
+  },
+
+  momentumMoreActions: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '6px 10px',
+    backgroundColor: 'transparent',
+    border: '1px dashed var(--cloud)',
+    borderRadius: '8px',
+    fontSize: '12px',
+    fontWeight: '500',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    cursor: 'pointer',
+  },
+
+  momentumExpandedActions: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    marginTop: '4px',
+    padding: '10px',
+    backgroundColor: 'var(--cream)',
+    borderRadius: '10px',
+  },
+
+  momentumExpandedAction: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '4px',
+  },
+
+  momentumExpandedActionRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+
+  momentumExpandedActionLabel: {
+    fontSize: '12px',
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+    flex: 1,
+  },
+
+  momentumExpandedActionDetail: {
+    fontSize: '11px',
+    color: 'var(--stone)',
+    paddingLeft: '22px',
+  },
+
+  momentumTypingIndicator: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '4px',
+    padding: '12px 16px',
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '18px',
+    borderBottomLeftRadius: '6px',
+  },
+
+  momentumTypingDot: {
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+    backgroundColor: 'var(--stone)',
+    animation: 'typingBounce 1.4s ease-in-out infinite',
+  },
+
+  momentumPendingCard: {
+    backgroundColor: 'var(--amber)' + '10',
+    border: '1px solid var(--amber)' + '30',
+    borderRadius: '12px',
+    padding: '12px 16px',
+    maxWidth: '70%',
+  },
+
+  momentumPendingHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontSize: '13px',
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+    marginBottom: '8px',
+  },
+
+  momentumPendingList: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+  },
+
+  momentumPendingItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumErrorCard: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '12px 16px',
+    backgroundColor: 'var(--coral)' + '10',
+    border: '1px solid var(--coral)' + '30',
+    borderRadius: '12px',
+    color: 'var(--coral)',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumInputArea: {
+    padding: '16px 24px 20px',
+    backgroundColor: '#FFFFFF',
+    borderTop: '1px solid var(--cloud)',
+    flexShrink: 0,
+  },
+
+  momentumInputWrapper: {
+    display: 'flex',
+    alignItems: 'flex-end',
+    gap: '12px',
+    position: 'relative',
+  },
+
+  momentumInput: {
+    flex: 1,
+    padding: '14px 18px',
+    backgroundColor: 'var(--cream)',
+    border: '1px solid var(--cloud)',
+    borderRadius: '14px',
+    fontSize: '14px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    resize: 'none',
+    minHeight: '48px',
+    maxHeight: '120px',
+    outline: 'none',
+    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+  },
+
+  momentumTagSuggestions: {
+    position: 'absolute',
+    bottom: '100%',
+    left: 0,
+    right: '60px',
+    marginBottom: '8px',
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '12px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
+    padding: '6px',
+    zIndex: 100,
+    maxHeight: '200px',
+    overflowY: 'auto',
+  },
+
+  momentumTagItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '10px 12px',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'background-color 0.15s ease',
+  },
+
+  momentumTagType: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '24px',
+    height: '24px',
+    borderRadius: '6px',
+  },
+
+  momentumTagName: {
+    fontSize: '13px',
+    fontWeight: '500',
+    color: 'var(--charcoal)',
+  },
+
+  momentumSendButton: {
+    width: '48px',
+    height: '48px',
+    borderRadius: '14px',
+    background: 'linear-gradient(135deg, var(--earth) 0%, var(--sage) 100%)',
+    border: 'none',
+    color: '#FFFFFF',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    boxShadow: '0 4px 12px rgba(139, 111, 71, 0.3)',
+    transition: 'all 0.2s ease',
+  },
+
+  momentumInputHint: {
+    fontSize: '11px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    marginTop: '8px',
+    textAlign: 'center',
+  },
+
+  momentumPortfolioPanel: {
+    width: '340px',
+    backgroundColor: '#FFFFFF',
+    borderLeft: '1px solid var(--cloud)',
+    display: 'flex',
+    flexDirection: 'column',
+    transition: 'width 0.3s ease, opacity 0.3s ease',
+    overflow: 'hidden',
+  },
+
+  momentumPortfolioPanelMinimized: {
+    width: '0',
+    opacity: 0,
+    borderLeft: 'none',
+  },
+
+  momentumPortfolioHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '16px 18px',
+    borderBottom: '1px solid var(--cloud)',
+    flexShrink: 0,
+  },
+
+  momentumPortfolioTitle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    fontSize: '15px',
+    fontWeight: '700',
+    color: 'var(--charcoal)',
+  },
+
+  momentumPortfolioClose: {
+    width: '28px',
+    height: '28px',
+    borderRadius: '8px',
+    backgroundColor: 'var(--cream)',
+    border: 'none',
+    color: 'var(--stone)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
+  },
+
+  momentumPortfolioContent: {
+    flex: 1,
+    overflowY: 'auto',
+    padding: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+
+  momentumPortfolioCard: {
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '12px',
+    overflow: 'hidden',
+    transition: 'all 0.3s ease',
+  },
+
+  momentumPortfolioCardActive: {
+    borderColor: 'var(--sage)',
+    boxShadow: '0 4px 16px rgba(122, 155, 118, 0.15)',
+  },
+
+  momentumPortfolioCardHighlight: {
+    borderColor: 'var(--earth)',
+    animation: 'portfolioPulse 2s ease-in-out infinite',
+  },
+
+  momentumPortfolioCardHeader: {
+    width: '100%',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '12px 14px 8px',
+    backgroundColor: 'transparent',
+    border: 'none',
+    cursor: 'pointer',
+    textAlign: 'left',
+  },
+
+  momentumPortfolioCardTitle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontSize: '14px',
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+  },
+
+  momentumPortfolioCardDot: {
+    width: '8px',
+    height: '8px',
+    borderRadius: '50%',
+    flexShrink: 0,
+  },
+
+  momentumPortfolioCardMeta: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+
+  momentumPortfolioCardStatus: {
+    fontSize: '11px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    textTransform: 'capitalize',
+  },
+
+  momentumPortfolioProgress: {
+    height: '3px',
+    backgroundColor: 'var(--cloud)',
+    margin: '0 14px 10px',
+    borderRadius: '2px',
+    overflow: 'hidden',
+  },
+
+  momentumPortfolioProgressFill: {
+    height: '100%',
+    borderRadius: '2px',
+    transition: 'width 0.5s ease',
+  },
+
+  momentumPortfolioCardBody: {
+    padding: '0 14px 14px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
+
+  momentumPortfolioSection: {
+    padding: '10px',
+    backgroundColor: 'var(--cream)',
+    borderRadius: '8px',
+  },
+
+  momentumPortfolioSectionTitle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    fontSize: '10px',
+    fontWeight: '700',
+    color: 'var(--stone)',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+    marginBottom: '8px',
+  },
+
+  momentumPortfolioActivity: {
+    marginBottom: '8px',
+  },
+
+  momentumPortfolioActivityHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    marginBottom: '2px',
+  },
+
+  momentumPortfolioActivityAuthor: {
+    fontSize: '12px',
+    fontWeight: '600',
+    color: 'var(--charcoal)',
+  },
+
+  momentumPortfolioActivityTime: {
+    fontSize: '10px',
+    color: 'var(--stone)',
+  },
+
+  momentumPortfolioActivityText: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    lineHeight: '1.4',
+  },
+
+  momentumPortfolioDueTask: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    padding: '6px 0',
+    fontSize: '12px',
+    color: 'var(--charcoal)',
+    borderBottom: '1px dashed var(--cloud)',
+  },
+
+  momentumPortfolioEmpty: {
+    fontSize: '13px',
+    color: 'var(--stone)',
+    textAlign: 'center',
+    padding: '20px',
   },
 };
