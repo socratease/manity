@@ -378,7 +378,7 @@ export default function MomentumChat({
                   }
                 } else if (e.key === 'Enter' && !e.shiftKey) {
                   e.preventDefault();
-                  handleSendThrustMessage();
+                  handleSendThrustMessage(thrustDraft);
                 }
               }}
               placeholder="Message Momentum... (@ to mention)"
@@ -423,7 +423,7 @@ export default function MomentumChat({
             )}
 
             <button
-              onClick={handleSendThrustMessage}
+              onClick={() => handleSendThrustMessage(thrustDraft)}
               disabled={!thrustDraft.trim() || thrustIsRequesting}
               style={{
                 ...styles.momentumSendButton,
