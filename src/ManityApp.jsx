@@ -18,7 +18,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const recentlyCompletedRef = useRef(null);
   const nextUpRef = useRef(null);
 
-  const { projects, setProjects, people, createPerson, updatePerson, uploadPersonAvatar, removePersonAvatar, deletePerson, sendEmail } = usePortfolioData();
+  const { projects, setProjects, people, createPerson, updatePerson, deletePerson, sendEmail } = usePortfolioData();
 
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
@@ -6201,8 +6201,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 people={people}
                 projects={projects}
                 onUpdatePerson={updatePerson}
-                onUploadAvatar={uploadPersonAvatar}
-                onRemoveAvatar={removePersonAvatar}
                 onDeletePerson={deletePerson}
                 onViewProject={(projectId) => {
                   setActiveView('overview');

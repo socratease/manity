@@ -128,8 +128,6 @@ const PeopleGraph = ({
   people: propPeople = [],
   projects: propProjects = [],
   onUpdatePerson,
-  onUploadAvatar,
-  onRemoveAvatar,
   onDeletePerson,
   onViewProject,
   onLoginAs,
@@ -152,8 +150,6 @@ const PeopleGraph = ({
   const [isEditing, setIsEditing] = useState(false);
   const [editForm, setEditForm] = useState({ name: '', team: '', email: '' });
   const [loginFeedback, setLoginFeedback] = useState(null);
-  const [avatarUpdating, setAvatarUpdating] = useState(false);
-  const avatarInputRef = useRef(null);
 
   const teamColors = useMemo(() => {
     const baseColors = new Map([
@@ -210,8 +206,6 @@ const PeopleGraph = ({
         name: person.name,
         team: person.team,
         email: person.email,
-        avatarUrl: person.avatarUrl,
-        hasAvatar: person.hasAvatar,
         projectCount: 0,
         projects: [],
         activities: [],
@@ -574,43 +568,6 @@ const PeopleGraph = ({
     }
   }, [selectedNode, editForm, onUpdatePerson]);
 
-  const handleAvatarUpload = useCallback(async (event) => {
-    if (!selectedNode || !onUploadAvatar) return;
-
-    const file = event.target.files?.[0];
-    if (!file) return;
-
-    setAvatarUpdating(true);
-
-    try {
-      const updated = await onUploadAvatar(selectedNode.id, file);
-      setSelectedNode(node => node ? { ...node, avatarUrl: updated.avatarUrl, hasAvatar: updated.hasAvatar } : node);
-    } catch (error) {
-      console.error('Failed to upload avatar', error);
-      alert(error.message || 'Failed to upload avatar');
-    } finally {
-      setAvatarUpdating(false);
-      if (avatarInputRef.current) {
-        avatarInputRef.current.value = '';
-      }
-    }
-  }, [selectedNode, onUploadAvatar]);
-
-  const handleRemoveAvatar = useCallback(async () => {
-    if (!selectedNode || !onRemoveAvatar || !selectedNode.hasAvatar) return;
-
-    setAvatarUpdating(true);
-    try {
-      await onRemoveAvatar(selectedNode.id);
-      setSelectedNode(node => node ? { ...node, avatarUrl: null, hasAvatar: false } : node);
-    } catch (error) {
-      console.error('Failed to remove avatar', error);
-      alert(error.message || 'Failed to remove avatar');
-    } finally {
-      setAvatarUpdating(false);
-    }
-  }, [onRemoveAvatar, selectedNode]);
-
   const handleDelete = useCallback(async () => {
     if (selectedNode && onDeletePerson) {
       if (window.confirm(`Delete ${selectedNode.name}?`)) {
@@ -808,53 +765,33 @@ const PeopleGraph = ({
                     }}
                   />
 
-                  {node.avatarUrl ? (
-                    <>
-                      <clipPath id={`node-avatar-clip-${node.id}`}>
-                        <circle r={node.radius - 4} cx="0" cy="0" />
-                      </clipPath>
-                      <image
-                        href={node.avatarUrl}
-                        x={-(node.radius - 4)}
-                        y={-(node.radius - 4)}
-                        width={(node.radius - 4) * 2}
-                        height={(node.radius - 4) * 2}
-                        preserveAspectRatio="xMidYMid slice"
-                        clipPath={`url(#node-avatar-clip-${node.id})`}
-                        style={{ pointerEvents: 'none' }}
-                      />
-                    </>
-                  ) : (
-                    <>
-                      <circle
-                        r={node.radius - 4}
-                        fill={`url(#node-gradient-${node.id})`}
-                        style={{ pointerEvents: 'none' }}
-                      />
-                      <defs>
-                        <radialGradient id={`node-gradient-${node.id}`}>
-                          <stop offset="0%" stopColor="#FFFFFF" />
-                          <stop offset="100%" stopColor={`${teamColor}30`} />
-                        </radialGradient>
-                      </defs>
+                  <circle
+                    r={node.radius - 4}
+                    fill={`url(#node-gradient-${node.id})`}
+                    style={{ pointerEvents: 'none' }}
+                  />
+                  <defs>
+                    <radialGradient id={`node-gradient-${node.id}`}>
+                      <stop offset="0%" stopColor="#FFFFFF" />
+                      <stop offset="100%" stopColor={`${teamColor}30`} />
+                    </radialGradient>
+                  </defs>
 
-                      <text
-                        y="1"
-                        textAnchor="middle"
-                        dominantBaseline="middle"
-                        style={{
-                          fontSize: node.radius * 0.5,
-                          fontWeight: '700',
-                          fontFamily: "'Inter', sans-serif",
-                          fill: teamColor,
-                          pointerEvents: 'none',
-                          userSelect: 'none'
-                        }}
-                      >
-                        {getAvatarInitials(node.name)}
-                      </text>
-                    </>
-                  )}
+                  <text
+                    y="1"
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                    style={{
+                      fontSize: node.radius * 0.5,
+                      fontWeight: '700',
+                      fontFamily: "'Inter', sans-serif",
+                      fill: teamColor,
+                      pointerEvents: 'none',
+                      userSelect: 'none'
+                    }}
+                  >
+                    {getAvatarInitials(node.name)}
+                  </text>
 
                   <text
                     y={node.radius + 16}
@@ -971,11 +908,7 @@ const PeopleGraph = ({
                   color: getTeamColor(node.team)
                 }}
               >
-                {node.avatarUrl ? (
-                  <img src={node.avatarUrl} alt={node.name} style={styles.tooltipAvatarImage} />
-                ) : (
-                  getAvatarInitials(node.name)
-                )}
+                {getAvatarInitials(node.name)}
               </div>
               <div>
                 <div style={styles.tooltipName}>{node.name}</div>
@@ -1127,11 +1060,7 @@ const PeopleGraph = ({
                         flexShrink: 0
                       }}
                     >
-                      {selectedNode.avatarUrl ? (
-                        <img src={selectedNode.avatarUrl} alt={selectedNode.name} style={styles.calloutAvatarImage} />
-                      ) : (
-                        getAvatarInitials(selectedNode.name)
-                      )}
+                      {getAvatarInitials(selectedNode.name)}
                     </div>
 
                     {isEditing ? (
@@ -1158,40 +1087,6 @@ const PeopleGraph = ({
                           placeholder="Email"
                           style={styles.calloutInput}
                         />
-                        <div style={styles.calloutAvatarUploadRow}>
-                          <div style={styles.calloutAvatarPreview}>
-                            {selectedNode.avatarUrl ? (
-                              <img src={selectedNode.avatarUrl} alt={selectedNode.name} style={styles.calloutAvatarPreviewImage} />
-                            ) : (
-                              <span style={styles.calloutAvatarPlaceholder}>No photo</span>
-                            )}
-                          </div>
-                          <div style={styles.calloutAvatarActions}>
-                            <button
-                              style={styles.calloutSaveBtn}
-                              onClick={() => avatarInputRef.current?.click()}
-                              disabled={avatarUpdating}
-                            >
-                              Upload photo
-                            </button>
-                            {selectedNode.hasAvatar && (
-                              <button
-                                style={styles.calloutCancelBtn}
-                                onClick={handleRemoveAvatar}
-                                disabled={avatarUpdating}
-                              >
-                                Remove
-                              </button>
-                            )}
-                            <input
-                              ref={avatarInputRef}
-                              type="file"
-                              accept="image/*"
-                              style={{ display: 'none' }}
-                              onChange={handleAvatarUpload}
-                            />
-                          </div>
-                        </div>
                       </div>
                     ) : (
                       <div style={{ flex: 1, minWidth: 0 }}>
@@ -1551,13 +1446,6 @@ const styles = {
     fontSize: '12px',
     fontWeight: '700',
     fontFamily: "'Inter', sans-serif"
-  },
-
-  tooltipAvatarImage: {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover',
-    borderRadius: '50%'
   },
 
   tooltipName: {
@@ -2280,50 +2168,6 @@ const styles = {
     cursor: 'pointer',
     transition: 'all 0.2s ease',
     border: '1px solid transparent'
-  },
-
-  calloutAvatarImage: {
-    width: '100%',
-    height: '100%',
-    borderRadius: '50%',
-    objectFit: 'cover'
-  },
-
-  calloutAvatarUploadRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px'
-  },
-
-  calloutAvatarPreview: {
-    width: '56px',
-    height: '56px',
-    borderRadius: '16px',
-    backgroundColor: '#FAF8F3',
-    border: '1px dashed #E8E3D8',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    overflow: 'hidden'
-  },
-
-  calloutAvatarPreviewImage: {
-    width: '100%',
-    height: '100%',
-    objectFit: 'cover'
-  },
-
-  calloutAvatarPlaceholder: {
-    fontSize: '11px',
-    color: '#6B6554',
-    fontFamily: "'Inter', sans-serif"
-  },
-
-  calloutAvatarActions: {
-    display: 'flex',
-    gap: '8px',
-    flexWrap: 'wrap',
-    alignItems: 'center'
   }
 };
 
