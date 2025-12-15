@@ -1,31 +1,24 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { getTheme } from '../lib/theme';
 
-const colors = {
-  earth: '#8B6F47',
-  sage: '#7A9B76',
-  coral: '#D67C5C',
-  amber: '#E8A75D',
-  cream: '#FAF8F3',
-  cloud: '#E8E3D8',
-  stone: '#6B6554',
-  charcoal: '#3A3631',
-};
+const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
 
-const getPriorityColor = (priority) => {
-  const priorityColors = {
-    high: colors.coral,
-    medium: colors.amber,
-    low: colors.sage,
+function PeopleProjectsJuggle({ projects = [], people = [], isSantafied = false }) {
+  const colors = getColors(isSantafied);
+  const getPriorityColor = (priority) => {
+    const priorityColors = {
+      high: colors.coral,
+      medium: colors.amber,
+      low: colors.sage,
+    };
+    return priorityColors[priority] || colors.stone;
   };
-  return priorityColors[priority] || colors.stone;
-};
-
-function PeopleProjectsJuggle({ projects = [], people = [] }) {
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
   const stateRef = useRef(null);
   const dimensionsRef = useRef({ width: 800, height: 450 });
   const [canvasKey, setCanvasKey] = useState(0);
+  const [hoveredProject, setHoveredProject] = useState(null);
 
   useEffect(() => {
     const updateDimensions = () => {
@@ -298,6 +291,35 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(initials || '?', personState.x, drawY);
+
+        // Draw santa hat if santafied
+        if (isSantafied) {
+          const hatX = personState.x;
+          const hatY = drawY - personState.radius;
+          const hatWidth = personState.radius * 1.5;
+          const hatHeight = personState.radius * 1.2;
+
+          // Draw the main red part of the hat (triangle)
+          ctx.fillStyle = '#C41E3A';
+          ctx.beginPath();
+          ctx.moveTo(hatX - hatWidth / 2, hatY);
+          ctx.lineTo(hatX + hatWidth / 2, hatY);
+          ctx.lineTo(hatX + hatWidth * 0.1, hatY - hatHeight);
+          ctx.closePath();
+          ctx.fill();
+
+          // Draw white trim at the base
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.ellipse(hatX, hatY, hatWidth / 2, hatWidth * 0.15, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Draw white pom-pom at the top
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.arc(hatX + hatWidth * 0.1, hatY - hatHeight, hatWidth * 0.25, 0, Math.PI * 2);
+          ctx.fill();
+        }
       });
 
       const time = Date.now() / 1000;
@@ -323,6 +345,52 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
     };
   }, [projects, people, canvasKey]);
 
+  // Handle canvas click to navigate to project
+  const handleCanvasClick = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !stateRef.current) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Check if click is on a project card
+    const clickedProject = stateRef.current.projects.find(proj => {
+      const dx = Math.abs(proj.x - x);
+      const dy = Math.abs(proj.y - y);
+      return dx < proj.width / 2 && dy < proj.height / 2;
+    });
+
+    if (clickedProject) {
+      window.location.hash = `#/project/${clickedProject.id}`;
+    }
+  };
+
+  // Handle canvas hover to show pointer cursor
+  const handleCanvasMouseMove = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !stateRef.current) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Check if hovering over a project card
+    const hoveredProj = stateRef.current.projects.find(proj => {
+      const dx = Math.abs(proj.x - x);
+      const dy = Math.abs(proj.y - y);
+      return dx < proj.width / 2 && dy < proj.height / 2;
+    });
+
+    if (hoveredProj) {
+      canvas.style.cursor = 'pointer';
+      setHoveredProject(hoveredProj.id);
+    } else {
+      canvas.style.cursor = 'default';
+      setHoveredProject(null);
+    }
+  };
+
   return (
     <div style={{
       width: '100%',
@@ -332,7 +400,12 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
       border: '1px solid #E8E3D8',
       boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
     }}>
-      <canvas ref={canvasRef} style={{ display: 'block', width: '100%' }} />
+      <canvas
+        ref={canvasRef}
+        style={{ display: 'block', width: '100%' }}
+        onClick={handleCanvasClick}
+        onMouseMove={handleCanvasMouseMove}
+      />
       <div style={{
         display: 'flex',
         justifyContent: 'center',
