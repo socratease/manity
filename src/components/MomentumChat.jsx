@@ -53,7 +53,7 @@ export default function MomentumChat({
     const map = { active: colors.sage, planning: colors.amber, 'on-hold': colors.stone, completed: colors.earth };
     return map[status] || colors.stone;
   };
-  const { projects, addTask, updateTask, addSubtask, updateSubtask, updateProject, createProject, addActivity, createPerson } = usePortfolioData();
+  const { projects, addTask, updateTask, addSubtask, updateSubtask, updateProject, createProject, addActivity, createPerson, sendEmail } = usePortfolioData();
   const [inputValue, setInputValue] = useState('');
   const [hoveredProject, setHoveredProject] = useState(null);
   const [linkedMessageId, setLinkedMessageId] = useState(null);
@@ -101,6 +101,12 @@ export default function MomentumChat({
   const generateActivityId = () => {
     return `activity-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
   };
+
+  const findPersonByName = useCallback((name) => {
+    if (!name) return null;
+    const lower = name.toLowerCase();
+    return people.find(person => person.name?.toLowerCase() === lower) || null;
+  }, [people]);
 
   const parseAssistantResponse = (content) => {
     try {
@@ -363,6 +369,73 @@ export default function MomentumChat({
             // Note: No undo tracking for add_person yet
             actionResults.push({ type: 'add_person', label, deltas: [] });
           }
+
+        } else if (action.type === 'send_email') {
+          const recipients = Array.isArray(action.recipients)
+            ? action.recipients
+            : `${action.recipients || ''}`.split(',');
+
+          const normalizedRecipients = recipients
+            .map(recipient => recipient?.trim())
+            .filter(Boolean)
+            .map(recipient => {
+              if (recipient.includes('@')) return recipient;
+              const person = findPersonByName(recipient);
+              return person?.email || recipient;
+            })
+            .filter(Boolean);
+
+          if (!normalizedRecipients.length) {
+            actionResults.push({
+              type: 'send_email',
+              label: 'Skipped send_email: no recipients',
+              deltas: actionDeltas,
+              detail: 'No recipients were provided for the email.'
+            });
+            continue;
+          }
+
+          const subject = (action.subject || '').trim();
+          const body = (action.body || '').trim();
+
+          if (!subject || !body) {
+            actionResults.push({
+              type: 'send_email',
+              label: 'Skipped send_email: missing content',
+              deltas: actionDeltas,
+              detail: 'Both subject and body are required to send an email.'
+            });
+            continue;
+          }
+
+          const signature = '-sent by an AI clerk';
+          const cleanedBody = body
+            .replace(/\n*-?\s*sent (with the help of|by) an AI clerk\s*$/gi, '')
+            .trim();
+          const bodyWithSignature = cleanedBody ? `${cleanedBody}\n\n${signature}` : signature;
+
+          try {
+            await sendEmail({
+              recipients: normalizedRecipients,
+              subject,
+              body: bodyWithSignature
+            });
+
+            label = `Email sent to ${normalizedRecipients.join(', ')}`;
+            actionResults.push({
+              type: 'send_email',
+              label,
+              deltas: actionDeltas,
+              detail: `Sent email "${subject}"`
+            });
+          } catch (error) {
+            actionResults.push({
+              type: 'send_email',
+              label: 'Failed to send email',
+              deltas: actionDeltas,
+              error: error.message
+            });
+          }
         }
 
         // Collect all deltas
@@ -423,6 +496,7 @@ export default function MomentumChat({
 LOGGED-IN USER: ${loggedInUser || 'Not set'}
 - When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
 - When adding comments or updates, use "${loggedInUser || 'You'}" as the author unless otherwise specified
+ - You may send emails on the user's behalf when it moves the work forward (status updates, requests, reminders); the system will handle the From address.
 
 PEOPLE & EMAIL ADDRESSES:
 - Each person in the system may have an email address stored in their profile
@@ -442,6 +516,7 @@ Guidelines:
 - For update_project: include projectId or projectName, and fields to update (progress, status, priority, targetDate)
 - For add_task/update_task: include projectId/projectName and task details
 - For comment: include projectId/projectName and note/content (author will default to ${loggedInUser || 'You'})
+- For send_email: include recipients (emails or names to resolve), subject, and body. Do not add an AI signature; the system will append one automatically.
 - Always reference existing projects by their exact ID or name`;
 
       const conversationMessages = [
