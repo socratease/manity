@@ -8,7 +8,7 @@ import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
 import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
-import MomentumChat from './MomentumChat';
+import MomentumChatNew from './MomentumChatNew';
 import SnowEffect from './components/SnowEffect';
 import ChristmasConfetti from './components/ChristmasConfetti';
 
@@ -80,7 +80,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [thrustIsRequesting, setThrustIsRequesting] = useState(false);
   const [thrustRequestStart, setThrustRequestStart] = useState(null);
   const [thrustElapsedMs, setThrustElapsedMs] = useState(0);
-  const [expandedMomentumProjects, setExpandedMomentumProjects] = useState({});
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [timelineView, setTimelineView] = useState(6); // Timeline zoom in months (1-24)
@@ -2714,14 +2713,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
       // Track recently updated projects for highlighting
       if (updatedProjectIds && updatedProjectIds.length > 0) {
         setRecentlyUpdatedProjects(new Set(updatedProjectIds));
-        // Expand all updated projects in the momentum view
-        setExpandedMomentumProjects(prev => {
-          const newExpanded = { ...prev };
-          updatedProjectIds.forEach(id => {
-            newExpanded[String(id)] = true;
-          });
-          return newExpanded;
-        });
         // Clear highlights after 5 seconds
         setTimeout(() => {
           setRecentlyUpdatedProjects(new Set());
@@ -2866,52 +2857,6 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
   useEffect(() => {
     if (visibleProjects.length === 0) {
-      setExpandedMomentumProjects(prev => {
-        if (Object.keys(prev).length === 0) {
-          return prev;
-        }
-        return {};
-      });
-      return;
-    }
-
-    setExpandedMomentumProjects(prev => {
-      const visibleIds = new Set(visibleProjects.map(p => String(p.id)));
-      const filteredPrev = Object.fromEntries(
-        Object.entries(prev).filter(([id]) => visibleIds.has(id))
-      );
-
-      const next = { ...filteredPrev };
-
-      if (Object.keys(prev).length === 0) {
-        visibleProjects.forEach(project => {
-          next[String(project.id)] = true;
-        });
-      } else {
-        visibleProjects.forEach(project => {
-          const projectId = String(project.id);
-          if (!(projectId in next)) {
-            next[projectId] = true;
-          }
-        });
-      }
-
-      const nextKeys = Object.keys(next);
-
-      const isSame =
-        Object.keys(prev).length === nextKeys.length &&
-        nextKeys.every(key => prev[key] === next[key]);
-
-      if (isSame) {
-        return prev;
-      }
-
-      return next;
-    });
-  }, [visibleProjects]);
-
-  useEffect(() => {
-    if (visibleProjects.length === 0) {
       setCurrentSlideIndex(0);
       return;
     }
@@ -2963,6 +2908,17 @@ Keep tool calls granular (one discrete change per action), explain each action c
       low: 'var(--sage)'
     };
     return colors[priority] || 'var(--stone)';
+  };
+
+  const getStatusColor = (status) => {
+    const colors = {
+      planning: 'var(--stone)',
+      active: 'var(--earth)',
+      completed: 'var(--sage)',
+      blocked: 'var(--coral)',
+      paused: 'var(--amber)'
+    };
+    return colors[status] || 'var(--stone)';
   };
 
   const handleSlideAdvance = (direction) => {
@@ -5397,7 +5353,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
             </div>
           </>
         ) : activeView === 'thrust' ? (
-          <MomentumChat
+          <MomentumChatNew
             styles={styles}
             portfolioMinimized={portfolioMinimized}
             setPortfolioMinimized={setPortfolioMinimized}
@@ -5415,14 +5371,10 @@ Keep tool calls granular (one discrete change per action), explain each action c
             setShowThrustTagSuggestions={setShowThrustTagSuggestions}
             getAllTags={getAllTags}
             handleSendThrustMessage={handleSendThrustMessage}
-            setFocusedField={setFocusedField}
-            setThrustDraft={setThrustDraft}
             activeProjectInChat={activeProjectInChat}
             setActiveProjectInChat={setActiveProjectInChat}
             visibleProjects={visibleProjects}
             recentlyUpdatedProjects={recentlyUpdatedProjects}
-            expandedMomentumProjects={expandedMomentumProjects}
-            setExpandedMomentumProjects={setExpandedMomentumProjects}
             expandedActionMessages={expandedActionMessages}
             setExpandedActionMessages={setExpandedActionMessages}
             getProjectDueSoonTasks={getProjectDueSoonTasks}
@@ -5431,6 +5383,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
             hoveredMessageProject={hoveredMessageProject}
             setHoveredMessageProject={setHoveredMessageProject}
             getPriorityColor={getPriorityColor}
+            getStatusColor={getStatusColor}
             describeActionPreview={describeActionPreview}
             undoThrustAction={undoThrustAction}
           />
@@ -9096,183 +9049,39 @@ const styles = {
     fontWeight: 600,
   },
 
-  thrustMetaRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    marginTop: '4px',
-  },
-
-  thrustInfoPanel: {
-    backgroundColor: '#FFFFFF',
-    border: '1px solid var(--cloud)',
-    borderRadius: '16px',
-    boxShadow: '0 10px 30px rgba(58, 54, 49, 0.06)',
-    overflow: 'hidden',
-    transition: 'all 0.2s ease',
-  },
-
-  thrustInfoHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '16px 18px',
-    borderBottom: '1px solid var(--cloud)',
-  },
-
-  thrustInfoTitle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
-  },
-
-  thrustInfoLabel: {
-    fontSize: '14px',
-    color: 'var(--charcoal)',
-    fontWeight: '700',
-    margin: 0,
-  },
-
-  thrustInfoSubtle: {
-    fontSize: '12px',
-    color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-    marginTop: '2px',
-  },
-
-  thrustInfoContent: {
-    padding: '12px 14px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '10px',
-    maxHeight: '500px',
-    overflowY: 'auto',
-  },
-
-  momentumProjectCard: {
-    border: '1px solid var(--cloud)',
-    borderRadius: '12px',
-    backgroundColor: '#FFFFFF',
-    padding: '12px',
-    boxShadow: '0 1px 3px rgba(0,0,0,0.08)',
-    transition: 'all 0.3s cubic-bezier(0.4, 0, 0.2, 1)',
-    animation: 'fadeInUp 0.6s cubic-bezier(0.4, 0, 0.2, 1) backwards',
-  },
-
-  momentumProjectCardHighlighted: {
-    border: '2px solid var(--sage)',
-    boxShadow: '0 4px 20px rgba(122, 155, 118, 0.25)',
-    animation: 'momentumPulse 2s ease-in-out infinite',
-    backgroundColor: 'rgba(122, 155, 118, 0.05)',
-  },
-
-  momentumProjectToggle: {
-    width: '100%',
-    background: 'transparent',
-    border: 'none',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '10px',
-    cursor: 'pointer',
-    padding: '6px',
-    margin: '-6px',
-    borderRadius: '8px',
-    transition: 'background-color 0.2s ease',
-  },
-
-  momentumProjectHeader: {
-    display: 'flex',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    gap: '10px',
-    flex: 1,
-  },
-
-  momentumProjectName: {
-    margin: 0,
-    fontSize: '17px',
-    fontWeight: '600',
-    color: 'var(--charcoal)',
-    textAlign: 'left',
-    letterSpacing: '-0.3px',
-  },
-
-  momentumProjectMeta: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    color: 'var(--stone)',
-    fontSize: '12px',
-    fontFamily: "'Inter', sans-serif",
-    marginTop: '4px',
-  },
-
-  momentumProjectMetaRight: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-  },
-
-  momentumProjectBody: {
-    borderTop: '1px solid var(--cloud)',
-    marginTop: '12px',
-    paddingTop: '12px',
-    display: 'grid',
-    gap: '12px',
-  },
-
-  momentumSummarySection: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-    padding: '10px',
-    backgroundColor: 'var(--cream)',
-    borderRadius: '8px',
-    borderLeft: '3px solid var(--amber)',
-  },
-
-  momentumSummaryTitle: {
-    fontSize: '11px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '600',
-    color: 'var(--stone)',
-    letterSpacing: '0.5px',
-    textTransform: 'uppercase',
-    marginBottom: '2px',
-  },
-
   momentumList: {
-    margin: 0,
+    listStyle: 'none',
     padding: 0,
+    margin: 0,
     display: 'flex',
     flexDirection: 'column',
     gap: '8px',
   },
 
   momentumListItem: {
-    listStyle: 'none',
-    marginLeft: '0',
-    paddingLeft: '0',
-    paddingBottom: '6px',
+    padding: '10px 12px',
+    backgroundColor: '#FFFFFF',
+    borderRadius: '10px',
+    border: '1px solid var(--cloud)',
+    boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
   },
 
   momentumListRow: {
     display: 'flex',
     alignItems: 'center',
+    gap: '10px',
     justifyContent: 'space-between',
-    gap: '12px',
+    marginBottom: '6px',
   },
 
   momentumListStrong: {
-    fontWeight: 700,
+    fontWeight: '700',
+    fontSize: '13px',
     color: 'var(--charcoal)',
-    fontFamily: "'Inter', sans-serif",
-    fontSize: '14px',
   },
 
   momentumListMeta: {
-    fontSize: '12px',
+    fontSize: '11px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
   },
@@ -9280,654 +9089,165 @@ const styles = {
   momentumListText: {
     fontSize: '13px',
     color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-    lineHeight: 1.5,
-    marginTop: '3px',
+    lineHeight: '1.5',
   },
 
   momentumEmptyText: {
     fontSize: '13px',
     color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
+    textAlign: 'center',
+    padding: '10px',
   },
 
-  slidesCounter: {
-    fontSize: '13px',
-    color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-    marginRight: '12px',
-  },
-
-  slidesControls: {
+  momentumV2Container: {
     display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
+    gap: '16px',
+    height: 'calc(100vh - 140px)',
+    padding: '12px',
   },
 
-  slideStage: {
-    display: 'flex',
-    justifyContent: 'center',
-    padding: '12px 0',
-    position: 'relative',
-  },
-
-  slideControlRail: {
-    position: 'absolute',
-    right: '12px',
-    top: '12px',
-    display: 'flex',
-    flexDirection: 'row',
-    gap: '8px',
-    zIndex: 10,
-  },
-
-  slideControlButton: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    padding: '8px 10px',
+  momentumV2ChatPanel: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: '16px',
     border: '1px solid var(--cloud)',
-    borderRadius: '8px',
-    backgroundColor: '#fff',
-    color: 'var(--stone)',
-    cursor: 'pointer',
-    boxShadow: '0 6px 14px rgba(0,0,0,0.08)',
-    fontSize: '12px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '600',
-    transition: 'all 0.2s ease',
-  },
-
-  slideRemoveButton: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    padding: '4px',
-    border: 'none',
-    borderRadius: '4px',
-    backgroundColor: 'var(--coral)',
-    color: '#fff',
-    cursor: 'pointer',
-    marginLeft: '8px',
-    transition: 'all 0.15s ease',
-    flexShrink: 0,
-  },
-
-  slideSurface: {
-    width: '100%',
-    maxWidth: '1100px',
-    aspectRatio: '16 / 9',
-    borderRadius: '18px',
-    border: '1px solid var(--cloud)',
-    background: 'linear-gradient(135deg, #FFFFFF 0%, #F7F2EA 100%)',
-    boxShadow: '0 18px 50px rgba(0,0,0,0.08)',
-    overflow: 'hidden',
-    position: 'relative',
-  },
-
-  slideSurfaceInner: {
-    position: 'absolute',
-    inset: '0',
-    padding: '20px',
+    boxShadow: '0 16px 40px rgba(58, 54, 49, 0.08)',
+    padding: '16px',
     display: 'flex',
     flexDirection: 'column',
-    gap: '14px',
-    boxSizing: 'border-box',
-  },
-
-  slideCompactHeader: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-    paddingBottom: '12px',
-    borderBottom: '1px solid var(--cloud)',
-  },
-
-  slideHeaderTop: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-  },
-
-  slideHeaderLeft: {
-    flex: 1,
+    gap: '12px',
     minWidth: 0,
   },
 
-  slideTitle: {
-    margin: 0,
-    fontSize: '22px',
-    fontWeight: '600',
-    color: 'var(--charcoal)',
-    letterSpacing: '-0.4px',
-  },
-
-  slideSubtitle: {
-    margin: 0,
-    fontSize: '14px',
-    fontWeight: '500',
-    color: 'var(--charcoal)',
-    lineHeight: '1.5',
-  },
-
-  slideHeaderMeta: {
+  momentumV2Header: {
     display: 'flex',
     alignItems: 'center',
-    gap: '8px',
-    flexWrap: 'wrap',
-    fontSize: '13px',
-    fontFamily: "'Inter', sans-serif",
-    color: 'var(--stone)',
+    justifyContent: 'space-between',
+    gap: '12px',
   },
 
-  slideDivider: {
-    color: 'var(--cloud)',
-    fontSize: '12px',
-  },
-
-  slideInlineBadge: {
-    padding: '4px 10px',
-    borderRadius: '999px',
-    backgroundColor: 'var(--cloud)',
-    color: 'var(--charcoal)',
-    fontSize: '12px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '600',
-    textTransform: 'capitalize',
-  },
-
-  slideStakeholdersCompact: {
+  momentumV2TitleGroup: {
     display: 'flex',
     alignItems: 'center',
     gap: '10px',
-    flexWrap: 'wrap',
   },
 
-  slideStakeholderCompact: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-  },
-
-  slideStakeholderName: {
-    fontSize: '13px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '600',
-    color: 'var(--charcoal)',
-    whiteSpace: 'nowrap',
-  },
-
-  slideStakeholderNames: {
-    fontSize: '13px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '600',
-    color: 'var(--charcoal)',
-    marginLeft: '2px',
-  },
-
-  slideMainGrid: {
-    display: 'grid',
-    gridTemplateColumns: '1fr 1fr',
-    gap: '14px',
-    flex: 1,
-    minHeight: 0,
-    alignItems: 'stretch',
-  },
-
-  slideSecondaryPanel: {
-    backgroundColor: '#FFFFFF',
-    border: '1px solid var(--cloud)',
-    borderRadius: '10px',
-    padding: '12px',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-    display: 'flex',
-    flexDirection: 'column',
-  },
-
-  slideLeftColumn: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100%',
-    gap: '14px',
-  },
-
-  slideRightColumn: {
-    display: 'flex',
-    flexDirection: 'column',
-    height: '100%',
-    gap: '14px',
-  },
-
-  slidePanelHeader: {
-    marginBottom: '10px',
-  },
-
-  slidePanelTitle: {
-    fontSize: '11px',
-    fontWeight: '600',
-    color: 'var(--stone)',
-    letterSpacing: '0.5px',
-    textTransform: 'uppercase',
-    margin: 0,
-    fontFamily: "'Inter', sans-serif",
-  },
-
-  slideExecSummary: {
-    fontSize: '13px',
-    color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-    lineHeight: 1.6,
-    padding: '8px',
-    borderRadius: '10px',
-    backgroundColor: 'var(--cloud)' + '30',
-  },
-
-  slideExecSummaryPanel: {
-    flexShrink: 0,
-  },
-
-  slideUpdatesPanel: {
-    flex: 1,
-    overflow: 'hidden',
-    minHeight: 0,
-  },
-
-  slideUpdatesContent: {
-    overflow: 'hidden',
-  },
-
-  slideTasksPanel: {
-    background: 'linear-gradient(180deg, #FFFFFF 0%, #F6F8F2 100%)',
-    borderColor: 'var(--sage)',
-    boxShadow: '0 6px 16px rgba(0,0,0,0.06)',
-    flex: 1,
-    overflow: 'hidden',
-    minHeight: 0,
-  },
-
-  iconButton: {
-    padding: '6px',
-    border: '1px solid var(--cloud)',
-    borderRadius: '6px',
-    backgroundColor: '#FFFFFF',
-    color: 'var(--stone)',
-    cursor: 'pointer',
+  momentumV2Avatar: {
+    width: '38px',
+    height: '38px',
+    borderRadius: '12px',
+    background: 'linear-gradient(135deg, var(--earth) 0%, var(--charcoal) 100%)',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    transition: 'all 0.2s ease',
+    boxShadow: '0 6px 14px rgba(58, 54, 49, 0.25)',
   },
 
-  execSummaryInput: {
-    width: '100%',
-    minHeight: '80px',
-    padding: '8px',
-    border: '1px solid var(--cloud)',
-    borderRadius: '6px',
-    fontSize: '13px',
-    fontFamily: "'Inter', sans-serif",
-    color: 'var(--charcoal)',
-    resize: 'vertical',
-    lineHeight: '1.6',
-  },
-
-  thrustProjectHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    gap: '12px',
-  },
-
-  thrustProjectName: {
-    margin: 0,
-    fontSize: '18px',
-    fontWeight: '700',
-    color: 'var(--charcoal)',
-  },
-
-  thrustProjectMeta: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    color: 'var(--stone)',
-    fontSize: '13px',
-    fontFamily: "'Inter', sans-serif",
-    marginTop: '6px',
-  },
-
-  thrustStatGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))',
-    gap: '12px',
-  },
-
-  thrustStatCard: {
-    padding: '12px',
-    borderRadius: '12px',
-    border: '1px solid var(--cloud)',
-    backgroundColor: 'var(--cream)',
-  },
-
-  thrustStatLabel: {
-    fontSize: '12px',
-    fontFamily: "'Inter', sans-serif",
-    color: 'var(--stone)',
-    fontWeight: '700',
-    letterSpacing: '0.3px',
-    textTransform: 'uppercase',
-    marginBottom: '6px',
-  },
-
-  thrustStakeholders: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    flexWrap: 'wrap',
-  },
-
-  avatarCircle: {
-    width: '30px',
-    height: '30px',
-    borderRadius: '50%',
-    backgroundColor: 'var(--earth)' + '15',
-    color: 'var(--earth)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    fontSize: '12px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '700',
-  },
-
-  thrustOverflow: {
-    fontSize: '12px',
-    color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '700',
-  },
-
-  thrustProgressBar: {
-    width: '100%',
-    height: '8px',
-    backgroundColor: 'var(--cloud)',
-    borderRadius: '999px',
-    overflow: 'hidden',
-  },
-
-  thrustProgressFill: {
-    height: '100%',
-    background: 'linear-gradient(135deg, var(--earth) 0%, var(--sage) 100%)',
-  },
-
-  thrustProgressHint: {
-    fontSize: '12px',
-    color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-    marginTop: '6px',
-  },
-
-  peopleGrid: {
-    display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))',
-    gap: '24px',
-    padding: '24px',
-  },
-
-  personCard: {
-    backgroundColor: '#FFFFFF',
-    border: '1px solid var(--cloud)',
-    borderRadius: '12px',
-    padding: '24px',
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '16px',
-  },
-
-  personInfo: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-  },
-
-  personName: {
-    fontSize: '20px',
-    fontWeight: '600',
-    color: 'var(--charcoal)',
-    margin: 0,
-  },
-
-  personTeam: {
-    fontSize: '14px',
-    color: 'var(--stone)',
-    margin: 0,
-  },
-
-  personEmail: {
-    fontSize: '14px',
-    color: 'var(--sage)',
-    margin: 0,
-  },
-
-  personActions: {
-    display: 'flex',
-    gap: '8px',
-    marginTop: 'auto',
-  },
-
-  personEditForm: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '12px',
-  },
-
-  editButtonPerson: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 16px',
-    fontSize: '14px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '500',
-    color: 'var(--earth)',
-    backgroundColor: 'transparent',
-    border: '1px solid var(--cloud)',
-    borderRadius: '8px',
-    cursor: 'pointer',
-  },
-
-  deleteButtonPerson: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 16px',
-    fontSize: '14px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '500',
-    color: 'var(--coral)',
-    backgroundColor: 'transparent',
-    border: '1px solid var(--cloud)',
-    borderRadius: '8px',
-    cursor: 'pointer',
-  },
-
-  saveButtonPerson: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 16px',
-    fontSize: '14px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '500',
-    color: '#FFFFFF',
-    backgroundColor: 'var(--sage)',
-    border: 'none',
-    borderRadius: '8px',
-    cursor: 'pointer',
-  },
-
-  cancelButtonPerson: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '8px 16px',
-    fontSize: '14px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '500',
-    color: 'var(--stone)',
-    backgroundColor: 'transparent',
-    border: '1px solid var(--cloud)',
-    borderRadius: '8px',
-    cursor: 'pointer',
-  },
-
-  // ==========================================
-  // Modern Momentum Chat Styles
-  // ==========================================
-
-  momentumContainer: {
-    display: 'flex',
-    height: 'calc(100vh - 100px)',
-    gap: '0',
-    overflow: 'hidden',
-  },
-
-  momentumChatArea: {
-    display: 'flex',
-    flexDirection: 'column',
-    backgroundColor: '#FAFAF8',
-    borderRadius: '20px 0 0 20px',
-    overflow: 'hidden',
-    transition: 'flex 0.3s ease',
-  },
-
-  momentumChatHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '16px 24px',
-    backgroundColor: '#FFFFFF',
-    borderBottom: '1px solid var(--cloud)',
-    flexShrink: 0,
-  },
-
-  momentumHeaderLeft: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '12px',
-  },
-
-  momentumAvatar: {
-    width: '40px',
-    height: '40px',
-    borderRadius: '12px',
-    background: 'linear-gradient(135deg, var(--earth) 0%, var(--sage) 100%)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    boxShadow: '0 4px 12px rgba(139, 111, 71, 0.2)',
-  },
-
-  momentumHeaderTitle: {
+  momentumV2Title: {
     fontSize: '16px',
-    fontWeight: '700',
+    fontWeight: 700,
     color: 'var(--charcoal)',
-    letterSpacing: '-0.3px',
   },
 
-  momentumHeaderSubtitle: {
+  momentumV2Subtitle: {
     fontSize: '12px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
   },
 
-  portfolioToggleButton: {
-    display: 'flex',
+  momentumV2Toggle: {
+    display: 'inline-flex',
     alignItems: 'center',
     gap: '8px',
-    padding: '8px 14px',
+    padding: '10px 12px',
     backgroundColor: 'var(--cream)',
-    border: '1px solid var(--cloud)',
     borderRadius: '10px',
-    color: 'var(--earth)',
-    fontSize: '13px',
-    fontFamily: "'Inter', sans-serif",
-    fontWeight: '600',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-  },
-
-  momentumMessagesContainer: {
-    flex: 1,
-    overflowY: 'auto',
-    padding: '24px',
-    display: 'flex',
-    flexDirection: 'column',
-  },
-
-  momentumEmptyChat: {
-    flex: 1,
-    display: 'flex',
-    flexDirection: 'column',
-    alignItems: 'center',
-    justifyContent: 'center',
-    textAlign: 'center',
-    padding: '40px',
-    gap: '16px',
-  },
-
-  momentumEmptyIcon: {
-    width: '80px',
-    height: '80px',
-    borderRadius: '24px',
-    backgroundColor: 'var(--cloud)' + '30',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: '8px',
-  },
-
-  momentumEmptyTitle: {
-    fontSize: '20px',
-    fontWeight: '700',
+    border: '1px solid var(--cloud)',
     color: 'var(--charcoal)',
-    letterSpacing: '-0.3px',
+    fontFamily: "'Inter', sans-serif",
+    fontSize: '13px',
+    cursor: 'pointer',
   },
 
-  momentumSuggestions: {
+  momentumV2Content: {
+    backgroundColor: 'var(--cream)',
+    borderRadius: '12px',
+    padding: '10px',
+    flex: 1,
+    overflow: 'hidden',
+    minHeight: 0,
+  },
+
+  momentumV2Empty: {
+    height: '100%',
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '10px',
+    backgroundColor: '#FFFFFF',
+    borderRadius: '12px',
+    border: '1px dashed var(--cloud)',
+    padding: '32px',
+    textAlign: 'center',
+  },
+
+  momentumV2EmptyIcon: {
+    width: '64px',
+    height: '64px',
+    borderRadius: '16px',
+    backgroundColor: 'var(--cream)',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    color: 'var(--cloud)',
+  },
+
+  momentumV2EmptyTitle: {
+    fontSize: '18px',
+    fontWeight: 700,
+    color: 'var(--charcoal)',
+  },
+
+  momentumV2EmptyText: {
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    maxWidth: '420px',
+    lineHeight: 1.6,
+  },
+
+  momentumV2Suggestions: {
     display: 'flex',
     flexWrap: 'wrap',
     gap: '8px',
     justifyContent: 'center',
-    marginTop: '12px',
   },
 
-  momentumSuggestionChip: {
-    padding: '8px 16px',
+  momentumV2SuggestionChip: {
+    padding: '8px 14px',
     backgroundColor: '#FFFFFF',
+    borderRadius: '999px',
     border: '1px solid var(--cloud)',
-    borderRadius: '20px',
-    color: 'var(--charcoal)',
-    fontSize: '13px',
-    fontFamily: "'Inter', sans-serif",
     cursor: 'pointer',
-    transition: 'all 0.2s ease',
+    fontSize: '13px',
+    fontWeight: 600,
   },
 
-  momentumMessagesList: {
+  momentumV2MessageList: {
     display: 'flex',
     flexDirection: 'column',
-    gap: '20px',
-    paddingBottom: '20px',
+    gap: '14px',
+    height: '100%',
+    overflowY: 'auto',
+    paddingRight: '4px',
   },
 
-  momentumMessageRow: {
+  momentumV2MessageRow: {
     display: 'flex',
     alignItems: 'flex-start',
-    gap: '12px',
-    animation: 'fadeInUp 0.4s ease backwards',
+    gap: '10px',
   },
 
-  momentumMessageAvatar: {
+  momentumV2MessageAvatar: {
     width: '32px',
     height: '32px',
     borderRadius: '10px',
@@ -9936,381 +9256,376 @@ const styles = {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    flexShrink: 0,
+    color: '#fff',
+    fontWeight: 700,
   },
 
-  momentumMessageAvatarUser: {
-    width: '32px',
-    height: '32px',
-    borderRadius: '10px',
-    background: 'linear-gradient(135deg, #5B8DEF 0%, #3B6FD9 100%)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-    boxShadow: '0 2px 8px rgba(91, 141, 239, 0.3)',
-  },
-
-  momentumMessageContent: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-    maxWidth: '70%',
-  },
-
-  momentumBubble: {
-    padding: '14px 18px',
-    borderRadius: '18px',
-    fontSize: '14px',
-    fontFamily: "'Inter', sans-serif",
-    lineHeight: '1.6',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-  },
-
-  momentumBubbleUser: {
-    background: 'linear-gradient(135deg, #5B8DEF 0%, #3B6FD9 100%)',
-    color: '#FFFFFF',
-    borderBottomRightRadius: '6px',
-  },
-
-  momentumBubbleAssistant: {
-    backgroundColor: '#FFFFFF',
-    color: 'var(--charcoal)',
-    border: '1px solid var(--cloud)',
-    borderBottomLeftRadius: '6px',
-  },
-
-  momentumBubbleText: {
-    margin: 0,
-    wordBreak: 'break-word',
-  },
-
-  momentumBubbleTime: {
-    fontSize: '11px',
-    marginTop: '6px',
-    opacity: 0.7,
-    fontFamily: "'Inter', sans-serif",
-  },
-
-  momentumInlineProjects: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '8px',
-    marginTop: '4px',
-  },
-
-  momentumInlineProjectCard: {
-    backgroundColor: '#FFFFFF',
-    border: '1px solid var(--cloud)',
-    borderRadius: '12px',
-    padding: '12px 14px',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
-  },
-
-  momentumInlineProjectCardActive: {
-    borderColor: 'var(--sage)',
-    boxShadow: '0 4px 16px rgba(122, 155, 118, 0.2)',
-  },
-
-  momentumInlineProjectCardHover: {
-    transform: 'translateX(4px)',
-    borderColor: 'var(--earth)',
-  },
-
-  momentumInlineProjectHeader: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-  },
-
-  momentumInlineProjectIcon: {
-    width: '22px',
-    height: '22px',
-    borderRadius: '6px',
-    backgroundColor: 'var(--earth)' + '15',
-    color: 'var(--earth)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-
-  momentumInlineProjectName: {
-    fontSize: '13px',
-    fontWeight: '600',
-    color: 'var(--charcoal)',
+  momentumV2Bubble: {
     flex: 1,
+    backgroundColor: '#FFFFFF',
+    borderRadius: '14px',
+    border: '1px solid var(--cloud)',
+    padding: '12px',
+    boxShadow: '0 2px 8px rgba(0,0,0,0.04)',
   },
 
-  momentumInlineProjectBadge: {
-    padding: '3px 8px',
-    borderRadius: '6px',
-    fontSize: '10px',
-    fontWeight: '700',
-    textTransform: 'uppercase',
-    letterSpacing: '0.3px',
+  momentumV2BubbleUser: {
+    background: 'linear-gradient(135deg, var(--earth) 0%, var(--sage) 100%)',
+    color: '#fff',
+    borderColor: 'transparent',
   },
 
-  momentumInlineProjectMeta: {
+  momentumV2BubbleAssistant: {
+    backgroundColor: '#FFFFFF',
+  },
+
+  momentumV2MetaRow: {
     display: 'flex',
     alignItems: 'center',
-    gap: '12px',
-    marginTop: '6px',
-    paddingLeft: '30px',
+    justifyContent: 'space-between',
+    marginBottom: '6px',
+    gap: '8px',
   },
 
-  momentumInlineProjectStatus: {
-    fontSize: '11px',
+  momentumV2MetaLeft: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+  },
+
+  momentumV2Author: {
+    fontWeight: 700,
+    fontSize: '13px',
+  },
+
+  momentumV2Time: {
+    fontSize: '12px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumV2UpdateBadge: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 8px',
+    borderRadius: '8px',
+    backgroundColor: 'var(--sage)' + '20',
+    color: 'var(--earth)',
+    fontSize: '12px',
+    fontWeight: 600,
+  },
+
+  momentumV2Text: {
+    lineHeight: 1.6,
+    color: 'inherit',
+  },
+
+  momentumV2LinkedProjects: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
+    gap: '8px',
+    marginTop: '10px',
+  },
+
+  momentumV2LinkedProject: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: '12px',
+    border: '1px solid var(--cloud)',
+    padding: '10px',
+    cursor: 'pointer',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    transition: 'all 0.2s ease',
+  },
+
+  momentumV2LinkedTop: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    gap: '8px',
+  },
+
+  momentumV2LinkedName: {
+    fontWeight: 700,
+    fontSize: '13px',
+    color: 'var(--charcoal)',
+  },
+
+  momentumV2StatusBadge: {
+    padding: '4px 8px',
+    borderRadius: '10px',
+    fontSize: '11px',
+    fontWeight: 700,
     textTransform: 'capitalize',
   },
 
-  momentumInlineProjectProgress: {
-    fontSize: '11px',
-    color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-  },
-
-  momentumInlineProjectConnector: {
+  momentumV2LinkedMeta: {
     display: 'flex',
     alignItems: 'center',
-    gap: '4px',
-    marginTop: '8px',
-    paddingTop: '8px',
-    borderTop: '1px dashed var(--cloud)',
-    color: 'var(--earth)',
-    fontSize: '11px',
-    fontWeight: '600',
+    gap: '10px',
   },
 
-  momentumActionPills: {
-    display: 'flex',
-    flexWrap: 'wrap',
-    gap: '6px',
-    marginTop: '4px',
-  },
-
-  momentumActionPill: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    gap: '6px',
-    padding: '6px 10px',
-    backgroundColor: 'var(--sage)' + '15',
-    borderRadius: '8px',
-    fontSize: '12px',
-    fontWeight: '500',
-    color: 'var(--charcoal)',
-    fontFamily: "'Inter', sans-serif",
-    transition: 'opacity 0.2s ease',
-  },
-
-  momentumActionPillUndo: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    width: '18px',
-    height: '18px',
-    padding: 0,
-    backgroundColor: 'transparent',
-    border: 'none',
-    borderRadius: '4px',
-    color: 'var(--stone)',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
-    marginLeft: '2px',
-  },
-
-  momentumMoreActions: {
-    display: 'inline-flex',
-    alignItems: 'center',
-    padding: '6px 10px',
-    backgroundColor: 'transparent',
-    border: '1px dashed var(--cloud)',
-    borderRadius: '8px',
-    fontSize: '12px',
-    fontWeight: '500',
-    color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-    cursor: 'pointer',
-  },
-
-  momentumExpandedActions: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-    marginTop: '4px',
-    padding: '10px',
-    backgroundColor: 'var(--cream)',
-    borderRadius: '10px',
-  },
-
-  momentumExpandedAction: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-  },
-
-  momentumExpandedActionRow: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-  },
-
-  momentumExpandedActionLabel: {
-    fontSize: '12px',
-    fontWeight: '600',
-    color: 'var(--charcoal)',
+  momentumV2ProgressTrack: {
+    height: '6px',
+    backgroundColor: 'var(--cloud)',
+    borderRadius: '6px',
+    overflow: 'hidden',
     flex: 1,
   },
 
-  momentumExpandedActionDetail: {
-    fontSize: '11px',
-    color: 'var(--stone)',
-    paddingLeft: '22px',
+  momentumV2ProgressFill: {
+    height: '100%',
+    borderRadius: '6px',
+    transition: 'width 0.3s ease',
   },
 
-  momentumTypingIndicator: {
+  momentumV2ProgressText: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumV2LinkedFooter: {
     display: 'flex',
     alignItems: 'center',
-    gap: '4px',
-    padding: '12px 16px',
-    backgroundColor: '#FFFFFF',
-    border: '1px solid var(--cloud)',
-    borderRadius: '18px',
-    borderBottomLeftRadius: '6px',
+    gap: '6px',
+    fontSize: '12px',
+    color: 'var(--earth)',
+    fontWeight: 700,
   },
 
-  momentumTypingDot: {
+  momentumV2ActionRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    flexWrap: 'wrap',
+    marginTop: '8px',
+  },
+
+  momentumV2ActionPill: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 10px',
+    backgroundColor: 'var(--sage)' + '20',
+    borderRadius: '10px',
+    fontSize: '12px',
+    fontWeight: 600,
+    color: 'var(--charcoal)',
+    border: '1px solid var(--cloud)',
+  },
+
+  momentumV2ActionUndo: {
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--stone)',
+    cursor: 'pointer',
+    padding: 0,
+    display: 'flex',
+    alignItems: 'center',
+  },
+
+  momentumV2MoreActions: {
+    border: '1px dashed var(--cloud)',
+    background: 'transparent',
+    padding: '6px 10px',
+    borderRadius: '10px',
+    fontSize: '12px',
+    cursor: 'pointer',
+    color: 'var(--stone)',
+  },
+
+  momentumV2ExpandedActions: {
+    marginTop: '8px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+  },
+
+  momentumV2ExpandedAction: {
+    backgroundColor: '#FFFFFF',
+    border: '1px solid var(--cloud)',
+    borderRadius: '12px',
+    padding: '10px',
+    boxShadow: '0 1px 4px rgba(0,0,0,0.04)',
+  },
+
+  momentumV2ExpandedHeader: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    fontWeight: 700,
+    color: 'var(--charcoal)',
+  },
+
+  momentumV2ExpandedTitle: {
+    flex: 1,
+  },
+
+  momentumV2ExpandedUndo: {
+    background: 'transparent',
+    border: 'none',
+    color: 'var(--stone)',
+    cursor: 'pointer',
+    padding: '4px',
+  },
+
+  momentumV2DeltaList: {
+    margin: '8px 0 0 16px',
+    color: 'var(--stone)',
+    fontSize: '13px',
+  },
+
+  momentumV2TypingRow: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+  },
+
+  momentumV2TypingDots: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '10px 12px',
+    backgroundColor: '#FFFFFF',
+    borderRadius: '12px',
+    border: '1px solid var(--cloud)',
+  },
+
+  momentumV2Dot: {
     width: '8px',
     height: '8px',
     borderRadius: '50%',
-    backgroundColor: 'var(--stone)',
-    animation: 'typingBounce 1.4s ease-in-out infinite',
+    backgroundColor: 'var(--earth)',
+    animation: 'typingPulse 1.2s infinite',
+    animationTimingFunction: 'ease-in-out',
   },
 
-  momentumPendingCard: {
-    backgroundColor: 'var(--amber)' + '10',
-    border: '1px solid var(--amber)' + '30',
+  momentumV2PendingCard: {
+    marginTop: '8px',
+    padding: '12px',
+    backgroundColor: '#FFFFFF',
     borderRadius: '12px',
-    padding: '12px 16px',
-    maxWidth: '70%',
+    border: '1px dashed var(--amber)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
   },
 
-  momentumPendingHeader: {
+  momentumV2PendingHeader: {
     display: 'flex',
     alignItems: 'center',
     gap: '8px',
-    fontSize: '13px',
-    fontWeight: '600',
+    fontWeight: 700,
     color: 'var(--charcoal)',
-    marginBottom: '8px',
   },
 
-  momentumPendingList: {
+  momentumV2PendingList: {
     display: 'flex',
     flexDirection: 'column',
     gap: '6px',
-  },
-
-  momentumPendingItem: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
     fontSize: '12px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
   },
 
-  momentumErrorCard: {
+  momentumV2PendingItem: {
     display: 'flex',
     alignItems: 'center',
-    gap: '10px',
-    padding: '12px 16px',
-    backgroundColor: 'var(--coral)' + '10',
-    border: '1px solid var(--coral)' + '30',
+    gap: '8px',
+  },
+
+  momentumV2Error: {
+    marginTop: '8px',
+    padding: '10px 12px',
     borderRadius: '12px',
+    backgroundColor: 'rgba(214, 124, 92, 0.08)',
+    border: '1px solid var(--coral)',
     color: 'var(--coral)',
-    fontSize: '13px',
-    fontFamily: "'Inter', sans-serif",
-  },
-
-  momentumInputArea: {
-    padding: '16px 24px 20px',
-    backgroundColor: '#FFFFFF',
-    borderTop: '1px solid var(--cloud)',
-    flexShrink: 0,
-  },
-
-  momentumInputWrapper: {
     display: 'flex',
-    alignItems: 'flex-end',
-    gap: '12px',
+    alignItems: 'center',
+    gap: '8px',
+    fontWeight: 600,
+  },
+
+  momentumV2Composer: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: '12px',
+    border: '1px solid var(--cloud)',
+    padding: '12px',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '8px',
+    boxShadow: '0 12px 30px rgba(58, 54, 49, 0.08)',
+  },
+
+  momentumV2InputShell: {
+    display: 'flex',
+    alignItems: 'flex-start',
+    gap: '10px',
     position: 'relative',
   },
 
-  momentumInput: {
+  momentumV2Input: {
     flex: 1,
-    padding: '14px 18px',
-    backgroundColor: 'var(--cream)',
+    borderRadius: '10px',
     border: '1px solid var(--cloud)',
-    borderRadius: '14px',
+    padding: '12px 14px',
     fontSize: '14px',
     fontFamily: "'Inter', sans-serif",
-    color: 'var(--charcoal)',
     resize: 'none',
     minHeight: '48px',
-    maxHeight: '120px',
-    outline: 'none',
-    transition: 'border-color 0.2s ease, box-shadow 0.2s ease',
+    maxHeight: '200px',
+    lineHeight: 1.6,
   },
 
-  momentumTagSuggestions: {
+  momentumV2TagList: {
     position: 'absolute',
-    bottom: '100%',
+    bottom: '56px',
     left: 0,
-    right: '60px',
-    marginBottom: '8px',
+    width: '100%',
     backgroundColor: '#FFFFFF',
     border: '1px solid var(--cloud)',
     borderRadius: '12px',
-    boxShadow: '0 8px 24px rgba(0,0,0,0.12)',
-    padding: '6px',
-    zIndex: 100,
+    boxShadow: '0 10px 30px rgba(58, 54, 49, 0.1)',
+    padding: '8px',
+    zIndex: 20,
     maxHeight: '200px',
     overflowY: 'auto',
   },
 
-  momentumTagItem: {
+  momentumV2TagItem: {
     display: 'flex',
     alignItems: 'center',
     gap: '10px',
-    padding: '10px 12px',
+    padding: '8px 10px',
     borderRadius: '8px',
+    border: '1px solid transparent',
     cursor: 'pointer',
-    transition: 'background-color 0.15s ease',
   },
 
-  momentumTagType: {
-    display: 'flex',
+  momentumV2TagType: {
+    display: 'inline-flex',
     alignItems: 'center',
     justifyContent: 'center',
-    width: '24px',
-    height: '24px',
+    width: '22px',
+    height: '22px',
     borderRadius: '6px',
+    fontWeight: 700,
   },
 
-  momentumTagName: {
+  momentumV2TagName: {
     fontSize: '13px',
-    fontWeight: '500',
     color: 'var(--charcoal)',
+    fontWeight: 600,
   },
 
-  momentumSendButton: {
-    width: '48px',
-    height: '48px',
-    borderRadius: '14px',
+  momentumV2Send: {
+    width: '46px',
+    height: '46px',
+    borderRadius: '12px',
     background: 'linear-gradient(135deg, var(--earth) 0%, var(--sage) 100%)',
     border: 'none',
     color: '#FFFFFF',
@@ -10318,214 +9633,187 @@ const styles = {
     alignItems: 'center',
     justifyContent: 'center',
     boxShadow: '0 4px 12px rgba(139, 111, 71, 0.3)',
-    transition: 'all 0.2s ease',
+    cursor: 'pointer',
   },
 
-  momentumInputHint: {
+  momentumV2Hint: {
     fontSize: '11px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
-    marginTop: '8px',
     textAlign: 'center',
   },
 
-  momentumPortfolioPanel: {
-    width: '340px',
+  momentumV2Canvas: {
+    width: '360px',
     backgroundColor: '#FFFFFF',
-    borderLeft: '1px solid var(--cloud)',
+    borderRadius: '16px',
+    border: '1px solid var(--cloud)',
+    boxShadow: '0 16px 40px rgba(58, 54, 49, 0.08)',
+    padding: '16px',
     display: 'flex',
     flexDirection: 'column',
-    transition: 'width 0.3s ease, opacity 0.3s ease',
+    gap: '12px',
     overflow: 'hidden',
+    transition: 'width 0.2s ease',
   },
 
-  momentumPortfolioPanelMinimized: {
-    width: '0',
-    opacity: 0,
-    borderLeft: 'none',
+  momentumV2CanvasCollapsed: {
+    width: '200px',
+    alignItems: 'center',
+    justifyContent: 'center',
   },
 
-  momentumPortfolioHeader: {
+  momentumV2CanvasEmpty: {
+    flex: 1,
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'center',
+    justifyContent: 'center',
+    gap: '10px',
+    textAlign: 'center',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumV2CanvasText: {
+    margin: 0,
+  },
+
+  momentumV2CanvasButton: {
+    padding: '10px 12px',
+    borderRadius: '10px',
+    border: '1px solid var(--earth)',
+    backgroundColor: 'var(--earth)',
+    color: '#fff',
+    display: 'inline-flex',
+    alignItems: 'center',
+    gap: '8px',
+    cursor: 'pointer',
+    fontWeight: 700,
+  },
+
+  momentumV2CanvasHeader: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '16px 18px',
-    borderBottom: '1px solid var(--cloud)',
-    flexShrink: 0,
   },
 
-  momentumPortfolioTitle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '10px',
+  momentumV2CanvasTitle: {
     fontSize: '15px',
-    fontWeight: '700',
+    fontWeight: 700,
     color: 'var(--charcoal)',
   },
 
-  momentumPortfolioClose: {
-    width: '28px',
-    height: '28px',
-    borderRadius: '8px',
-    backgroundColor: 'var(--cream)',
-    border: 'none',
+  momentumV2CanvasSubtitle: {
+    fontSize: '12px',
     color: 'var(--stone)',
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'center',
-    cursor: 'pointer',
-    transition: 'all 0.2s ease',
+    fontFamily: "'Inter', sans-serif",
   },
 
-  momentumPortfolioContent: {
-    flex: 1,
+  momentumV2CanvasClose: {
+    border: '1px solid var(--cloud)',
+    background: 'transparent',
+    borderRadius: '8px',
+    padding: '8px 10px',
+    cursor: 'pointer',
+    color: 'var(--stone)',
+  },
+
+  momentumV2ProjectGrid: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
     overflowY: 'auto',
+    paddingRight: '4px',
+  },
+
+  momentumV2ProjectCard: {
+    width: '100%',
+    textAlign: 'left',
+    backgroundColor: '#FFFFFF',
+    borderRadius: '14px',
+    border: '1px solid var(--cloud)',
     padding: '12px',
     display: 'flex',
     flexDirection: 'column',
     gap: '10px',
+    boxShadow: '0 8px 24px rgba(0,0,0,0.04)',
+    cursor: 'pointer',
+    transition: 'all 0.2s ease',
   },
 
-  momentumPortfolioCard: {
-    backgroundColor: '#FFFFFF',
-    border: '1px solid var(--cloud)',
-    borderRadius: '12px',
-    overflow: 'hidden',
-    transition: 'all 0.3s ease',
-  },
-
-  momentumPortfolioCardActive: {
-    borderColor: 'var(--sage)',
-    boxShadow: '0 4px 16px rgba(122, 155, 118, 0.15)',
-  },
-
-  momentumPortfolioCardHighlight: {
-    borderColor: 'var(--earth)',
-    animation: 'portfolioPulse 2s ease-in-out infinite',
-  },
-
-  momentumPortfolioCardHeader: {
-    width: '100%',
+  momentumV2ProjectHeader: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    padding: '12px 14px 8px',
-    backgroundColor: 'transparent',
-    border: 'none',
-    cursor: 'pointer',
-    textAlign: 'left',
-  },
-
-  momentumPortfolioCardTitle: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-    fontSize: '14px',
-    fontWeight: '600',
-    color: 'var(--charcoal)',
-  },
-
-  momentumPortfolioCardDot: {
-    width: '8px',
-    height: '8px',
-    borderRadius: '50%',
-    flexShrink: 0,
-  },
-
-  momentumPortfolioCardMeta: {
-    display: 'flex',
-    alignItems: 'center',
-    gap: '8px',
-  },
-
-  momentumPortfolioCardStatus: {
-    fontSize: '11px',
-    color: 'var(--stone)',
-    fontFamily: "'Inter', sans-serif",
-    textTransform: 'capitalize',
-  },
-
-  momentumPortfolioProgress: {
-    height: '3px',
-    backgroundColor: 'var(--cloud)',
-    margin: '0 14px 10px',
-    borderRadius: '2px',
-    overflow: 'hidden',
-  },
-
-  momentumPortfolioProgressFill: {
-    height: '100%',
-    borderRadius: '2px',
-    transition: 'width 0.5s ease',
-  },
-
-  momentumPortfolioCardBody: {
-    padding: '0 14px 14px',
-    display: 'flex',
-    flexDirection: 'column',
     gap: '10px',
   },
 
-  momentumPortfolioSection: {
-    padding: '10px',
-    backgroundColor: 'var(--cream)',
-    borderRadius: '8px',
+  momentumV2ProjectName: {
+    fontSize: '15px',
+    fontWeight: 700,
+    color: 'var(--charcoal)',
   },
 
-  momentumPortfolioSectionTitle: {
+  momentumV2Priority: {
+    fontSize: '12px',
+    fontWeight: 700,
+    textTransform: 'capitalize',
+  },
+
+  momentumV2StatusRow: {
     display: 'flex',
     alignItems: 'center',
+    gap: '8px',
+  },
+
+  momentumV2Target: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumV2ProgressMeta: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumV2Recent: {
+    color: 'var(--stone)',
+  },
+
+  momentumV2DueList: {
+    display: 'flex',
+    flexDirection: 'column',
     gap: '6px',
-    fontSize: '10px',
-    fontWeight: '700',
-    color: 'var(--stone)',
-    textTransform: 'uppercase',
-    letterSpacing: '0.5px',
-    marginBottom: '8px',
+    backgroundColor: 'var(--cream)',
+    borderRadius: '10px',
+    padding: '8px 10px',
   },
 
-  momentumPortfolioActivity: {
-    marginBottom: '8px',
-  },
-
-  momentumPortfolioActivityHeader: {
+  momentumV2DueItem: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
-    marginBottom: '2px',
-  },
-
-  momentumPortfolioActivityAuthor: {
-    fontSize: '12px',
-    fontWeight: '600',
-    color: 'var(--charcoal)',
-  },
-
-  momentumPortfolioActivityTime: {
-    fontSize: '10px',
-    color: 'var(--stone)',
-  },
-
-  momentumPortfolioActivityText: {
-    fontSize: '12px',
-    color: 'var(--stone)',
-    lineHeight: '1.4',
-  },
-
-  momentumPortfolioDueTask: {
-    display: 'flex',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    padding: '6px 0',
     fontSize: '12px',
     color: 'var(--charcoal)',
-    borderBottom: '1px dashed var(--cloud)',
   },
 
-  momentumPortfolioEmpty: {
-    fontSize: '13px',
+  momentumV2DueMore: {
+    fontSize: '12px',
     color: 'var(--stone)',
-    textAlign: 'center',
-    padding: '20px',
+    textAlign: 'right',
+  },
+
+  momentumV2Quiet: {
+    fontSize: '12px',
+    color: 'var(--stone)',
+    backgroundColor: 'var(--cream)',
+    borderRadius: '10px',
+    padding: '8px 10px',
   },
 };
