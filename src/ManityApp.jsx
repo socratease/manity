@@ -335,6 +335,69 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     localStorage.setItem('manity_santafied', isSantafied.toString());
   }, [isSantafied]);
 
+  // URL hash routing - sync URL with app state
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.slice(1); // Remove #
+
+      if (!hash) {
+        // Default to people view
+        setActiveView('people');
+        setViewingProjectId(null);
+        return;
+      }
+
+      // Parse hash patterns:
+      // #/portfolio, #/people, #/thrust, #/slides
+      // #/portfolio/project-123
+      // #/thrust/project-123
+      const parts = hash.split('/').filter(Boolean);
+
+      if (parts.length === 0) {
+        setActiveView('people');
+        setViewingProjectId(null);
+      } else if (parts.length === 1) {
+        const view = parts[0];
+        if (['portfolio', 'overview', 'people', 'thrust', 'slides', 'timeline'].includes(view)) {
+          setActiveView(view);
+          setViewingProjectId(null);
+        }
+      } else if (parts.length >= 2) {
+        const view = parts[0];
+        const projectId = parts[1];
+
+        if (view === 'portfolio' || view === 'overview') {
+          setActiveView(view);
+          setViewingProjectId(projectId);
+        } else if (view === 'thrust') {
+          setActiveView('thrust');
+          setActiveProjectInChat(projectId);
+          setPortfolioMinimized(false);
+          setExpandedMomentumProjects(prev => ({
+            ...prev,
+            [projectId]: true
+          }));
+        }
+      }
+    };
+
+    // Handle initial load
+    handleHashChange();
+
+    // Listen for hash changes
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  // Helper function to update URL hash
+  const updateHash = (view, projectId = null) => {
+    if (projectId) {
+      window.location.hash = `#/${view}/${projectId}`;
+    } else {
+      window.location.hash = `#/${view}`;
+    }
+  };
+
   // Sync people from projects whenever projects change (handles imports and updates)
   useEffect(() => {
     if (projects.length > 0) {
@@ -1451,8 +1514,7 @@ Write a professional executive summary that highlights the project's current sta
       setTimeout(() => setFeaturedPersonId(null), 3000);
     } else if (result.type === 'project') {
       // Navigate to project details
-      setActiveView('overview');
-      setViewingProjectId(result.id);
+      updateHash('overview', result.id);
       // Expand the first task if any
       const project = visibleProjects.find(p => p.id === result.id);
       if (project && project.plan.length > 0) {
@@ -1460,8 +1522,7 @@ Write a professional executive summary that highlights the project's current sta
       }
     } else if (result.type === 'task' || result.type === 'subtask') {
       // Navigate to project details and expand the task
-      setActiveView('overview');
-      setViewingProjectId(result.projectId);
+      updateHash('overview', result.projectId);
       if (result.taskId) {
         setExpandedTasks(prev => ({ ...prev, [result.taskId]: true }));
       } else if (result.type === 'task') {
@@ -1783,8 +1844,7 @@ Write a professional executive summary that highlights the project's current sta
     setProjects(prev => [...prev, newProject]);
     setShowNewProject(false);
     resetNewProjectForm();
-    setViewingProjectId(newProject.id);
-    setActiveView('overview');
+    updateHash('overview', newProject.id);
   };
 
   const handleStakeholderSelection = (selectedPeople) => {
@@ -2437,6 +2497,7 @@ Write a professional executive summary that highlights the project's current sta
             });
             label = `Email sent to ${normalizedRecipients.join(', ')}`;
             detail = `Sent email "${action.subject}"`;
+            appendActionResult(label, detail, actionDeltas);
           } catch (error) {
             appendActionResult('Failed to send email', error?.message || 'Email service returned an error.', actionDeltas);
             continue;
@@ -2750,7 +2811,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
       // Track recently updated projects for highlighting
       if (updatedProjectIds && updatedProjectIds.length > 0) {
-        setRecentlyUpdatedProjects(new Set(updatedProjectIds));
+        setRecentlyUpdatedProjects(prev => new Set([...prev, ...updatedProjectIds]));
         // Expand all updated projects in the momentum view
         setExpandedMomentumProjects(prev => {
           const newExpanded = { ...prev };
@@ -2759,10 +2820,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
           });
           return newExpanded;
         });
-        // Clear highlights after 5 seconds
-        setTimeout(() => {
-          setRecentlyUpdatedProjects(new Set());
-        }, 5000);
+        // Highlights now persist through the session
       }
 
       const assistantMessage = {
@@ -3139,7 +3197,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
   const renderProjectCard = (project, index) => (
     <div
       key={project.id}
-      onClick={() => setViewingProjectId(project.id)}
+      onClick={() => updateHash('overview', project.id)}
       style={{
         ...styles.projectCard,
         animationDelay: `${index * 100}ms`,
@@ -3253,7 +3311,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
           <button
             onClick={(e) => {
               e.stopPropagation();
-              setViewingProjectId(project.id);
+              updateHash('overview', project.id);
             }}
             style={styles.cardButton}
           >
@@ -3922,10 +3980,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
             <nav style={styles.nav}>
               <button
-                onClick={() => {
-                  setActiveView('people');
-                  setViewingProjectId(null);
-                }}
+                onClick={() => updateHash('people')}
                 style={{
                   ...styles.navItem,
                   ...(activeView === 'people' && !viewingProjectId ? styles.navItemActive : {})
@@ -3934,10 +3989,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 People
               </button>
               <button
-                onClick={() => {
-                  setActiveView('overview');
-                  setViewingProjectId(null);
-                }}
+                onClick={() => updateHash('overview')}
                 style={{
                   ...styles.navItem,
                   ...(activeView === 'overview' && !viewingProjectId ? styles.navItemActive : {})
@@ -3946,10 +3998,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 Portfolio
               </button>
               <button
-                onClick={() => {
-                  setActiveView('thrust');
-                  setViewingProjectId(null);
-                }}
+                onClick={() => updateHash('thrust')}
                 style={{
                   ...styles.navItem,
                   ...(activeView === 'thrust' && !viewingProjectId ? styles.navItemActive : {})
@@ -3958,10 +4007,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 Momentum
               </button>
               <button
-                onClick={() => {
-                  setActiveView('slides');
-                  setViewingProjectId(null);
-                }}
+                onClick={() => updateHash('slides')}
                 style={{
                   ...styles.navItem,
                   ...(activeView === 'slides' && !viewingProjectId ? styles.navItemActive : {})
@@ -3970,10 +4016,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 Slides
               </button>
               <button
-                onClick={() => {
-                  setActiveView('timeline');
-                  setViewingProjectId(null);
-                }}
+                onClick={() => updateHash('timeline')}
                 style={{
                   ...styles.navItem,
                   ...(activeView === 'timeline' && !viewingProjectId ? styles.navItemActive : {})
