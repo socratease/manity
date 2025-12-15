@@ -77,8 +77,9 @@ const ChristmasConfetti = () => {
   }
 
   // Create confetti at specific location
-  const createConfetti = useCallback((x, y) => {
-    const count = Math.floor(Math.random() * 3) + 1; // 1-3 pieces
+  const createConfetti = useCallback((x, y, isClick = false) => {
+    // For clicks: random 1-3 pieces, for keystrokes: exactly 1 piece
+    const count = isClick ? Math.floor(Math.random() * 3) + 1 : 1;
     for (let i = 0; i < count; i++) {
       const emoji = confettiEmojis[Math.floor(Math.random() * confettiEmojis.length)];
       confettiRef.current.push(new ConfettiPiece(x, y, emoji));
@@ -99,19 +100,42 @@ const ChristmasConfetti = () => {
     resizeCanvas();
     window.addEventListener('resize', resizeCanvas);
 
+    // Track active input element for emoji spawning
+    let lastInputPosition = { x: window.innerWidth / 2, y: window.innerHeight / 2 };
+
+    // Update input position on focus
+    const handleFocus = (e) => {
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable) {
+        const rect = e.target.getBoundingClientRect();
+        lastInputPosition = {
+          x: rect.left + rect.width / 2,
+          y: rect.top + rect.height / 2
+        };
+      }
+    };
+
     // Handle click events
     const handleClick = (e) => {
-      createConfetti(e.clientX, e.clientY);
+      createConfetti(e.clientX, e.clientY, true);
     };
 
     // Handle keyboard events
     const handleKeyPress = (e) => {
-      // Generate confetti at random position near center of screen
-      const x = window.innerWidth / 2 + (Math.random() - 0.5) * 200;
-      const y = window.innerHeight / 2 + (Math.random() - 0.5) * 200;
-      createConfetti(x, y);
+      // Get actual caret/cursor position if available
+      const activeElement = document.activeElement;
+      let x = lastInputPosition.x;
+      let y = lastInputPosition.y;
+
+      if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA' || activeElement.isContentEditable)) {
+        const rect = activeElement.getBoundingClientRect();
+        x = rect.left + rect.width / 2 + (Math.random() - 0.5) * 40;
+        y = rect.top + rect.height / 2;
+      }
+
+      createConfetti(x, y, false);
     };
 
+    document.addEventListener('focusin', handleFocus);
     window.addEventListener('click', handleClick);
     window.addEventListener('keydown', handleKeyPress);
 
@@ -148,6 +172,7 @@ const ChristmasConfetti = () => {
 
     return () => {
       window.removeEventListener('resize', resizeCanvas);
+      document.removeEventListener('focusin', handleFocus);
       window.removeEventListener('click', handleClick);
       window.removeEventListener('keydown', handleKeyPress);
       if (animationFrameRef.current) {

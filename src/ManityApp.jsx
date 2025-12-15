@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, Search, User, UserCircle } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
@@ -10,6 +10,7 @@ import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 import SnowEffect from './components/SnowEffect';
 import ChristmasConfetti from './components/ChristmasConfetti';
+import MomentumChat from './components/MomentumChat';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -80,7 +81,29 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [thrustRequestStart, setThrustRequestStart] = useState(null);
   const [thrustElapsedMs, setThrustElapsedMs] = useState(0);
   const [expandedMomentumProjects, setExpandedMomentumProjects] = useState({});
+  const SIDEBAR_MIN_WIDTH = 200;
+  const SIDEBAR_MAX_WIDTH = 360;
+  const DEFAULT_SIDEBAR_WIDTH = 238;
+  const SIDEBAR_WIDTH_STORAGE_KEY = 'manity_sidebar_width';
+
+  const clampSidebarWidth = useCallback(
+    (width) => Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width)),
+    []
+  );
+
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const storedWidth = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    if (storedWidth) {
+      const parsed = parseInt(storedWidth, 10);
+      if (!Number.isNaN(parsed)) {
+        return clampSidebarWidth(parsed);
+      }
+    }
+    return DEFAULT_SIDEBAR_WIDTH;
+  });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [sidebarResizeStart, setSidebarResizeStart] = useState({ x: 0, width: DEFAULT_SIDEBAR_WIDTH });
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [timelineView, setTimelineView] = useState(6); // Timeline zoom in months (1-24)
   const [newProjectName, setNewProjectName] = useState('');
@@ -334,11 +357,141 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     localStorage.setItem('manity_santafied', isSantafied.toString());
   }, [isSantafied]);
 
+  // Persist sidebar width
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth.toString());
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (!isResizingSidebar) return undefined;
+
+    const initialCursor = document.body.style.cursor;
+    const initialUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (event) => {
+      const delta = event.clientX - sidebarResizeStart.x;
+      setSidebarWidth(clampSidebarWidth(sidebarResizeStart.width + delta));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingSidebar(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.body.style.cursor = initialCursor;
+      document.body.style.userSelect = initialUserSelect;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [clampSidebarWidth, isResizingSidebar, sidebarResizeStart.x, sidebarResizeStart.width]);
+
+  const startSidebarResize = (event) => {
+    if (isSidebarCollapsed) return;
+
+    setSidebarResizeStart({ x: event.clientX, width: sidebarWidth });
+    setIsResizingSidebar(true);
+    event.preventDefault();
+  };
+
+  // URL hash routing - sync URL with app state
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash.slice(1); // Remove #
+
+      if (!hash) {
+        // Default to people view
+        setActiveView('people');
+        setViewingProjectId(null);
+        return;
+      }
+
+      // Parse hash patterns:
+      // #/portfolio, #/people, #/thrust, #/slides
+      // #/portfolio/project-123
+      // #/thrust/project-123
+      const parts = hash.split('/').filter(Boolean);
+
+      if (parts.length === 0) {
+        setActiveView('people');
+        setViewingProjectId(null);
+      } else if (parts.length === 1) {
+        const view = parts[0];
+        if (['portfolio', 'overview', 'people', 'thrust', 'slides', 'timeline'].includes(view)) {
+          setActiveView(view);
+          setViewingProjectId(null);
+        }
+      } else if (parts.length >= 2) {
+        const view = parts[0];
+        const projectId = parts[1];
+
+        if (view === 'portfolio' || view === 'overview') {
+          setActiveView(view);
+          setViewingProjectId(projectId);
+        } else if (view === 'thrust') {
+          setActiveView('thrust');
+          setActiveProjectInChat(projectId);
+          setPortfolioMinimized(false);
+          setExpandedMomentumProjects(prev => ({
+            ...prev,
+            [projectId]: true
+          }));
+        }
+      }
+    };
+
+    // Handle initial load
+    handleHashChange();
+
+    // Listen for hash changes
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, []);
+
+  // Helper function to update URL hash
+  const updateHash = (view, projectId = null) => {
+    if (projectId) {
+      window.location.hash = `#/${view}/${projectId}`;
+    } else {
+      window.location.hash = `#/${view}`;
+    }
+  };
+
   // Sync people from projects whenever projects change (handles imports and updates)
   useEffect(() => {
     if (projects.length > 0) {
       syncAllPeopleFromProjects(projects);
     }
+  }, [projects]);
+
+  // Handle hash-based navigation (e.g., #/project/:id)
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      const projectMatch = hash.match(/#\/project\/(.+)/);
+
+      if (projectMatch) {
+        const projectId = projectMatch[1];
+        setActiveView('overview');
+        setViewingProjectId(projectId);
+        // Optionally expand the first task
+        const project = projects.find(p => p.id === projectId);
+        if (project && project.plan.length > 0) {
+          setExpandedTasks(prev => ({ ...prev, [project.plan[0].id]: true }));
+        }
+      }
+    };
+
+    // Handle initial hash on mount
+    handleHashChange();
+
+    // Listen for hash changes
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
   }, [projects]);
 
   // Overflow detection for slide panels
@@ -760,7 +913,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         status: project.status,
         priority: project.priority,
         stakeholders: project.stakeholders, // Keep full objects for PersonPicker
-        description: project.description
+        description: project.description,
+        progressMode: project.progressMode || 'manual',
+        progress: project.progress || 0
       });
       setEditMode(true);
     }
@@ -785,6 +940,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
             priority: editValues.priority,
             stakeholders: finalStakeholders,
             description: editValues.description,
+            progressMode: editValues.progressMode || 'manual',
+            progress: editValues.progress || 0,
             recentActivity: [
               { id: generateActivityId(), date: new Date().toISOString(), note: 'Updated project details', author: loggedInUser },
               ...p.recentActivity
@@ -1424,8 +1581,7 @@ Write a professional executive summary that highlights the project's current sta
       setTimeout(() => setFeaturedPersonId(null), 3000);
     } else if (result.type === 'project') {
       // Navigate to project details
-      setActiveView('overview');
-      setViewingProjectId(result.id);
+      updateHash('overview', result.id);
       // Expand the first task if any
       const project = visibleProjects.find(p => p.id === result.id);
       if (project && project.plan.length > 0) {
@@ -1433,8 +1589,7 @@ Write a professional executive summary that highlights the project's current sta
       }
     } else if (result.type === 'task' || result.type === 'subtask') {
       // Navigate to project details and expand the task
-      setActiveView('overview');
-      setViewingProjectId(result.projectId);
+      updateHash('overview', result.projectId);
       if (result.taskId) {
         setExpandedTasks(prev => ({ ...prev, [result.taskId]: true }));
       } else if (result.type === 'task') {
@@ -1756,8 +1911,7 @@ Write a professional executive summary that highlights the project's current sta
     setProjects(prev => [...prev, newProject]);
     setShowNewProject(false);
     resetNewProjectForm();
-    setViewingProjectId(newProject.id);
-    setActiveView('overview');
+    updateHash('overview', newProject.id);
   };
 
   const handleStakeholderSelection = (selectedPeople) => {
@@ -2116,16 +2270,20 @@ Write a professional executive summary that highlights the project's current sta
       switch (action.type) {
         case 'comment': {
           const activityId = generateActivityId();
+          const requestedNote = (action.note || action.content || action.comment || '').trim();
+          const note = requestedNote || 'Update logged by Momentum';
           const newActivity = {
             id: activityId,
             date: new Date().toISOString(),
-            note: action.note || action.content || 'Update logged by Momentum',
+            note,
             author: action.author || loggedInUser || 'You'
           };
           project.recentActivity = [newActivity, ...project.recentActivity];
           actionDeltas.push({ type: 'remove_activity', projectId: project.id, activityId });
           label = `Commented on ${project.name}`;
-          detail = `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author}`;
+          detail = requestedNote
+            ? `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author}`
+            : `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author} (placeholder used because the comment was empty)`;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
           break;
@@ -2410,6 +2568,7 @@ Write a professional executive summary that highlights the project's current sta
             });
             label = `Email sent to ${normalizedRecipients.join(', ')}`;
             detail = `Sent email "${action.subject}"`;
+            appendActionResult(label, detail, actionDeltas);
           } catch (error) {
             appendActionResult('Failed to send email', error?.message || 'Email service returned an error.', actionDeltas);
             continue;
@@ -2677,8 +2836,20 @@ Write a professional executive summary that highlights the project's current sta
 
 Using dialectic project planning methodology, be concise but explicit about what you are doing, offer guiding prompts such as "have you thought of X yet?", and rely on the provided project data for context. Respond with a JSON object containing a 'response' string and an 'actions' array.
 
+LOGGED-IN USER: ${loggedInUser || 'Not set'}
+- When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
+- When adding comments or updates, use "${loggedInUser || 'You'}" as the author unless otherwise specified
+- When sending emails on behalf of the user, the "from" address will be automatically set to the logged-in user's email
+
+PEOPLE & EMAIL ADDRESSES:
+- Each person in the system may have an email address stored in their profile
+- People are stored with: name, team, and email (optional)
+- When sending emails, you can reference people by name and the system will resolve their email addresses
+- To find a person's email, use query_portfolio with scope='people' and includePeople=true
+- All project stakeholders/contributors are people with potential email addresses
+
 Supported atomic actions (never combine multiple changes into one action):
-- comment: log a project activity. Fields: projectId, note (or content), author (optional).
+- comment: log a project activity. Fields: projectId, note (or content), author (optional, defaults to logged-in user).
 - add_task: create a new task in a project. Fields: projectId, title, dueDate (optional), status (todo/in-progress/completed), completedDate (optional), assignee (person name, optional).
 - update_task: adjust a task. Fields: projectId, taskId or taskTitle, title (optional), status, dueDate, completedDate, assignee (person name or null to unassign).
 - add_subtask: create a subtask. Fields: projectId, taskId or taskTitle, subtaskTitle or title, status, dueDate, assignee (person name, optional).
@@ -2686,7 +2857,7 @@ Supported atomic actions (never combine multiple changes into one action):
 - update_project: change project fields. Fields: projectId, name (rename project), description (project description), executiveUpdate (executive summary), status (planning/active/on-hold/cancelled/completed), priority (low/medium/high), progress (0-100), targetDate, startDate, lastUpdate. Use project statuses: planning, active, on-hold, cancelled, or completed (never "in_progress").
 - create_project: create a new project. Fields: name (required), description (optional), priority (low/medium/high, default medium), status (planning/active/on-hold/cancelled, default active), targetDate (optional), stakeholders (comma-separated names, optional). Use the status value "active" for projects in flight.
 - add_person: add a person to the People database. Fields: name (required), team (optional), email (optional). If the person already exists, update their info instead of duplicating.
-- send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People, comma separated or array), subject (required), body (required). Do NOT include any AI signature in the email body - the system will automatically append one.
+- send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People database, comma separated or array), subject (required), body (required). Do NOT include any AI signature in the email body - the system will automatically append one.
 - query_portfolio: request portfolio data when you need fresh context. Fields: scope (portfolio/project/people), detailLevel (summary/detailed), includePeople (boolean), projectId or projectName (optional when scope is project).
 
 Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project. When creating projects, if you lack required information like name or description, ask the user for these details before proceeding with the action. If you need more context, call query_portfolio before taking other actions.`;
@@ -2711,7 +2882,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
       // Track recently updated projects for highlighting
       if (updatedProjectIds && updatedProjectIds.length > 0) {
-        setRecentlyUpdatedProjects(new Set(updatedProjectIds));
+        setRecentlyUpdatedProjects(prev => new Set([...prev, ...updatedProjectIds]));
         // Expand all updated projects in the momentum view
         setExpandedMomentumProjects(prev => {
           const newExpanded = { ...prev };
@@ -2720,10 +2891,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
           });
           return newExpanded;
         });
-        // Clear highlights after 5 seconds
-        setTimeout(() => {
-          setRecentlyUpdatedProjects(new Set());
-        }, 5000);
+        // Highlights now persist through the session
       }
 
       const assistantMessage = {
@@ -2826,6 +2994,19 @@ Keep tool calls granular (one discrete change per action), explain each action c
     if (!task.subtasks || task.subtasks.length === 0) return 0;
     const completed = task.subtasks.filter(st => st.status === 'completed').length;
     return Math.round((completed / task.subtasks.length) * 100);
+  };
+
+  const calculateProjectProgress = (project) => {
+    if (!project.plan || project.plan.length === 0) return 0;
+    const totalProgress = project.plan.reduce((sum, task) => sum + calculateTaskProgress(task), 0);
+    return Math.round(totalProgress / project.plan.length);
+  };
+
+  const getProjectProgress = (project) => {
+    if (project.progressMode === 'auto') {
+      return calculateProjectProgress(project);
+    }
+    return project.progress || 0;
   };
 
   const viewingProject = viewingProjectId ? projects.find(p => p.id === viewingProjectId) : null;
@@ -3100,7 +3281,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
   const renderProjectCard = (project, index) => (
     <div
       key={project.id}
-      onClick={() => setViewingProjectId(project.id)}
+      onClick={() => updateHash('overview', project.id)}
       style={{
         ...styles.projectCard,
         animationDelay: `${index * 100}ms`,
@@ -3132,13 +3313,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
       <div style={styles.progressSection}>
         <div style={styles.progressHeader}>
           <span style={styles.progressLabel}>Progress</span>
-          <span style={styles.progressValue}>{project.progress}%</span>
+          <span style={styles.progressValue}>{getProjectProgress(project)}%</span>
         </div>
         <div style={styles.progressBar}>
           <div
             style={{
               ...styles.progressFill,
-              width: `${project.progress}%`,
+              width: `${getProjectProgress(project)}%`,
               backgroundColor: getPriorityColor(project.priority)
             }}
           />
@@ -3214,7 +3395,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
           <button
             onClick={(e) => {
               e.stopPropagation();
-              setViewingProjectId(project.id);
+              updateHash('overview', project.id);
             }}
             style={styles.cardButton}
           >
@@ -3498,17 +3679,42 @@ Keep tool calls granular (one discrete change per action), explain each action c
         </div>
       )}
 
+      {/* Festive Banner */}
+      {isSantafied && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: '3px',
+          background: 'linear-gradient(90deg, #C41E3A 0%, #165B33 25%, #FFD700 50%, #C41E3A 75%, #165B33 100%)',
+          backgroundSize: '200% 100%',
+          animation: 'festiveSlide 3s linear infinite',
+          zIndex: 9999,
+        }} />
+      )}
+      <style>
+        {isSantafied && `
+          @keyframes festiveSlide {
+            0% { background-position: 0% 0%; }
+            100% { background-position: 200% 0%; }
+          }
+        `}
+      </style>
+
       <div style={{
         ...styles.container,
         ...(isSantafied && {
-          '--earth': '#8B4513',     // Saddle brown
-          '--sage': '#165B33',      // Forest green
-          '--coral': '#C41E3A',     // Christmas red
+          '--earth': '#C41E3A',     // Classic Christmas red
+          '--sage': '#165B33',      // Deep Christmas green
+          '--coral': '#FF6B6B',     // Bright festive red
           '--amber': '#FFD700',     // Gold
-          '--cream': '#FFF5EE',     // Seashell (warm white)
-          '--cloud': '#F0E6E0',     // Light pink/beige
-          '--stone': '#654321',     // Dark brown
-          '--charcoal': '#2C1810',  // Very dark brown
+          '--cream': '#FFFAF0',     // Warm ivory
+          '--cloud': '#F0E6E6',     // Light pink-tinted cloud
+          '--stone': '#8B4513',     // Warm brown
+          '--charcoal': '#2C1810',  // Deep brown
+          backgroundColor: '#FFFAF0',  // Warm ivory background
+          transition: 'background-color 0.5s ease',
         })
       }}>
       {/* Daily Check-in Modal */}
@@ -3816,7 +4022,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
       )}
 
       {/* Main Interface */}
-      <div style={{ ...styles.sidebar, ...(isSidebarCollapsed ? styles.sidebarCollapsed : {}) }}>
+      <div
+        style={{
+          ...styles.sidebar,
+          width: `${sidebarWidth}px`,
+          ...(isSidebarCollapsed ? styles.sidebarCollapsed : {})
+        }}
+      >
         <button
           style={styles.sidebarCollapseToggle}
           onClick={() => setIsSidebarCollapsed(prev => !prev)}
@@ -3858,10 +4070,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
             <nav style={styles.nav}>
               <button
-                onClick={() => {
-                  setActiveView('people');
-                  setViewingProjectId(null);
-                }}
+                onClick={() => updateHash('people')}
                 style={{
                   ...styles.navItem,
                   ...(activeView === 'people' && !viewingProjectId ? styles.navItemActive : {})
@@ -3870,10 +4079,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 People
               </button>
               <button
-                onClick={() => {
-                  setActiveView('overview');
-                  setViewingProjectId(null);
-                }}
+                onClick={() => updateHash('overview')}
                 style={{
                   ...styles.navItem,
                   ...(activeView === 'overview' && !viewingProjectId ? styles.navItemActive : {})
@@ -3882,10 +4088,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 Portfolio
               </button>
               <button
-                onClick={() => {
-                  setActiveView('thrust');
-                  setViewingProjectId(null);
-                }}
+                onClick={() => updateHash('thrust')}
                 style={{
                   ...styles.navItem,
                   ...(activeView === 'thrust' && !viewingProjectId ? styles.navItemActive : {})
@@ -3894,10 +4097,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 Momentum
               </button>
               <button
-                onClick={() => {
-                  setActiveView('slides');
-                  setViewingProjectId(null);
-                }}
+                onClick={() => updateHash('slides')}
                 style={{
                   ...styles.navItem,
                   ...(activeView === 'slides' && !viewingProjectId ? styles.navItemActive : {})
@@ -3906,10 +4106,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 Slides
               </button>
               <button
-                onClick={() => {
-                  setActiveView('timeline');
-                  setViewingProjectId(null);
-                }}
+                onClick={() => updateHash('timeline')}
                 style={{
                   ...styles.navItem,
                   ...(activeView === 'timeline' && !viewingProjectId ? styles.navItemActive : {})
@@ -3922,6 +4119,24 @@ Keep tool calls granular (one discrete change per action), explain each action c
         )}
 
       </div>
+
+      {!isSidebarCollapsed && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          aria-valuenow={sidebarWidth}
+          style={{
+            ...styles.sidebarResizeHandle,
+            ...(isResizingSidebar ? styles.sidebarResizeHandleActive : {})
+          }}
+          onMouseDown={startSidebarResize}
+          title="Drag to resize the sidebar"
+        >
+          <div style={styles.sidebarResizeGrip} />
+        </div>
+      )}
 
       <main style={styles.main}>
         <div style={styles.topBar}>
@@ -4013,8 +4228,11 @@ Keep tool calls granular (one discrete change per action), explain each action c
         {viewingProject ? (
           // Project Details View
           <div style={styles.detailsContainer}>
-            <button 
-              onClick={() => setViewingProjectId(null)}
+            <button
+              onClick={() => {
+                setViewingProjectId(null);
+                updateHash('overview');
+              }}
               style={styles.backButton}
             >
               <ArrowLeft size={18} />
@@ -4163,6 +4381,45 @@ Keep tool calls granular (one discrete change per action), explain each action c
                       </span>
                     )}
                   </div>
+                  <div style={styles.compactInfoItem}>
+                    <Settings size={14} style={{ color: 'var(--stone)' }} />
+                    <span style={styles.compactInfoLabel}>Progress Mode:</span>
+                    {editMode ? (
+                      <select
+                        value={editValues.progressMode || 'manual'}
+                        onChange={(e) => setEditValues({...editValues, progressMode: e.target.value})}
+                        style={styles.compactSelect}
+                      >
+                        <option value="manual">Manual</option>
+                        <option value="auto">Auto (from tasks)</option>
+                      </select>
+                    ) : (
+                      <span style={styles.statusBadgeSmall}>
+                        {viewingProject.progressMode === 'auto' ? 'Auto' : 'Manual'}
+                      </span>
+                    )}
+                  </div>
+                  {(editMode && editValues.progressMode === 'manual') || (!editMode && viewingProject.progressMode !== 'auto') ? (
+                    <div style={styles.compactInfoItem}>
+                      <TrendingUp size={14} style={{ color: 'var(--stone)' }} />
+                      <span style={styles.compactInfoLabel}>Progress:</span>
+                      {editMode ? (
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={editValues.progress || 0}
+                          onChange={(e) => {
+                            const val = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
+                            setEditValues({...editValues, progress: val});
+                          }}
+                          style={{...styles.compactSelect, width: '80px'}}
+                        />
+                      ) : (
+                        <span style={styles.compactInfoValue}>{viewingProject.progress}%</span>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               </div>
 
@@ -5131,7 +5388,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 </div>
 
                 <div style={styles.activityListCompact}>
-                  {viewingProject.recentActivity.map((activity, idx) => (
+                  {[...viewingProject.recentActivity].sort((a, b) => new Date(b.date) - new Date(a.date)).map((activity, idx) => (
                     <div key={activity.id || idx}>
                       <div
                         style={{
@@ -5392,544 +5649,29 @@ Keep tool calls granular (one discrete change per action), explain each action c
             </div>
           </>
         ) : activeView === 'thrust' ? (
-          <>
-            {/* Modern Chat Interface - Full Width */}
-            <div style={styles.momentumContainer}>
-              {/* Main Chat Area */}
-              <div style={{
-                ...styles.momentumChatArea,
-                flex: portfolioMinimized ? 1 : '1 1 65%'
-              }}>
-                {/* Minimal Header */}
-                <div style={styles.momentumChatHeader}>
-                  <div style={styles.momentumHeaderLeft}>
-                    <div style={styles.momentumAvatar}>
-                      <Sparkles size={18} style={{ color: '#FFFFFF' }} />
-                    </div>
-                    <div>
-                      <div style={styles.momentumHeaderTitle}>Momentum</div>
-                      <div style={styles.momentumHeaderSubtitle}>
-                        {thrustIsRequesting ? 'thinking...' : 'AI Project Manager'}
-                      </div>
-                    </div>
-                  </div>
-                  <button
-                    style={styles.portfolioToggleButton}
-                    onClick={() => setPortfolioMinimized(!portfolioMinimized)}
-                    title={portfolioMinimized ? 'Show portfolio' : 'Hide portfolio'}
-                  >
-                    <TrendingUp size={16} />
-                    <span>{portfolioMinimized ? 'Portfolio' : 'Hide'}</span>
-                    <ChevronRight
-                      size={14}
-                      style={{
-                        transform: portfolioMinimized ? 'rotate(0deg)' : 'rotate(180deg)',
-                        transition: 'transform 0.2s ease'
-                      }}
-                    />
-                  </button>
-                </div>
-
-                {/* Messages Container */}
-                <div style={styles.momentumMessagesContainer}>
-                  {thrustConversation.length === 0 ? (
-                    <div style={styles.momentumEmptyChat}>
-                      <div style={styles.momentumEmptyIcon}>
-                        <MessageCircle size={48} style={{ color: 'var(--cloud)' }} />
-                      </div>
-                      <div style={styles.momentumEmptyTitle}>Start a conversation</div>
-                      <div style={styles.momentumEmptyText}>
-                        Share updates, ask questions, or request changes to your projects.
-                        Momentum can add tasks, update statuses, and keep your portfolio organized.
-                      </div>
-                      <div style={styles.momentumSuggestions}>
-                        {['What tasks are overdue?', 'Add a new task to...', 'Update the status of...'].map((suggestion, idx) => (
-                          <button
-                            key={idx}
-                            style={styles.momentumSuggestionChip}
-                            onClick={() => setThrustDraft(suggestion)}
-                          >
-                            {suggestion}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  ) : (
-                    <div style={styles.momentumMessagesList}>
-                      {thrustConversation.map((message, idx) => {
-                        const isUser = message.role === 'user';
-                        const messageProjects = message.updatedProjectIds || [];
-                        const projectsForMessage = visibleProjects.filter(p =>
-                          messageProjects.includes(p.id) || messageProjects.includes(String(p.id))
-                        );
-
-                        return (
-                          <div
-                            key={message.id || idx}
-                            style={{
-                              ...styles.momentumMessageRow,
-                              justifyContent: isUser ? 'flex-end' : 'flex-start',
-                              animationDelay: `${idx * 50}ms`
-                            }}
-                          >
-                            {/* Assistant Avatar */}
-                            {!isUser && (
-                              <div style={styles.momentumMessageAvatar}>
-                                <Sparkles size={14} style={{ color: 'var(--earth)' }} />
-                              </div>
-                            )}
-
-                            <div style={styles.momentumMessageContent}>
-                              {/* Chat Bubble */}
-                              <div style={{
-                                ...styles.momentumBubble,
-                                ...(isUser ? styles.momentumBubbleUser : styles.momentumBubbleAssistant)
-                              }}>
-                                <div style={styles.momentumBubbleText}>
-                                  {renderRichTextWithTags(message.note || message.content)}
-                                </div>
-                                <div style={{
-                                  ...styles.momentumBubbleTime,
-                                  textAlign: isUser ? 'right' : 'left'
-                                }}>
-                                  {formatDateTime(message.date)}
-                                </div>
-                              </div>
-
-                              {/* Inline Project Cards - Only for assistant messages with actions */}
-                              {!isUser && projectsForMessage.length > 0 && (
-                                <div style={styles.momentumInlineProjects}>
-                                  {projectsForMessage.map(project => {
-                                    const isActive = activeProjectInChat === project.id || activeProjectInChat === String(project.id);
-                                    const isHovered = hoveredMessageProject === project.id;
-
-                                    return (
-                                      <div
-                                        key={project.id}
-                                        style={{
-                                          ...styles.momentumInlineProjectCard,
-                                          ...(isActive ? styles.momentumInlineProjectCardActive : {}),
-                                          ...(isHovered ? styles.momentumInlineProjectCardHover : {})
-                                        }}
-                                        onMouseEnter={() => setHoveredMessageProject(project.id)}
-                                        onMouseLeave={() => setHoveredMessageProject(null)}
-                                        onClick={() => {
-                                          setActiveProjectInChat(project.id);
-                                          setPortfolioMinimized(false);
-                                          setExpandedMomentumProjects(prev => ({
-                                            ...prev,
-                                            [String(project.id)]: true
-                                          }));
-                                        }}
-                                      >
-                                        <div style={styles.momentumInlineProjectHeader}>
-                                          <div style={styles.momentumInlineProjectIcon}>
-                                            <TrendingUp size={12} />
-                                          </div>
-                                          <span style={styles.momentumInlineProjectName}>{project.name}</span>
-                                          <div style={{
-                                            ...styles.momentumInlineProjectBadge,
-                                            backgroundColor: getPriorityColor(project.priority) + '20',
-                                            color: getPriorityColor(project.priority)
-                                          }}>
-                                            {project.priority}
-                                          </div>
-                                        </div>
-                                        <div style={styles.momentumInlineProjectMeta}>
-                                          <span style={styles.momentumInlineProjectStatus}>{project.status}</span>
-                                          <span style={styles.momentumInlineProjectProgress}>
-                                            {project.progress}% complete
-                                          </span>
-                                        </div>
-                                        <div style={styles.momentumInlineProjectConnector}>
-                                          <ChevronRight size={12} />
-                                          <span>View in portfolio</span>
-                                        </div>
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )}
-
-                              {/* Action Pills - Compact inline display */}
-                              {!isUser && message.actionResults && message.actionResults.length > 0 && (
-                                <div style={styles.momentumActionPills}>
-                                  {message.actionResults.slice(0, 3).map((action, actionIdx) => (
-                                    <div
-                                      key={`${message.id}-action-${actionIdx}`}
-                                      style={{
-                                        ...styles.momentumActionPill,
-                                        opacity: action.undone ? 0.5 : 1
-                                      }}
-                                    >
-                                      <CheckCircle2 size={12} style={{ color: action.undone ? 'var(--stone)' : 'var(--sage)' }} />
-                                      <span>{action.label}</span>
-                                      {action.deltas && action.deltas.length > 0 && !action.undone && (
-                                        <button
-                                          style={styles.momentumActionPillUndo}
-                                          onClick={(e) => {
-                                            e.stopPropagation();
-                                            undoThrustAction(message.id, actionIdx);
-                                          }}
-                                          title="Undo"
-                                        >
-                                          <RotateCcw size={10} />
-                                        </button>
-                                      )}
-                                    </div>
-                                  ))}
-                                  {message.actionResults.length > 3 && (
-                                    <button
-                                      style={styles.momentumMoreActions}
-                                      onClick={() => setExpandedActionMessages(prev => ({
-                                        ...prev,
-                                        [message.id]: !prev[message.id]
-                                      }))}
-                                    >
-                                      +{message.actionResults.length - 3} more
-                                    </button>
-                                  )}
-                                </div>
-                              )}
-
-                              {/* Expanded Actions */}
-                              {!isUser && expandedActionMessages[message.id] && message.actionResults && message.actionResults.length > 3 && (
-                                <div style={styles.momentumExpandedActions}>
-                                  {message.actionResults.slice(3).map((action, actionIdx) => (
-                                    <div
-                                      key={`${message.id}-action-exp-${actionIdx}`}
-                                      style={{
-                                        ...styles.momentumExpandedAction,
-                                        opacity: action.undone ? 0.5 : 1
-                                      }}
-                                    >
-                                      <div style={styles.momentumExpandedActionRow}>
-                                        <CheckCircle2 size={14} style={{ color: action.undone ? 'var(--stone)' : 'var(--sage)' }} />
-                                        <span style={styles.momentumExpandedActionLabel}>{action.label}</span>
-                                        {action.deltas && action.deltas.length > 0 && !action.undone && (
-                                          <button
-                                            style={styles.momentumActionPillUndo}
-                                            onClick={() => undoThrustAction(message.id, actionIdx + 3)}
-                                            title="Undo"
-                                          >
-                                            <RotateCcw size={12} />
-                                          </button>
-                                        )}
-                                      </div>
-                                      <div style={styles.momentumExpandedActionDetail}>{action.detail}</div>
-                                    </div>
-                                  ))}
-                                </div>
-                              )}
-                            </div>
-
-                            {/* User Avatar */}
-                            {isUser && (
-                              <div style={styles.momentumMessageAvatarUser}>
-                                <User size={14} style={{ color: '#FFFFFF' }} />
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-
-                      {/* Typing Indicator */}
-                      {thrustIsRequesting && (
-                        <div style={styles.momentumMessageRow}>
-                          <div style={styles.momentumMessageAvatar}>
-                            <Sparkles size={14} style={{ color: 'var(--earth)' }} />
-                          </div>
-                          <div style={styles.momentumTypingIndicator}>
-                            <div style={styles.momentumTypingDot} />
-                            <div style={{ ...styles.momentumTypingDot, animationDelay: '0.2s' }} />
-                            <div style={{ ...styles.momentumTypingDot, animationDelay: '0.4s' }} />
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Pending Actions */}
-                      {thrustPendingActions.length > 0 && (
-                        <div style={styles.momentumMessageRow}>
-                          <div style={styles.momentumMessageAvatar}>
-                            <Sparkles size={14} style={{ color: 'var(--earth)' }} />
-                          </div>
-                          <div style={styles.momentumPendingCard}>
-                            <div style={styles.momentumPendingHeader}>
-                              <Clock size={14} style={{ color: 'var(--amber)' }} />
-                              <span>Applying {thrustPendingActions.length} action{thrustPendingActions.length > 1 ? 's' : ''}...</span>
-                            </div>
-                            <div style={styles.momentumPendingList}>
-                              {thrustPendingActions.map((action, idx) => (
-                                <div key={idx} style={styles.momentumPendingItem}>
-                                  <Circle size={8} style={{ color: 'var(--amber)' }} />
-                                  <span>{describeActionPreview(action)}</span>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                        </div>
-                      )}
-
-                      {/* Error Message */}
-                      {thrustError && (
-                        <div style={styles.momentumErrorCard}>
-                          <AlertCircle size={16} style={{ color: 'var(--coral)' }} />
-                          <span>{thrustError}</span>
-                        </div>
-                      )}
-                    </div>
-                  )}
-                </div>
-
-                {/* Input Area - Fixed at Bottom */}
-                <div style={styles.momentumInputArea}>
-                  <div style={styles.momentumInputWrapper}>
-                    <textarea
-                      value={thrustDraft}
-                      onChange={handleThrustDraftChange}
-                      onFocus={() => setFocusedField('thrust-draft')}
-                      onBlur={() => setFocusedField(null)}
-                      onKeyDown={(e) => {
-                        if (showThrustTagSuggestions) {
-                          const filteredTags = getAllTags()
-                            .filter(tag =>
-                              tag.display.toLowerCase().includes(thrustTagSearchTerm.toLowerCase())
-                            )
-                            .slice(0, 8);
-
-                          if (e.key === 'ArrowDown') {
-                            e.preventDefault();
-                            setSelectedThrustTagIndex(prev =>
-                              prev < filteredTags.length - 1 ? prev + 1 : prev
-                            );
-                          } else if (e.key === 'ArrowUp') {
-                            e.preventDefault();
-                            setSelectedThrustTagIndex(prev => prev > 0 ? prev - 1 : 0);
-                          } else if (e.key === 'Enter' && !e.shiftKey) {
-                            e.preventDefault();
-                            if (filteredTags[selectedThrustTagIndex]) {
-                              insertThrustTag(filteredTags[selectedThrustTagIndex]);
-                            }
-                            return;
-                          } else if (e.key === 'Escape') {
-                            e.preventDefault();
-                            setShowThrustTagSuggestions(false);
-                          }
-                        } else if (e.key === 'Enter' && !e.shiftKey) {
-                          e.preventDefault();
-                          handleSendThrustMessage();
-                        }
-                      }}
-                      placeholder="Message Momentum... (@ to mention)"
-                      style={styles.momentumInput}
-                      rows={1}
-                    />
-
-                    {/* Tag Suggestions */}
-                    {showThrustTagSuggestions && (
-                      <div style={styles.momentumTagSuggestions}>
-                        {getAllTags()
-                          .filter(tag =>
-                            tag.display.toLowerCase().includes(thrustTagSearchTerm.toLowerCase())
-                          )
-                          .slice(0, 6)
-                          .map((tag, idx) => (
-                            <div
-                              key={idx}
-                              style={{
-                                ...styles.momentumTagItem,
-                                backgroundColor: idx === selectedThrustTagIndex ? 'var(--cream)' : 'transparent'
-                              }}
-                              onClick={() => insertThrustTag(tag)}
-                              onMouseEnter={() => setSelectedThrustTagIndex(idx)}
-                            >
-                              <span style={{
-                                ...styles.momentumTagType,
-                                backgroundColor:
-                                  tag.type === 'person' ? 'var(--sage)' + '25' :
-                                  tag.type === 'project' ? 'var(--earth)' + '25' :
-                                  'var(--amber)' + '25',
-                                color:
-                                  tag.type === 'person' ? 'var(--sage)' :
-                                  tag.type === 'project' ? 'var(--earth)' :
-                                  'var(--amber)'
-                              }}>
-                                {tag.type === 'person' ? <User size={10} /> : <TrendingUp size={10} />}
-                              </span>
-                              <span style={styles.momentumTagName}>{tag.display}</span>
-                            </div>
-                          ))}
-                      </div>
-                    )}
-
-                    <button
-                      onClick={handleSendThrustMessage}
-                      disabled={!thrustDraft.trim() || thrustIsRequesting}
-                      style={{
-                        ...styles.momentumSendButton,
-                        opacity: thrustDraft.trim() && !thrustIsRequesting ? 1 : 0.4,
-                        cursor: thrustDraft.trim() && !thrustIsRequesting ? 'pointer' : 'not-allowed'
-                      }}
-                      title="Send message"
-                    >
-                      <Send size={18} />
-                    </button>
-                  </div>
-                  <div style={styles.momentumInputHint}>
-                    Press Enter to send, Shift+Enter for new line
-                  </div>
-                </div>
-              </div>
-
-              {/* Portfolio Side Panel - Collapsible */}
-              <div style={{
-                ...styles.momentumPortfolioPanel,
-                ...(portfolioMinimized ? styles.momentumPortfolioPanelMinimized : {})
-              }}>
-                {!portfolioMinimized && (
-                  <>
-                    <div style={styles.momentumPortfolioHeader}>
-                      <div style={styles.momentumPortfolioTitle}>
-                        <TrendingUp size={16} style={{ color: 'var(--earth)' }} />
-                        <span>Portfolio</span>
-                      </div>
-                      <button
-                        style={styles.momentumPortfolioClose}
-                        onClick={() => setPortfolioMinimized(true)}
-                      >
-                        <X size={16} />
-                      </button>
-                    </div>
-
-                    <div style={styles.momentumPortfolioContent}>
-                      {visibleProjects.length > 0 ? (
-                        [...visibleProjects].sort((a, b) => {
-                          // Active project first
-                          const aActive = activeProjectInChat === a.id || activeProjectInChat === String(a.id);
-                          const bActive = activeProjectInChat === b.id || activeProjectInChat === String(b.id);
-                          if (aActive && !bActive) return -1;
-                          if (!aActive && bActive) return 1;
-                          // Then recently updated
-                          const aUpdated = recentlyUpdatedProjects.has(a.id);
-                          const bUpdated = recentlyUpdatedProjects.has(b.id);
-                          if (aUpdated && !bUpdated) return -1;
-                          if (!aUpdated && bUpdated) return 1;
-                          return 0;
-                        }).map(project => {
-                          const projectId = String(project.id);
-                          const isExpanded = expandedMomentumProjects[projectId] ?? false;
-                          const isActive = activeProjectInChat === project.id || activeProjectInChat === projectId;
-                          const isRecentlyUpdated = recentlyUpdatedProjects.has(project.id);
-                          const dueSoonTasks = getProjectDueSoonTasks(project);
-                          const recentUpdates = project.recentActivity.slice(0, 2);
-
-                          return (
-                            <div
-                              key={project.id}
-                              style={{
-                                ...styles.momentumPortfolioCard,
-                                ...(isActive ? styles.momentumPortfolioCardActive : {}),
-                                ...(isRecentlyUpdated ? styles.momentumPortfolioCardHighlight : {})
-                              }}
-                            >
-                              <button
-                                style={styles.momentumPortfolioCardHeader}
-                                onClick={() => {
-                                  setExpandedMomentumProjects(prev => ({
-                                    ...prev,
-                                    [projectId]: !isExpanded
-                                  }));
-                                  setActiveProjectInChat(project.id);
-                                }}
-                              >
-                                <div style={styles.momentumPortfolioCardTitle}>
-                                  <div style={{
-                                    ...styles.momentumPortfolioCardDot,
-                                    backgroundColor: getPriorityColor(project.priority)
-                                  }} />
-                                  <span>{project.name}</span>
-                                </div>
-                                <div style={styles.momentumPortfolioCardMeta}>
-                                  <span style={styles.momentumPortfolioCardStatus}>{project.status}</span>
-                                  <ChevronDown
-                                    size={14}
-                                    style={{
-                                      transform: isExpanded ? 'rotate(180deg)' : 'rotate(0deg)',
-                                      transition: 'transform 0.2s ease',
-                                      color: 'var(--stone)'
-                                    }}
-                                  />
-                                </div>
-                              </button>
-
-                              {/* Progress Bar */}
-                              <div style={styles.momentumPortfolioProgress}>
-                                <div
-                                  style={{
-                                    ...styles.momentumPortfolioProgressFill,
-                                    width: `${project.progress || 0}%`,
-                                    backgroundColor: getPriorityColor(project.priority)
-                                  }}
-                                />
-                              </div>
-
-                              {/* Expanded Content */}
-                              {isExpanded && (
-                                <div style={styles.momentumPortfolioCardBody}>
-                                  {/* Recent Updates */}
-                                  <div style={styles.momentumPortfolioSection}>
-                                    <div style={styles.momentumPortfolioSectionTitle}>Recent Updates</div>
-                                    {recentUpdates.length > 0 ? (
-                                      recentUpdates.map((activity, idx) => (
-                                        <div key={activity.id || idx} style={styles.momentumPortfolioActivity}>
-                                          <div style={styles.momentumPortfolioActivityHeader}>
-                                            <span style={styles.momentumPortfolioActivityAuthor}>{activity.author}</span>
-                                            <span style={styles.momentumPortfolioActivityTime}>{formatDateTime(activity.date)}</span>
-                                          </div>
-                                          <div style={styles.momentumPortfolioActivityText}>{activity.note}</div>
-                                        </div>
-                                      ))
-                                    ) : (
-                                      <div style={styles.momentumPortfolioEmpty}>No updates yet</div>
-                                    )}
-                                  </div>
-
-                                  {/* Due Soon */}
-                                  {dueSoonTasks.length > 0 && (
-                                    <div style={styles.momentumPortfolioSection}>
-                                      <div style={{
-                                        ...styles.momentumPortfolioSectionTitle,
-                                        color: dueSoonTasks.some(t => t.dueDateInfo.isOverdue) ? 'var(--coral)' : 'var(--amber)'
-                                      }}>
-                                        <AlertCircle size={12} />
-                                        <span>Due Soon</span>
-                                      </div>
-                                      {dueSoonTasks.slice(0, 2).map((task, idx) => (
-                                        <div key={idx} style={styles.momentumPortfolioDueTask}>
-                                          <span>{task.title}</span>
-                                          <span style={{ color: task.dueDateInfo.color, fontSize: '11px' }}>
-                                            {task.dueDateInfo.text}
-                                          </span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              )}
-                            </div>
-                          );
-                        })
-                      ) : (
-                        <div style={styles.momentumPortfolioEmpty}>
-                          No projects to display
-                        </div>
-                      )}
-                    </div>
-                  </>
-                )}
-              </div>
-            </div>
-          </>
+          <MomentumChat
+            messages={getThrustConversation()}
+            onSendMessage={(message) => {
+              setThrustMessages(prev => [...prev, message]);
+            }}
+            onApplyActions={(actionResults, updatedProjectIds) => {
+              // Track recently updated projects for highlighting
+              if (updatedProjectIds && updatedProjectIds.length > 0) {
+                setRecentlyUpdatedProjects(new Set(updatedProjectIds));
+                setExpandedMomentumProjects(prev => {
+                  const newExpanded = { ...prev };
+                  updatedProjectIds.forEach(id => {
+                    newExpanded[String(id)] = true;
+                  });
+                  return newExpanded;
+                });
+              }
+            }}
+            onUndoAction={undoThrustAction}
+            loggedInUser={loggedInUser}
+            people={people}
+            isSantafied={isSantafied}
+          />
         ) : activeView === 'slides' ? (
           <>
             <header style={styles.header}>
@@ -6256,7 +5998,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
           // Projects Overview
           <>
             <div style={{ marginBottom: '24px' }}>
-              <PeopleProjectsJuggle projects={visibleProjects} people={people} />
+              <PeopleProjectsJuggle projects={visibleProjects} people={people} isSantafied={isSantafied} />
             </div>
             <header style={styles.header}>
               <div>
@@ -6524,7 +6266,7 @@ const styles = {
   },
 
   sidebar: {
-    width: '280px',
+    width: '238px',
     backgroundColor: '#FFFFFF',
     borderRight: '1px solid var(--cloud)',
     display: 'flex',
@@ -6541,6 +6283,30 @@ const styles = {
   sidebarCollapsed: {
     width: '68px',
     padding: '32px 12px',
+  },
+
+  sidebarResizeHandle: {
+    width: '10px',
+    cursor: 'col-resize',
+    position: 'relative',
+    flexShrink: 0,
+    alignSelf: 'stretch',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+
+  sidebarResizeHandleActive: {
+    backgroundColor: 'rgba(0, 0, 0, 0.03)',
+  },
+
+  sidebarResizeGrip: {
+    width: '4px',
+    height: '48px',
+    borderRadius: '2px',
+    background: 'linear-gradient(180deg, #D6D1C4 0%, #C2B8A3 100%)',
+    boxShadow: 'inset 0 0 0 1px rgba(0, 0, 0, 0.05)',
   },
 
   sidebarContent: {
@@ -6931,11 +6697,6 @@ const styles = {
     fontSize: '12px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
-  },
-
-  editingAsName: {
-    fontWeight: 600,
-    color: 'var(--charcoal)',
   },
 
   shortcutHint: {

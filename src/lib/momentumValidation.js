@@ -176,6 +176,22 @@ export function validateThrustActions(actions = [], projects = []) {
       return;
     }
 
+    if (action.type === 'comment') {
+      const note = (action.note || action.content || action.comment || '').trim();
+      if (!note) {
+        errors.push(`Action ${idx + 1} (comment) is missing a note/comment body.`);
+        return;
+      }
+
+      validActions.push({
+        ...action,
+        note,
+        projectId: resolvedProject.id,
+        projectName: resolvedProject.name
+      });
+      return;
+    }
+
     validActions.push({
       ...action,
       projectId: resolvedProject.id,
