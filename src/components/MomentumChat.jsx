@@ -41,7 +41,9 @@ export default function MomentumChat({
   onUndoAction,
   loggedInUser = 'You',
   people = [],
-  isSantafied = false
+  isSantafied = false,
+  recentlyUpdatedProjects,
+  onRecentlyUpdatedProjectsChange
 }) {
   const colors = getColors(isSantafied);
   const styles = getStyles(colors);
@@ -59,10 +61,20 @@ export default function MomentumChat({
   const [linkedMessageId, setLinkedMessageId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
   const [projectPositions, setProjectPositions] = useState({});
-  const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState({});
+  const [localRecentlyUpdatedProjects, setLocalRecentlyUpdatedProjects] = useState({});
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
+
+  const updateRecentlyUpdatedProjects = useCallback((updater) => {
+    if (onRecentlyUpdatedProjectsChange) {
+      onRecentlyUpdatedProjectsChange(updater);
+    } else {
+      setLocalRecentlyUpdatedProjects(prev => (typeof updater === 'function' ? updater(prev) : updater));
+    }
+  }, [onRecentlyUpdatedProjectsChange]);
+
+  const effectiveRecentlyUpdatedProjects = recentlyUpdatedProjects || localRecentlyUpdatedProjects;
 
   const updateProjectPositions = useCallback(() => {
     const newPositions = {};
@@ -533,8 +545,8 @@ Guidelines:
       // Track recently updated projects with timestamps
       if (updatedProjectIds.length > 0) {
         const now = Date.now();
-        setRecentlyUpdatedProjects(prev => {
-          const updated = { ...prev };
+        updateRecentlyUpdatedProjects(prev => {
+          const updated = { ...(prev || {}) };
           updatedProjectIds.forEach(id => {
             updated[id] = now;
           });
@@ -675,7 +687,10 @@ Guidelines:
     const isLinked = project.id in projectPositions || String(project.id) in projectPositions;
     const linkInfo = projectPositions[project.id] || projectPositions[String(project.id)];
     const isActivelyLinked = linkInfo && linkedMessageId === linkInfo.messageId;
-    const isRecentlyUpdated = project.id in recentlyUpdatedProjects;
+    const isRecentlyUpdated = project.id in effectiveRecentlyUpdatedProjects;
+    const sortedRecentActivity = Array.isArray(project.recentActivity)
+      ? [...project.recentActivity].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0))
+      : [];
 
     const handleCardClick = (e) => {
       e.preventDefault();
@@ -735,10 +750,10 @@ Guidelines:
         {(isHovered || isRecentlyUpdated) && (
           <div style={styles.projectExpanded}>
             <p style={styles.projectDescription}>{project.description}</p>
-            {isRecentlyUpdated && project.recentActivity && project.recentActivity.length > 0 && (
+            {isRecentlyUpdated && sortedRecentActivity.length > 0 && (
               <div style={styles.recentActivityPreview}>
                 <span style={styles.recentActivityLabel}>Latest update:</span>
-                <span style={styles.recentActivityText}>{project.recentActivity[0].note}</span>
+                <span style={styles.recentActivityText}>{sortedRecentActivity[0].note}</span>
               </div>
             )}
             <div style={styles.projectMeta}>
@@ -882,8 +897,8 @@ Guidelines:
           {[...projects]
             .sort((a, b) => {
               // Sort by recently updated projects first
-              const aTime = recentlyUpdatedProjects[a.id] || 0;
-              const bTime = recentlyUpdatedProjects[b.id] || 0;
+              const aTime = effectiveRecentlyUpdatedProjects[a.id] || 0;
+              const bTime = effectiveRecentlyUpdatedProjects[b.id] || 0;
               if (aTime !== bTime) return bTime - aTime;
               // Then by priority (high > medium > low)
               const priorityOrder = { high: 3, medium: 2, low: 1 };

@@ -143,7 +143,17 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [portfolioFilter, setPortfolioFilter] = useState('');
 
   // Momentum highlight state - tracks recently updated projects from AI
-  const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState(new Set());
+  const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState(() => {
+    const stored = localStorage.getItem('manity_recently_updated_projects');
+    if (stored) {
+      try {
+        return JSON.parse(stored);
+      } catch (error) {
+        console.warn('Failed to parse recently updated projects from storage', error);
+      }
+    }
+    return {};
+  });
 
   // Momentum chat redesign - portfolio panel state
   const [portfolioMinimized, setPortfolioMinimized] = useState(true);
@@ -168,6 +178,22 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     const saved = localStorage.getItem('manity_santafied');
     return saved !== null ? saved === 'true' : true; // Default to true
   });
+
+  useEffect(() => {
+    localStorage.setItem('manity_recently_updated_projects', JSON.stringify(recentlyUpdatedProjects));
+  }, [recentlyUpdatedProjects]);
+
+  const touchRecentlyUpdatedProjects = useCallback((projectIds = []) => {
+    if (!projectIds.length) return;
+    const now = Date.now();
+    setRecentlyUpdatedProjects(prev => {
+      const next = { ...(prev || {}) };
+      projectIds.forEach(id => {
+        next[id] = now;
+      });
+      return next;
+    });
+  }, []);
 
   // JSON Schema for structured output - ensures LLM returns properly formatted actions
   const momentumResponseSchema = {
@@ -5657,7 +5683,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
             onApplyActions={(actionResults, updatedProjectIds) => {
               // Track recently updated projects for highlighting
               if (updatedProjectIds && updatedProjectIds.length > 0) {
-                setRecentlyUpdatedProjects(new Set(updatedProjectIds));
+                touchRecentlyUpdatedProjects(updatedProjectIds);
                 setExpandedMomentumProjects(prev => {
                   const newExpanded = { ...prev };
                   updatedProjectIds.forEach(id => {
@@ -5671,6 +5697,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
             loggedInUser={loggedInUser}
             people={people}
             isSantafied={isSantafied}
+            recentlyUpdatedProjects={recentlyUpdatedProjects}
+            onRecentlyUpdatedProjectsChange={touchRecentlyUpdatedProjects}
           />
         ) : activeView === 'slides' ? (
           <>
