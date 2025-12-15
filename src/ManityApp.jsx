@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, Search, User, UserCircle } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
@@ -81,7 +81,29 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [thrustRequestStart, setThrustRequestStart] = useState(null);
   const [thrustElapsedMs, setThrustElapsedMs] = useState(0);
   const [expandedMomentumProjects, setExpandedMomentumProjects] = useState({});
+  const SIDEBAR_MIN_WIDTH = 200;
+  const SIDEBAR_MAX_WIDTH = 360;
+  const DEFAULT_SIDEBAR_WIDTH = 238;
+  const SIDEBAR_WIDTH_STORAGE_KEY = 'manity_sidebar_width';
+
+  const clampSidebarWidth = useCallback(
+    (width) => Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width)),
+    []
+  );
+
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const storedWidth = localStorage.getItem(SIDEBAR_WIDTH_STORAGE_KEY);
+    if (storedWidth) {
+      const parsed = parseInt(storedWidth, 10);
+      if (!Number.isNaN(parsed)) {
+        return clampSidebarWidth(parsed);
+      }
+    }
+    return DEFAULT_SIDEBAR_WIDTH;
+  });
   const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isResizingSidebar, setIsResizingSidebar] = useState(false);
+  const [sidebarResizeStart, setSidebarResizeStart] = useState({ x: 0, width: DEFAULT_SIDEBAR_WIDTH });
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [timelineView, setTimelineView] = useState(6); // Timeline zoom in months (1-24)
   const [newProjectName, setNewProjectName] = useState('');
@@ -334,6 +356,47 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   useEffect(() => {
     localStorage.setItem('manity_santafied', isSantafied.toString());
   }, [isSantafied]);
+
+  // Persist sidebar width
+  useEffect(() => {
+    localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth.toString());
+  }, [sidebarWidth]);
+
+  useEffect(() => {
+    if (!isResizingSidebar) return undefined;
+
+    const initialCursor = document.body.style.cursor;
+    const initialUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+
+    const handleMouseMove = (event) => {
+      const delta = event.clientX - sidebarResizeStart.x;
+      setSidebarWidth(clampSidebarWidth(sidebarResizeStart.width + delta));
+    };
+
+    const handleMouseUp = () => {
+      setIsResizingSidebar(false);
+    };
+
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', handleMouseUp);
+
+    return () => {
+      document.body.style.cursor = initialCursor;
+      document.body.style.userSelect = initialUserSelect;
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', handleMouseUp);
+    };
+  }, [clampSidebarWidth, isResizingSidebar, sidebarResizeStart.x, sidebarResizeStart.width]);
+
+  const startSidebarResize = (event) => {
+    if (isSidebarCollapsed) return;
+
+    setSidebarResizeStart({ x: event.clientX, width: sidebarWidth });
+    setIsResizingSidebar(true);
+    event.preventDefault();
+  };
 
   // URL hash routing - sync URL with app state
   useEffect(() => {
@@ -3942,7 +4005,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
       )}
 
       {/* Main Interface */}
-      <div style={{ ...styles.sidebar, ...(isSidebarCollapsed ? styles.sidebarCollapsed : {}) }}>
+      <div
+        style={{
+          ...styles.sidebar,
+          width: `${sidebarWidth}px`,
+          ...(isSidebarCollapsed ? styles.sidebarCollapsed : {})
+        }}
+      >
         <button
           style={styles.sidebarCollapseToggle}
           onClick={() => setIsSidebarCollapsed(prev => !prev)}
@@ -4033,6 +4102,24 @@ Keep tool calls granular (one discrete change per action), explain each action c
         )}
 
       </div>
+
+      {!isSidebarCollapsed && (
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          aria-valuemin={SIDEBAR_MIN_WIDTH}
+          aria-valuemax={SIDEBAR_MAX_WIDTH}
+          aria-valuenow={sidebarWidth}
+          style={{
+            ...styles.sidebarResizeHandle,
+            ...(isResizingSidebar ? styles.sidebarResizeHandleActive : {})
+          }}
+          onMouseDown={startSidebarResize}
+          title="Drag to resize the sidebar"
+        >
+          <div style={styles.sidebarResizeGrip} />
+        </div>
+      )}
 
       <main style={styles.main}>
         <div style={styles.topBar}>
@@ -6123,7 +6210,7 @@ const styles = {
   },
 
   sidebar: {
-    width: '280px',
+    width: '238px',
     backgroundColor: '#FFFFFF',
     borderRight: '1px solid var(--cloud)',
     display: 'flex',
@@ -6140,6 +6227,30 @@ const styles = {
   sidebarCollapsed: {
     width: '68px',
     padding: '32px 12px',
+  },
+
+  sidebarResizeHandle: {
+    width: '10px',
+    cursor: 'col-resize',
+    position: 'relative',
+    flexShrink: 0,
+    alignSelf: 'stretch',
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: 'transparent',
+  },
+
+  sidebarResizeHandleActive: {
+    backgroundColor: 'rgba(0, 0, 0, 0.03)',
+  },
+
+  sidebarResizeGrip: {
+    width: '4px',
+    height: '48px',
+    borderRadius: '2px',
+    background: 'linear-gradient(180deg, #D6D1C4 0%, #C2B8A3 100%)',
+    boxShadow: 'inset 0 0 0 1px rgba(0, 0, 0, 0.05)',
   },
 
   sidebarContent: {
@@ -6530,11 +6641,6 @@ const styles = {
     fontSize: '12px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
-  },
-
-  editingAsName: {
-    fontWeight: 600,
-    color: 'var(--charcoal)',
   },
 
   shortcutHint: {
