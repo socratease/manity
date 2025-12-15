@@ -2,27 +2,10 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
 import { callOpenAIChat } from '../lib/llmClient';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil } from '../lib/momentumValidation';
+import { getTheme, getPriorityColor as getThemePriorityColor, getStatusColor as getThemeStatusColor } from '../lib/theme';
 
-const colors = {
-  earth: '#8B6F47',
-  sage: '#7A9B76',
-  coral: '#D67C5C',
-  amber: '#E8A75D',
-  cream: '#FAF8F3',
-  cloud: '#E8E3D8',
-  stone: '#6B6554',
-  charcoal: '#3A3631',
-};
-
-const getPriorityColor = (priority) => {
-  const map = { high: colors.coral, medium: colors.amber, low: colors.sage };
-  return map[priority] || colors.stone;
-};
-
-const getStatusColor = (status) => {
-  const map = { active: colors.sage, planning: colors.amber, 'on-hold': colors.stone, completed: colors.earth };
-  return map[status] || colors.stone;
-};
+// Default to base theme, can be overridden by props
+const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
 
 // JSON Schema for structured output - ensures LLM returns properly formatted actions
 const momentumResponseSchema = {
@@ -56,8 +39,19 @@ export default function MomentumChat({
   onSendMessage,
   onApplyActions,
   onUndoAction,
-  loggedInUser = 'You'
+  loggedInUser = 'You',
+  people = [],
+  isSantafied = false
 }) {
+  const colors = getColors(isSantafied);
+  const getPriorityColor = (priority) => {
+    const map = { high: colors.coral, medium: colors.amber, low: colors.sage };
+    return map[priority] || colors.stone;
+  };
+  const getStatusColor = (status) => {
+    const map = { active: colors.sage, planning: colors.amber, 'on-hold': colors.stone, completed: colors.earth };
+    return map[status] || colors.stone;
+  };
   const { projects, addTask, updateTask, addSubtask, updateSubtask, updateProject, createProject, addActivity, createPerson } = usePortfolioData();
   const [inputValue, setInputValue] = useState('');
   const [hoveredProject, setHoveredProject] = useState(null);
@@ -198,22 +192,27 @@ export default function MomentumChat({
           if (project) {
             const updates = {};
             const previous = {};
+            const changesList = [];
 
             if (action.progress !== undefined) {
               updates.progress = action.progress;
               previous.progress = project.progress;
+              changesList.push(`Progress: ${previous.progress}% → ${action.progress}%`);
             }
             if (action.status !== undefined) {
               updates.status = action.status;
               previous.status = project.status;
+              changesList.push(`Status: ${previous.status} → ${action.status}`);
             }
             if (action.priority !== undefined) {
               updates.priority = action.priority;
               previous.priority = project.priority;
+              changesList.push(`Priority: ${previous.priority} → ${action.priority}`);
             }
             if (action.targetDate !== undefined) {
               updates.targetDate = action.targetDate;
               previous.targetDate = project.targetDate;
+              changesList.push(`Target: ${previous.targetDate || 'none'} → ${action.targetDate}`);
             }
 
             await updateProject(projectId, updates);
@@ -227,7 +226,7 @@ export default function MomentumChat({
               previous: previous
             });
 
-            actionResults.push({ type: 'update_project', label, deltas: actionDeltas });
+            actionResults.push({ type: 'update_project', label, deltas: actionDeltas, detail: changesList.join(', ') });
           }
 
         } else if (action.type === 'comment') {
@@ -250,7 +249,7 @@ export default function MomentumChat({
               activityId: newActivity.id
             });
 
-            actionResults.push({ type: 'comment', label, deltas: actionDeltas });
+            actionResults.push({ type: 'comment', label, deltas: actionDeltas, detail: newActivity.note });
           }
 
         } else if (action.type === 'add_task') {
@@ -275,7 +274,7 @@ export default function MomentumChat({
               taskId: newTask.id
             });
 
-            actionResults.push({ type: 'add_task', label, deltas: actionDeltas });
+            actionResults.push({ type: 'add_task', label, deltas: actionDeltas, detail: `Task: ${newTask.title}${newTask.dueDate ? `, Due: ${newTask.dueDate}` : ''}` });
           }
 
         } else if (action.type === 'update_task') {
@@ -406,18 +405,36 @@ export default function MomentumChat({
         description: p.description
       }));
 
+      const peopleContext = people.map(p => ({
+        name: p.name,
+        team: p.team,
+        email: p.email || null
+      }));
+
       const systemPrompt = `You are Momentum, an experienced technical project manager. Using dialectic project planning methodology, be concise but explicit about what you are doing, offer guiding prompts such as "have you thought of X yet?", and rely on the provided project data for context. Respond with a JSON object containing a 'response' string and an 'actions' array.
+
+LOGGED-IN USER: ${loggedInUser || 'Not set'}
+- When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
+- When adding comments or updates, use "${loggedInUser || 'You'}" as the author unless otherwise specified
+
+PEOPLE & EMAIL ADDRESSES:
+- Each person in the system may have an email address stored in their profile
+- When referencing people, you can look up their email addresses from the people list below
+- All project stakeholders/contributors are people with potential email addresses
 
 Available action types: ${supportedMomentumActions.join(', ')}.
 
 Current portfolio:
 ${JSON.stringify(portfolioContext, null, 2)}
 
+People database:
+${JSON.stringify(peopleContext, null, 2)}
+
 Guidelines:
 - For create_project: include name, priority, status, description, targetDate
 - For update_project: include projectId or projectName, and fields to update (progress, status, priority, targetDate)
 - For add_task/update_task: include projectId/projectName and task details
-- For comment: include projectId/projectName and note/content
+- For comment: include projectId/projectName and note/content (author will default to ${loggedInUser || 'You'})
 - Always reference existing projects by their exact ID or name`;
 
       const conversationMessages = [
@@ -525,6 +542,9 @@ Guidelines:
         {action.error && (
           <div style={styles.actionContent}>{action.error}</div>
         )}
+        {action.detail && !action.error && (
+          <div style={styles.actionDetail}>{action.detail}</div>
+        )}
       </div>
     );
   };
@@ -630,9 +650,15 @@ Guidelines:
           </div>
         </div>
 
-        {isHovered && (
+        {(isHovered || isRecentlyUpdated) && (
           <div style={styles.projectExpanded}>
             <p style={styles.projectDescription}>{project.description}</p>
+            {isRecentlyUpdated && project.recentActivity && project.recentActivity.length > 0 && (
+              <div style={styles.recentActivityPreview}>
+                <span style={styles.recentActivityLabel}>Latest update:</span>
+                <span style={styles.recentActivityText}>{project.recentActivity[0].note}</span>
+              </div>
+            )}
             <div style={styles.projectMeta}>
               <span style={{
                 ...styles.statusBadge,
@@ -916,6 +942,14 @@ const styles = {
     paddingLeft: '8px',
     borderLeft: '2px solid #E8E3D8',
   },
+  actionDetail: {
+    marginTop: '6px',
+    fontSize: '11px',
+    color: '#6B6554',
+    paddingLeft: '8px',
+    borderLeft: '2px solid #E8A75D',
+    fontStyle: 'italic',
+  },
   timestamp: {
     fontSize: '10px',
     color: '#6B6554',
@@ -1077,6 +1111,28 @@ const styles = {
     fontSize: '12px',
     color: '#6B6554',
     lineHeight: '1.45',
+  },
+  recentActivityPreview: {
+    margin: '0 0 10px',
+    padding: '8px',
+    backgroundColor: colors.sage + '15',
+    borderLeft: `3px solid ${colors.sage}`,
+    borderRadius: '6px',
+  },
+  recentActivityLabel: {
+    display: 'block',
+    fontSize: '9px',
+    fontWeight: '700',
+    color: colors.sage,
+    textTransform: 'uppercase',
+    letterSpacing: '0.3px',
+    marginBottom: '4px',
+  },
+  recentActivityText: {
+    display: 'block',
+    fontSize: '11px',
+    color: '#3A3631',
+    lineHeight: '1.4',
   },
   projectMeta: {
     display: 'flex',

@@ -188,7 +188,7 @@ export default function SettingsModal({
               <h3 style={styles.sectionTitle}>Email Server</h3>
             </div>
             <p style={styles.description}>
-              SMTP settings for AI-sent emails. Emails are sent anonymously from the server without authentication.
+              SMTP settings for AI-sent emails. The "from" address is automatically set to the logged-in user's email. Emails are sent anonymously from the server without authentication.
             </p>
 
             <div style={styles.compactGrid}>
@@ -222,10 +222,20 @@ export default function SettingsModal({
                 <input
                   id="smtp-from"
                   type="email"
-                  value={emailForm.fromAddress}
-                  onChange={(e) => updateEmailField('fromAddress', e.target.value)}
-                  style={styles.inputSmall}
-                  placeholder="noreply@example.com"
+                  value={(() => {
+                    // Find the logged-in user's email
+                    if (loggedInUser && allStakeholders) {
+                      const user = allStakeholders.find(s => s.name === loggedInUser);
+                      if (user && user.email) {
+                        return user.email;
+                      }
+                    }
+                    return emailForm.fromAddress;
+                  })()}
+                  readOnly
+                  style={{...styles.inputSmall, backgroundColor: '#f5f5f5', cursor: 'not-allowed'}}
+                  placeholder={loggedInUser ? `No email set for ${loggedInUser}` : "noreply@example.com"}
+                  title="From address is automatically set to the logged-in user's email"
                 />
               </div>
               <div style={styles.gridItem1}>

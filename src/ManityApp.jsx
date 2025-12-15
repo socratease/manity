@@ -342,6 +342,32 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }
   }, [projects]);
 
+  // Handle hash-based navigation (e.g., #/project/:id)
+  useEffect(() => {
+    const handleHashChange = () => {
+      const hash = window.location.hash;
+      const projectMatch = hash.match(/#\/project\/(.+)/);
+
+      if (projectMatch) {
+        const projectId = projectMatch[1];
+        setActiveView('overview');
+        setViewingProjectId(projectId);
+        // Optionally expand the first task
+        const project = projects.find(p => p.id === projectId);
+        if (project && project.plan.length > 0) {
+          setExpandedTasks(prev => ({ ...prev, [project.plan[0].id]: true }));
+        }
+      }
+    };
+
+    // Handle initial hash on mount
+    handleHashChange();
+
+    // Listen for hash changes
+    window.addEventListener('hashchange', handleHashChange);
+    return () => window.removeEventListener('hashchange', handleHashChange);
+  }, [projects]);
+
   // Overflow detection for slide panels
   useEffect(() => {
     if (activeView !== 'slides') return;
@@ -2678,8 +2704,20 @@ Write a professional executive summary that highlights the project's current sta
 
 Using dialectic project planning methodology, be concise but explicit about what you are doing, offer guiding prompts such as "have you thought of X yet?", and rely on the provided project data for context. Respond with a JSON object containing a 'response' string and an 'actions' array.
 
+LOGGED-IN USER: ${loggedInUser || 'Not set'}
+- When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
+- When adding comments or updates, use "${loggedInUser || 'You'}" as the author unless otherwise specified
+- When sending emails on behalf of the user, the "from" address will be automatically set to the logged-in user's email
+
+PEOPLE & EMAIL ADDRESSES:
+- Each person in the system may have an email address stored in their profile
+- People are stored with: name, team, and email (optional)
+- When sending emails, you can reference people by name and the system will resolve their email addresses
+- To find a person's email, use query_portfolio with scope='people' and includePeople=true
+- All project stakeholders/contributors are people with potential email addresses
+
 Supported atomic actions (never combine multiple changes into one action):
-- comment: log a project activity. Fields: projectId, note (or content), author (optional).
+- comment: log a project activity. Fields: projectId, note (or content), author (optional, defaults to logged-in user).
 - add_task: create a new task in a project. Fields: projectId, title, dueDate (optional), status (todo/in-progress/completed), completedDate (optional), assignee (person name, optional).
 - update_task: adjust a task. Fields: projectId, taskId or taskTitle, title (optional), status, dueDate, completedDate, assignee (person name or null to unassign).
 - add_subtask: create a subtask. Fields: projectId, taskId or taskTitle, subtaskTitle or title, status, dueDate, assignee (person name, optional).
@@ -2687,7 +2725,7 @@ Supported atomic actions (never combine multiple changes into one action):
 - update_project: change project fields. Fields: projectId, name (rename project), description (project description), executiveUpdate (executive summary), status (planning/active/on-hold/cancelled/completed), priority (low/medium/high), progress (0-100), targetDate, startDate, lastUpdate. Use project statuses: planning, active, on-hold, cancelled, or completed (never "in_progress").
 - create_project: create a new project. Fields: name (required), description (optional), priority (low/medium/high, default medium), status (planning/active/on-hold/cancelled, default active), targetDate (optional), stakeholders (comma-separated names, optional). Use the status value "active" for projects in flight.
 - add_person: add a person to the People database. Fields: name (required), team (optional), email (optional). If the person already exists, update their info instead of duplicating.
-- send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People, comma separated or array), subject (required), body (required). Do NOT include any AI signature in the email body - the system will automatically append one.
+- send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People database, comma separated or array), subject (required), body (required). Do NOT include any AI signature in the email body - the system will automatically append one.
 - query_portfolio: request portfolio data when you need fresh context. Fields: scope (portfolio/project/people), detailLevel (summary/detailed), includePeople (boolean), projectId or projectName (optional when scope is project).
 
 Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project. When creating projects, if you lack required information like name or description, ask the user for these details before proceeding with the action. If you need more context, call query_portfolio before taking other actions.`;
@@ -3525,15 +3563,15 @@ Keep tool calls granular (one discrete change per action), explain each action c
       <div style={{
         ...styles.container,
         ...(isSantafied && {
-          '--earth': '#8B4513',     // Saddle brown
-          '--sage': '#165B33',      // Forest green
-          '--coral': '#C41E3A',     // Christmas red
+          '--earth': '#C41E3A',     // Classic Christmas red
+          '--sage': '#165B33',      // Deep Christmas green
+          '--coral': '#FF6B6B',     // Bright festive red
           '--amber': '#FFD700',     // Gold
-          '--cream': '#FFF5EE',     // Seashell (warm white)
-          '--cloud': '#F0E6E0',     // Light pink/beige
-          '--stone': '#654321',     // Dark brown
-          '--charcoal': '#2C1810',  // Very dark brown
-          backgroundColor: '#FFF9F5',  // Slightly warmer background
+          '--cream': '#FFFAF0',     // Warm ivory
+          '--cloud': '#F0E6E6',     // Light pink-tinted cloud
+          '--stone': '#8B4513',     // Warm brown
+          '--charcoal': '#2C1810',  // Deep brown
+          backgroundColor: '#FFFAF0',  // Warm ivory background
           transition: 'background-color 0.5s ease',
         })
       }}>
@@ -5438,6 +5476,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
             }}
             onUndoAction={undoThrustAction}
             loggedInUser={loggedInUser}
+            people={people}
+            isSantafied={isSantafied}
           />
         ) : activeView === 'slides' ? (
           <>
@@ -5765,7 +5805,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
           // Projects Overview
           <>
             <div style={{ marginBottom: '24px' }}>
-              <PeopleProjectsJuggle projects={visibleProjects} people={people} />
+              <PeopleProjectsJuggle projects={visibleProjects} people={people} isSantafied={isSantafied} />
             </div>
             <header style={styles.header}>
               <div>

@@ -1,26 +1,18 @@
 import React, { useRef, useEffect, useState } from 'react';
+import { getTheme } from '../lib/theme';
 
-const colors = {
-  earth: '#8B6F47',
-  sage: '#7A9B76',
-  coral: '#D67C5C',
-  amber: '#E8A75D',
-  cream: '#FAF8F3',
-  cloud: '#E8E3D8',
-  stone: '#6B6554',
-  charcoal: '#3A3631',
-};
+const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
 
-const getPriorityColor = (priority) => {
-  const priorityColors = {
-    high: colors.coral,
-    medium: colors.amber,
-    low: colors.sage,
+function PeopleProjectsJuggle({ projects = [], people = [], isSantafied = false }) {
+  const colors = getColors(isSantafied);
+  const getPriorityColor = (priority) => {
+    const priorityColors = {
+      high: colors.coral,
+      medium: colors.amber,
+      low: colors.sage,
+    };
+    return priorityColors[priority] || colors.stone;
   };
-  return priorityColors[priority] || colors.stone;
-};
-
-function PeopleProjectsJuggle({ projects = [], people = [] }) {
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
   const stateRef = useRef(null);
@@ -299,6 +291,35 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
         ctx.fillText(initials || '?', personState.x, drawY);
+
+        // Draw santa hat if santafied
+        if (isSantafied) {
+          const hatX = personState.x;
+          const hatY = drawY - personState.radius;
+          const hatWidth = personState.radius * 1.5;
+          const hatHeight = personState.radius * 1.2;
+
+          // Draw the main red part of the hat (triangle)
+          ctx.fillStyle = '#C41E3A';
+          ctx.beginPath();
+          ctx.moveTo(hatX - hatWidth / 2, hatY);
+          ctx.lineTo(hatX + hatWidth / 2, hatY);
+          ctx.lineTo(hatX + hatWidth * 0.1, hatY - hatHeight);
+          ctx.closePath();
+          ctx.fill();
+
+          // Draw white trim at the base
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.ellipse(hatX, hatY, hatWidth / 2, hatWidth * 0.15, 0, 0, Math.PI * 2);
+          ctx.fill();
+
+          // Draw white pom-pom at the top
+          ctx.fillStyle = '#FFFFFF';
+          ctx.beginPath();
+          ctx.arc(hatX + hatWidth * 0.1, hatY - hatHeight, hatWidth * 0.25, 0, Math.PI * 2);
+          ctx.fill();
+        }
       });
 
       const time = Date.now() / 1000;
