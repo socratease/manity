@@ -106,27 +106,9 @@ const ChristmasConfetti = () => {
 
     // Handle keyboard events
     const handleKeyPress = (e) => {
-      // Get the position of the active element (where typing is happening)
-      const activeElement = document.activeElement;
-      let x = window.innerWidth / 2;
-      let y = window.innerHeight / 2;
-
-      // If there's an active input/textarea element, get its position
-      if (activeElement && (
-        activeElement.tagName === 'INPUT' ||
-        activeElement.tagName === 'TEXTAREA' ||
-        activeElement.isContentEditable
-      )) {
-        const rect = activeElement.getBoundingClientRect();
-        // Position confetti near the input element
-        x = rect.left + rect.width / 2 + (Math.random() - 0.5) * 100;
-        y = rect.top + rect.height / 2 + (Math.random() - 0.5) * 100;
-      } else {
-        // Fallback to random position near center if no input is focused
-        x = window.innerWidth / 2 + (Math.random() - 0.5) * 200;
-        y = window.innerHeight / 2 + (Math.random() - 0.5) * 200;
-      }
-
+      // Generate confetti at random position near center of screen
+      const x = window.innerWidth / 2 + (Math.random() - 0.5) * 200;
+      const y = window.innerHeight / 2 + (Math.random() - 0.5) * 200;
       createConfetti(x, y);
     };
 

@@ -29,11 +29,10 @@ const SnowEffect = () => {
       reset() {
         this.x = Math.random() * canvas.width;
         this.y = -10;
-        this.radius = Math.random() * 3 + 1.5; // Larger snowflakes
+        this.radius = Math.random() * 2 + 1;
         this.speed = Math.random() * 1 + 0.5;
         this.drift = Math.random() * 0.5 - 0.25;
         this.opacity = Math.random() * 0.6 + 0.4;
-        this.isTinted = Math.random() > 0.6; // 40% chance of blue tint
       }
 
       update() {
@@ -47,8 +46,7 @@ const SnowEffect = () => {
             x: this.x,
             y: canvas.height - Math.random() * 5,
             radius: this.radius,
-            opacity: this.opacity * 0.8,
-            isTinted: this.isTinted
+            opacity: this.opacity * 0.8
           });
 
           // Limit accumulation
@@ -66,23 +64,10 @@ const SnowEffect = () => {
       }
 
       draw(ctx) {
-        // Add shadow/glow for better visibility
-        ctx.shadowBlur = 8;
-        ctx.shadowColor = this.isTinted ? 'rgba(173, 216, 230, 0.8)' : 'rgba(255, 255, 255, 0.8)';
-
         ctx.beginPath();
         ctx.arc(this.x, this.y, this.radius, 0, Math.PI * 2);
-
-        // Use light blue tint for some snowflakes
-        if (this.isTinted) {
-          ctx.fillStyle = `rgba(230, 245, 255, ${this.opacity})`;
-        } else {
-          ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity})`;
-        }
+        ctx.fillStyle = `rgba(255, 255, 255, ${this.opacity})`;
         ctx.fill();
-
-        // Reset shadow
-        ctx.shadowBlur = 0;
       }
     }
 
@@ -101,21 +86,10 @@ const SnowEffect = () => {
 
       // Draw accumulated snow
       accumulationRef.current.forEach(snow => {
-        // Add shadow/glow
-        ctx.shadowBlur = 6;
-        ctx.shadowColor = snow.isTinted ? 'rgba(173, 216, 230, 0.6)' : 'rgba(255, 255, 255, 0.6)';
-
         ctx.beginPath();
         ctx.arc(snow.x, snow.y, snow.radius, 0, Math.PI * 2);
-
-        if (snow.isTinted) {
-          ctx.fillStyle = `rgba(230, 245, 255, ${snow.opacity})`;
-        } else {
-          ctx.fillStyle = `rgba(255, 255, 255, ${snow.opacity})`;
-        }
+        ctx.fillStyle = `rgba(255, 255, 255, ${snow.opacity})`;
         ctx.fill();
-
-        ctx.shadowBlur = 0;
       });
 
       // Update and draw falling snowflakes
