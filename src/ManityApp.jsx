@@ -8,7 +8,6 @@ import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
 import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
-import MomentumChat from './MomentumChat';
 import SnowEffect from './components/SnowEffect';
 import ChristmasConfetti from './components/ChristmasConfetti';
 
