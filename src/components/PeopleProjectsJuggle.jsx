@@ -26,6 +26,7 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
   const stateRef = useRef(null);
   const dimensionsRef = useRef({ width: 800, height: 450 });
   const [canvasKey, setCanvasKey] = useState(0);
+  const [hoveredProject, setHoveredProject] = useState(null);
 
   useEffect(() => {
     const updateDimensions = () => {
@@ -323,6 +324,52 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
     };
   }, [projects, people, canvasKey]);
 
+  // Handle canvas click to navigate to project
+  const handleCanvasClick = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !stateRef.current) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Check if click is on a project card
+    const clickedProject = stateRef.current.projects.find(proj => {
+      const dx = Math.abs(proj.x - x);
+      const dy = Math.abs(proj.y - y);
+      return dx < proj.width / 2 && dy < proj.height / 2;
+    });
+
+    if (clickedProject) {
+      window.location.hash = `#/project/${clickedProject.id}`;
+    }
+  };
+
+  // Handle canvas hover to show pointer cursor
+  const handleCanvasMouseMove = (e) => {
+    const canvas = canvasRef.current;
+    if (!canvas || !stateRef.current) return;
+
+    const rect = canvas.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+
+    // Check if hovering over a project card
+    const hoveredProj = stateRef.current.projects.find(proj => {
+      const dx = Math.abs(proj.x - x);
+      const dy = Math.abs(proj.y - y);
+      return dx < proj.width / 2 && dy < proj.height / 2;
+    });
+
+    if (hoveredProj) {
+      canvas.style.cursor = 'pointer';
+      setHoveredProject(hoveredProj.id);
+    } else {
+      canvas.style.cursor = 'default';
+      setHoveredProject(null);
+    }
+  };
+
   return (
     <div style={{
       width: '100%',
@@ -332,7 +379,12 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
       border: '1px solid #E8E3D8',
       boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
     }}>
-      <canvas ref={canvasRef} style={{ display: 'block', width: '100%' }} />
+      <canvas
+        ref={canvasRef}
+        style={{ display: 'block', width: '100%' }}
+        onClick={handleCanvasClick}
+        onMouseMove={handleCanvasMouseMove}
+      />
       <div style={{
         display: 'flex',
         justifyContent: 'center',
