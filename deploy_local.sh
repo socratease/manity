@@ -71,7 +71,7 @@ mask_env() {
 
 print_config_summary() {
   msg "Configuration:"
-  for k in BACKEND_DIR BACKEND_APP BACKEND_PORT FRONTEND_DIR FRONTEND_PORT LOG_DIR VENV_DIR RUN_DIR; do
+  for k in BACKEND_DIR BACKEND_APP BACKEND_PORT FRONTEND_DIR FRONTEND_PORT LOG_DIR VENV_DIR RUN_DIR DATABASE_URL BACKUP_DIR; do
     # shellcheck disable=SC2154
     v="${!k}"
     printf "  %-14s = %s\n" "$k" "$(mask_env "$k" "$v")"
@@ -123,6 +123,10 @@ BACKEND_DIR="${BACKEND_DIR:-backend}"           # path to FastAPI project (has r
 BACKEND_APP="${BACKEND_APP:-app.main:app}"      # ASGI path for uvicorn, e.g., "app.main:app"
 BACKEND_PORT="${BACKEND_PORT:-8000}"
 
+# Default to production database path unless overridden
+DATABASE_URL="${DATABASE_URL:-sqlite:////home/c17420g/projects/manity-data/portfolio.db}"
+BACKUP_DIR="${BACKUP_DIR:-/home/c17420g/projects/manity-data/backups}"
+
 FRONTEND_DIR="${FRONTEND_DIR:-frontend}"        # path to React project (has package.json)
 FRONTEND_PORT="${FRONTEND_PORT:-3000}"
 
@@ -155,8 +159,31 @@ validate_path_exists "Frontend" "$FRONTEND_DIR"
 ensure_dir "$LOG_DIR"
 ensure_dir "$RUN_DIR"
 ensure_dir "$(dirname "$VENV_DIR")"
+ensure_dir "$BACKUP_DIR"
+
+# Resolve SQLite path for backups if using SQLite
+if [[ "$DATABASE_URL" == sqlite:* ]]; then
+  DB_PATH="${DATABASE_URL#sqlite:}"
+  DB_PATH="${DB_PATH#//}"
+  DB_PATH="${DB_PATH#//}"
+fi
 
 print_config_summary
+
+##############################################
+# Backup database (SQLite only)
+##############################################
+if [[ -n "${DB_PATH:-}" && -f "$DB_PATH" ]]; then
+  timestamp=$(date +"%Y%m%d-%H%M%S")
+  db_filename=$(basename "$DB_PATH")
+  backup_path="$BACKUP_DIR/${db_filename%.*}-${timestamp}.${db_filename##*.}"
+  msg "Backing up database $DB_PATH -> $backup_path"
+  cp "$DB_PATH" "$backup_path"
+elif [[ -n "${DB_PATH:-}" ]]; then
+  msg "No existing SQLite database found at $DB_PATH; skipping backup"
+else
+  msg "DATABASE_URL is not SQLite; skipping backup"
+fi
 
 ##############################################
 # Python venv and backend dependencies
@@ -270,7 +297,7 @@ kill_if_running "frontend"
 # Start backend (uvicorn)
 ##############################################
 BACKEND_LOG="$LOG_DIR/backend.log"
-BACKEND_CMD="cd \"$BACKEND_DIR\" && \"$VENV_DIR/bin/uvicorn\" \"$BACKEND_APP\" --host 0.0.0.0 --port $BACKEND_PORT"
+BACKEND_CMD="cd \"$BACKEND_DIR\" && DATABASE_URL=\"$DATABASE_URL\" \"$VENV_DIR/bin/uvicorn\" \"$BACKEND_APP\" --host 0.0.0.0 --port $BACKEND_PORT"
 start_bg "$BACKEND_CMD" "$BACKEND_LOG" "backend"
 
 ##############################################
