@@ -4120,8 +4120,11 @@ Keep tool calls granular (one discrete change per action), explain each action c
         {viewingProject ? (
           // Project Details View
           <div style={styles.detailsContainer}>
-            <button 
-              onClick={() => setViewingProjectId(null)}
+            <button
+              onClick={() => {
+                setViewingProjectId(null);
+                updateHash('overview');
+              }}
               style={styles.backButton}
             >
               <ArrowLeft size={18} />
