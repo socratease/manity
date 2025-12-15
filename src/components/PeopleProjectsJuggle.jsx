@@ -20,7 +20,7 @@ const getPriorityColor = (priority) => {
   return priorityColors[priority] || colors.stone;
 };
 
-function PeopleProjectsJuggle({ projects = [], people = [] }) {
+function PeopleProjectsJuggle({ projects = [], people = [], onProjectClick }) {
   const canvasRef = useRef(null);
   const animationRef = useRef(null);
   const stateRef = useRef(null);
@@ -315,13 +315,43 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
 
     animationRef.current = requestAnimationFrame(animate);
 
+    // Add click handler for project cards
+    const handleCanvasClick = (e) => {
+      if (!onProjectClick) return;
+
+      const rect = canvas.getBoundingClientRect();
+      const clickX = e.clientX - rect.left;
+      const clickY = e.clientY - rect.top;
+
+      // Check if click is on any project card
+      const state = stateRef.current;
+      if (!state) return;
+
+      for (const projectState of state.projects) {
+        const { x, y, width, height } = projectState;
+        // Check if click is within card bounds
+        if (
+          clickX >= x - width / 2 &&
+          clickX <= x + width / 2 &&
+          clickY >= y - height / 2 &&
+          clickY <= y + height / 2
+        ) {
+          onProjectClick(projectState.project);
+          break;
+        }
+      }
+    };
+
+    canvas.addEventListener('click', handleCanvasClick);
+
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
       }
+      canvas.removeEventListener('click', handleCanvasClick);
     };
-  }, [projects, people, canvasKey]);
+  }, [projects, people, canvasKey, onProjectClick]);
 
   return (
     <div style={{
@@ -332,7 +362,14 @@ function PeopleProjectsJuggle({ projects = [], people = [] }) {
       border: '1px solid #E8E3D8',
       boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
     }}>
-      <canvas ref={canvasRef} style={{ display: 'block', width: '100%' }} />
+      <canvas
+        ref={canvasRef}
+        style={{
+          display: 'block',
+          width: '100%',
+          cursor: onProjectClick ? 'pointer' : 'default'
+        }}
+      />
       <div style={{
         display: 'flex',
         justifyContent: 'center',

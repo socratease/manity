@@ -77,9 +77,9 @@ const ChristmasConfetti = () => {
   }
 
   // Create confetti at specific location
-  const createConfetti = useCallback((x, y) => {
-    const count = Math.floor(Math.random() * 3) + 1; // 1-3 pieces
-    for (let i = 0; i < count; i++) {
+  const createConfetti = useCallback((x, y, count = null) => {
+    const numPieces = count !== null ? count : Math.floor(Math.random() * 3) + 1; // Use specified count or 1-3 pieces
+    for (let i = 0; i < numPieces; i++) {
       const emoji = confettiEmojis[Math.floor(Math.random() * confettiEmojis.length)];
       confettiRef.current.push(new ConfettiPiece(x, y, emoji));
     }
@@ -106,10 +106,23 @@ const ChristmasConfetti = () => {
 
     // Handle keyboard events
     const handleKeyPress = (e) => {
-      // Generate confetti at random position near center of screen
-      const x = window.innerWidth / 2 + (Math.random() - 0.5) * 200;
-      const y = window.innerHeight / 2 + (Math.random() - 0.5) * 200;
-      createConfetti(x, y);
+      // Only create one emoji per keystroke
+      // Try to position near the active input element
+      const activeElement = document.activeElement;
+      let x, y;
+
+      if (activeElement && (activeElement.tagName === 'INPUT' || activeElement.tagName === 'TEXTAREA')) {
+        const rect = activeElement.getBoundingClientRect();
+        // Position near the input field with slight randomness
+        x = rect.left + rect.width / 2 + (Math.random() - 0.5) * 100;
+        y = rect.top + rect.height / 2 + (Math.random() - 0.5) * 50;
+      } else {
+        // Fallback to center of screen
+        x = window.innerWidth / 2 + (Math.random() - 0.5) * 200;
+        y = window.innerHeight / 2 + (Math.random() - 0.5) * 200;
+      }
+
+      createConfetti(x, y, 1); // Only 1 emoji per keystroke
     };
 
     window.addEventListener('click', handleClick);

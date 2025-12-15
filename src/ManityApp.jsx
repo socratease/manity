@@ -121,6 +121,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   // Momentum highlight state - tracks recently updated projects from AI
   const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState(new Set());
+  // Track when projects were last updated by Momentum for persistent sorting
+  const [momentumProjectUpdateTimes, setMomentumProjectUpdateTimes] = useState({});
 
   // Momentum chat redesign - portfolio panel state
   const [portfolioMinimized, setPortfolioMinimized] = useState(true);
@@ -2711,7 +2713,16 @@ Keep tool calls granular (one discrete change per action), explain each action c
 
       // Track recently updated projects for highlighting
       if (updatedProjectIds && updatedProjectIds.length > 0) {
+        const updateTime = Date.now();
         setRecentlyUpdatedProjects(new Set(updatedProjectIds));
+        // Track update times for persistent sorting
+        setMomentumProjectUpdateTimes(prev => {
+          const next = { ...prev };
+          updatedProjectIds.forEach(id => {
+            next[String(id)] = updateTime;
+          });
+          return next;
+        });
         // Expand all updated projects in the momentum view
         setExpandedMomentumProjects(prev => {
           const newExpanded = { ...prev };
@@ -3501,14 +3512,14 @@ Keep tool calls granular (one discrete change per action), explain each action c
       <div style={{
         ...styles.container,
         ...(isSantafied && {
-          '--earth': '#8B4513',     // Saddle brown
-          '--sage': '#165B33',      // Forest green
-          '--coral': '#C41E3A',     // Christmas red
+          '--earth': '#C41E3A',     // Vibrant Christmas red
+          '--sage': '#0F6B3D',      // Rich forest green
+          '--coral': '#DC143C',     // Bright crimson
           '--amber': '#FFD700',     // Gold
-          '--cream': '#FFF5EE',     // Seashell (warm white)
-          '--cloud': '#F0E6E0',     // Light pink/beige
-          '--stone': '#654321',     // Dark brown
-          '--charcoal': '#2C1810',  // Very dark brown
+          '--cream': '#FFF9F5',     // Warm cream
+          '--cloud': '#FFE8E8',     // Light pink
+          '--stone': '#8B0000',     // Dark red
+          '--charcoal': '#004D1A',  // Deep green
         })
       }}>
       {/* Daily Check-in Modal */}
@@ -5514,12 +5525,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                         onMouseEnter={() => setHoveredMessageProject(project.id)}
                                         onMouseLeave={() => setHoveredMessageProject(null)}
                                         onClick={() => {
-                                          setActiveProjectInChat(project.id);
-                                          setPortfolioMinimized(false);
-                                          setExpandedMomentumProjects(prev => ({
-                                            ...prev,
-                                            [String(project.id)]: true
-                                          }));
+                                          setViewingProjectId(project.id);
+                                          setActiveView('overview');
                                         }}
                                       >
                                         <div style={styles.momentumInlineProjectHeader}>
@@ -5809,11 +5816,12 @@ Keep tool calls granular (one discrete change per action), explain each action c
                           const bActive = activeProjectInChat === b.id || activeProjectInChat === String(b.id);
                           if (aActive && !bActive) return -1;
                           if (!aActive && bActive) return 1;
-                          // Then recently updated
-                          const aUpdated = recentlyUpdatedProjects.has(a.id);
-                          const bUpdated = recentlyUpdatedProjects.has(b.id);
-                          if (aUpdated && !bUpdated) return -1;
-                          if (!aUpdated && bUpdated) return 1;
+                          // Then recently updated (persistent sorting by update time)
+                          const aUpdateTime = momentumProjectUpdateTimes[String(a.id)] || 0;
+                          const bUpdateTime = momentumProjectUpdateTimes[String(b.id)] || 0;
+                          if (aUpdateTime !== bUpdateTime) {
+                            return bUpdateTime - aUpdateTime; // Most recently updated first
+                          }
                           return 0;
                         }).map(project => {
                           const projectId = String(project.id);
@@ -5832,16 +5840,32 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                 ...(isRecentlyUpdated ? styles.momentumPortfolioCardHighlight : {})
                               }}
                             >
-                              <button
-                                style={styles.momentumPortfolioCardHeader}
-                                onClick={() => {
-                                  setExpandedMomentumProjects(prev => ({
-                                    ...prev,
-                                    [projectId]: !isExpanded
-                                  }));
-                                  setActiveProjectInChat(project.id);
+                              <div
+                                style={{
+                                  ...styles.momentumPortfolioCardHeader,
+                                  display: 'flex',
+                                  gap: '8px'
                                 }}
                               >
+                                <button
+                                  style={{
+                                    flex: 1,
+                                    background: 'transparent',
+                                    border: 'none',
+                                    padding: 0,
+                                    cursor: 'pointer',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    justifyContent: 'space-between'
+                                  }}
+                                  onClick={() => {
+                                    setExpandedMomentumProjects(prev => ({
+                                      ...prev,
+                                      [projectId]: !isExpanded
+                                    }));
+                                    setActiveProjectInChat(project.id);
+                                  }}
+                                >
                                 <div style={styles.momentumPortfolioCardTitle}>
                                   <div style={{
                                     ...styles.momentumPortfolioCardDot,
@@ -5861,6 +5885,29 @@ Keep tool calls granular (one discrete change per action), explain each action c
                                   />
                                 </div>
                               </button>
+                                <button
+                                  style={{
+                                    background: 'transparent',
+                                    border: 'none',
+                                    padding: '4px',
+                                    cursor: 'pointer',
+                                    color: 'var(--earth)',
+                                    display: 'flex',
+                                    alignItems: 'center',
+                                    opacity: 0.7,
+                                    transition: 'opacity 0.2s ease'
+                                  }}
+                                  onClick={() => {
+                                    setViewingProjectId(project.id);
+                                    setActiveView('overview');
+                                  }}
+                                  onMouseEnter={(e) => e.currentTarget.style.opacity = '1'}
+                                  onMouseLeave={(e) => e.currentTarget.style.opacity = '0.7'}
+                                  title="View project details"
+                                >
+                                  <ArrowLeft size={14} style={{ transform: 'rotate(180deg)' }} />
+                                </button>
+                              </div>
 
                               {/* Progress Bar */}
                               <div style={styles.momentumPortfolioProgress}>
@@ -6256,7 +6303,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
           // Projects Overview
           <>
             <div style={{ marginBottom: '24px' }}>
-              <PeopleProjectsJuggle projects={visibleProjects} people={people} />
+              <PeopleProjectsJuggle
+                projects={visibleProjects}
+                people={people}
+                onProjectClick={(project) => {
+                  setViewingProjectId(project.id);
+                }}
+              />
             </div>
             <header style={styles.header}>
               <div>
@@ -10283,6 +10336,7 @@ const styles = {
   momentumContainer: {
     display: 'flex',
     height: 'calc(100vh - 100px)',
+    minHeight: '400px',
     gap: '0',
     overflow: 'hidden',
   },
@@ -10355,9 +10409,11 @@ const styles = {
   momentumMessagesContainer: {
     flex: 1,
     overflowY: 'auto',
+    overflowX: 'hidden',
     padding: '24px',
     display: 'flex',
     flexDirection: 'column',
+    minHeight: 0, // Allows flex child to shrink below content size
   },
 
   momentumEmptyChat: {
