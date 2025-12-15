@@ -44,6 +44,7 @@ export default function MomentumChat({
   isSantafied = false
 }) {
   const colors = getColors(isSantafied);
+  const styles = getStyles(colors);
   const getPriorityColor = (priority) => {
     const map = { high: colors.coral, medium: colors.amber, low: colors.sage };
     return map[priority] || colors.stone;
@@ -781,7 +782,7 @@ Guidelines:
   );
 }
 
-const styles = {
+const getStyles = (colors) => ({
   container: {
     display: 'flex',
     height: '100vh',
@@ -1199,4 +1200,4 @@ const styles = {
       backgroundColor: colors.stone + '40',
     }
   },
-};
+});
