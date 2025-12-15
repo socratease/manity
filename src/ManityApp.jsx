@@ -3499,6 +3499,29 @@ Keep tool calls granular (one discrete change per action), explain each action c
         </div>
       )}
 
+      {/* Festive Banner */}
+      {isSantafied && (
+        <div style={{
+          position: 'fixed',
+          top: 0,
+          left: 0,
+          right: 0,
+          height: '3px',
+          background: 'linear-gradient(90deg, #C41E3A 0%, #165B33 25%, #FFD700 50%, #C41E3A 75%, #165B33 100%)',
+          backgroundSize: '200% 100%',
+          animation: 'festiveSlide 3s linear infinite',
+          zIndex: 9999,
+        }} />
+      )}
+      <style>
+        {isSantafied && `
+          @keyframes festiveSlide {
+            0% { background-position: 0% 0%; }
+            100% { background-position: 200% 0%; }
+          }
+        `}
+      </style>
+
       <div style={{
         ...styles.container,
         ...(isSantafied && {
@@ -3510,6 +3533,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
           '--cloud': '#F0E6E0',     // Light pink/beige
           '--stone': '#654321',     // Dark brown
           '--charcoal': '#2C1810',  // Very dark brown
+          backgroundColor: '#FFF9F5',  // Slightly warmer background
+          transition: 'background-color 0.5s ease',
         })
       }}>
       {/* Daily Check-in Modal */}
@@ -5411,6 +5436,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 });
               }
             }}
+            onUndoAction={undoThrustAction}
             loggedInUser={loggedInUser}
           />
         ) : activeView === 'slides' ? (

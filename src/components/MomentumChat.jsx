@@ -55,6 +55,7 @@ export default function MomentumChat({
   messages = [],
   onSendMessage,
   onApplyActions,
+  onUndoAction,
   loggedInUser = 'You'
 }) {
   const { projects, addTask, updateTask, addSubtask, updateSubtask, updateProject, createProject, addActivity, createPerson } = usePortfolioData();
@@ -63,6 +64,7 @@ export default function MomentumChat({
   const [linkedMessageId, setLinkedMessageId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
   const [projectPositions, setProjectPositions] = useState({});
+  const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState({});
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
@@ -159,6 +161,7 @@ export default function MomentumChat({
       try {
         let label = '';
         let projectId = action.projectId;
+        const actionDeltas = [];
 
         if (action.type === 'create_project') {
           const newProject = {
@@ -181,21 +184,50 @@ export default function MomentumChat({
           projectId = created.id;
           updatedProjectIds.push(projectId);
           label = `Created project "${created.name}"`;
-          actionResults.push({ type: 'create_project', label, deltas: [] });
+
+          // Track delta for undo
+          actionDeltas.push({
+            type: 'remove_project',
+            projectId: created.id
+          });
+
+          actionResults.push({ type: 'create_project', label, deltas: actionDeltas });
 
         } else if (action.type === 'update_project') {
           const project = projects.find(p => p.id === projectId);
           if (project) {
             const updates = {};
-            if (action.progress !== undefined) updates.progress = action.progress;
-            if (action.status !== undefined) updates.status = action.status;
-            if (action.priority !== undefined) updates.priority = action.priority;
-            if (action.targetDate !== undefined) updates.targetDate = action.targetDate;
+            const previous = {};
+
+            if (action.progress !== undefined) {
+              updates.progress = action.progress;
+              previous.progress = project.progress;
+            }
+            if (action.status !== undefined) {
+              updates.status = action.status;
+              previous.status = project.status;
+            }
+            if (action.priority !== undefined) {
+              updates.priority = action.priority;
+              previous.priority = project.priority;
+            }
+            if (action.targetDate !== undefined) {
+              updates.targetDate = action.targetDate;
+              previous.targetDate = project.targetDate;
+            }
 
             await updateProject(projectId, updates);
             updatedProjectIds.push(projectId);
             label = `Updated "${project.name}"`;
-            actionResults.push({ type: 'update_project', label, deltas: [] });
+
+            // Track delta for undo
+            actionDeltas.push({
+              type: 'restore_project',
+              projectId: projectId,
+              previous: previous
+            });
+
+            actionResults.push({ type: 'update_project', label, deltas: actionDeltas });
           }
 
         } else if (action.type === 'comment') {
@@ -210,7 +242,15 @@ export default function MomentumChat({
             await addActivity(projectId, newActivity);
             updatedProjectIds.push(projectId);
             label = `Added comment to "${project.name}"`;
-            actionResults.push({ type: 'comment', label, deltas: [] });
+
+            // Track delta for undo
+            actionDeltas.push({
+              type: 'remove_activity',
+              projectId: projectId,
+              activityId: newActivity.id
+            });
+
+            actionResults.push({ type: 'comment', label, deltas: actionDeltas });
           }
 
         } else if (action.type === 'add_task') {
@@ -227,23 +267,57 @@ export default function MomentumChat({
             await addTask(projectId, newTask);
             updatedProjectIds.push(projectId);
             label = `Added task "${newTask.title}" to "${project.name}"`;
-            actionResults.push({ type: 'add_task', label, deltas: [] });
+
+            // Track delta for undo
+            actionDeltas.push({
+              type: 'remove_task',
+              projectId: projectId,
+              taskId: newTask.id
+            });
+
+            actionResults.push({ type: 'add_task', label, deltas: actionDeltas });
           }
 
         } else if (action.type === 'update_task') {
           const project = projects.find(p => p.id === projectId);
           if (project) {
             const taskId = action.taskId;
+            const task = project.plan?.find(t => t.id === taskId);
             const updates = {};
-            if (action.completed !== undefined) updates.completed = action.completed;
-            if (action.title !== undefined) updates.title = action.title;
-            if (action.dueDate !== undefined) updates.dueDate = action.dueDate;
-            if (action.assignedTo !== undefined) updates.assignedTo = action.assignedTo;
+            const previous = {};
+
+            if (task) {
+              if (action.completed !== undefined) {
+                updates.completed = action.completed;
+                previous.completed = task.completed;
+              }
+              if (action.title !== undefined) {
+                updates.title = action.title;
+                previous.title = task.title;
+              }
+              if (action.dueDate !== undefined) {
+                updates.dueDate = action.dueDate;
+                previous.dueDate = task.dueDate;
+              }
+              if (action.assignedTo !== undefined) {
+                updates.assignedTo = action.assignedTo;
+                previous.assignedTo = task.assignedTo;
+              }
+            }
 
             await updateTask(projectId, taskId, updates);
             updatedProjectIds.push(projectId);
             label = `Updated task in "${project.name}"`;
-            actionResults.push({ type: 'update_task', label, deltas: [] });
+
+            // Track delta for undo
+            actionDeltas.push({
+              type: 'restore_task',
+              projectId: projectId,
+              taskId: taskId,
+              previous: previous
+            });
+
+            actionResults.push({ type: 'update_task', label, deltas: actionDeltas });
           }
 
         } else if (action.type === 'add_subtask') {
@@ -259,7 +333,16 @@ export default function MomentumChat({
             await addSubtask(projectId, action.taskId, newSubtask);
             updatedProjectIds.push(projectId);
             label = `Added subtask to "${project.name}"`;
-            actionResults.push({ type: 'add_subtask', label, deltas: [] });
+
+            // Track delta for undo
+            actionDeltas.push({
+              type: 'remove_subtask',
+              projectId: projectId,
+              taskId: action.taskId,
+              subtaskId: newSubtask.id
+            });
+
+            actionResults.push({ type: 'add_subtask', label, deltas: actionDeltas });
           }
 
         } else if (action.type === 'add_person') {
@@ -271,9 +354,13 @@ export default function MomentumChat({
               email: action.email || null
             });
             label = `Added person "${personName}"`;
+            // Note: No undo tracking for add_person yet
             actionResults.push({ type: 'add_person', label, deltas: [] });
           }
         }
+
+        // Collect all deltas
+        deltas.push(...actionDeltas);
 
       } catch (error) {
         console.error('Error applying action:', action, error);
@@ -340,7 +427,21 @@ Guidelines:
       ];
 
       const { parsed, content } = await requestMomentumActions(conversationMessages);
-      const { actionResults, updatedProjectIds } = await applyThrustActions(parsed.actions || []);
+      // Use validated actions with resolved project IDs
+      const { validActions } = validateThrustActions(parsed.actions || []);
+      const { actionResults, updatedProjectIds } = await applyThrustActions(validActions);
+
+      // Track recently updated projects with timestamps
+      if (updatedProjectIds.length > 0) {
+        const now = Date.now();
+        setRecentlyUpdatedProjects(prev => {
+          const updated = { ...prev };
+          updatedProjectIds.forEach(id => {
+            updated[id] = now;
+          });
+          return updated;
+        });
+      }
 
       const assistantMessage = {
         id: `msg-${Date.now() + 1}`,
@@ -352,6 +453,7 @@ Guidelines:
         actionResults,
         updatedProjectIds,
         linkedProjectIds: updatedProjectIds,
+        deltas: actionResults.flatMap(ar => ar.deltas || []),
       };
 
       // Call parent handler to add assistant message
@@ -387,7 +489,13 @@ Guidelines:
 
   const formatTime = (ts) => new Date(ts).toLocaleTimeString('en-US', { hour: 'numeric', minute: '2-digit' });
 
-  const renderAction = (action, index) => {
+  const handleUndoAction = (messageId, actionIndex) => {
+    if (onUndoAction) {
+      onUndoAction(messageId, actionIndex);
+    }
+  };
+
+  const renderAction = (action, index, messageId) => {
     const icons = { update_project: '↻', update_task: '✓', comment: '💬', create_project: '✦', add_task: '➕' };
     const labels = { update_project: 'Updated', update_task: 'Task updated', comment: 'Commented', create_project: 'Created', add_task: 'Added task' };
 
@@ -399,11 +507,20 @@ Guidelines:
           <span style={styles.actionProject}>{action.label || action.type}</span>
           <span style={{
             ...styles.actionStatus,
-            backgroundColor: action.error ? colors.coral + '25' : colors.sage + '25',
-            color: action.error ? colors.coral : colors.sage,
+            backgroundColor: action.undone ? colors.stone + '25' : action.error ? colors.coral + '25' : colors.sage + '25',
+            color: action.undone ? colors.stone : action.error ? colors.coral : colors.sage,
           }}>
-            {action.error ? 'failed' : 'completed'}
+            {action.undone ? 'undone' : action.error ? 'failed' : 'completed'}
           </span>
+          {!action.undone && !action.error && onUndoAction && (
+            <button
+              onClick={() => handleUndoAction(messageId, index)}
+              style={styles.undoButton}
+              title="Undo this action"
+            >
+              ↶
+            </button>
+          )}
         </div>
         {action.error && (
           <div style={styles.actionContent}>{action.error}</div>
@@ -439,7 +556,7 @@ Guidelines:
             </div>
             {message.actionResults?.length > 0 && (
               <div style={styles.actionsContainer}>
-                {message.actionResults.map((a, i) => renderAction(a, i))}
+                {message.actionResults.map((a, i) => renderAction(a, i, message.id))}
               </div>
             )}
             <span style={{ ...styles.timestamp, alignSelf: isUser ? 'flex-end' : 'flex-start' }}>
@@ -456,15 +573,23 @@ Guidelines:
     const isLinked = project.id in projectPositions || String(project.id) in projectPositions;
     const linkInfo = projectPositions[project.id] || projectPositions[String(project.id)];
     const isActivelyLinked = linkInfo && linkedMessageId === linkInfo.messageId;
+    const isRecentlyUpdated = project.id in recentlyUpdatedProjects;
+
+    const handleCardClick = (e) => {
+      e.preventDefault();
+      window.location.hash = `#/project/${project.id}`;
+    };
 
     return (
       <div
         key={project.id}
+        onClick={handleCardClick}
         style={{
           ...styles.projectCard,
           ...(isHovered ? styles.projectCardHovered : {}),
           ...(isLinked ? { borderColor: colors.amber, borderWidth: 2 } : {}),
           ...(isActivelyLinked ? { backgroundColor: '#FFFBF5', boxShadow: `0 0 16px ${colors.amber}40` } : {}),
+          ...(isRecentlyUpdated ? { boxShadow: `0 0 12px ${colors.sage}60`, borderColor: colors.sage } : {}),
         }}
         onMouseEnter={() => setHoveredProject(project.id)}
         onMouseLeave={() => setHoveredProject(null)}
@@ -541,6 +666,15 @@ Guidelines:
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
         @keyframes slideIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
+
+        /* Fix chat input positioning on small screens */
+        @media (max-height: 600px) {
+          .momentum-input-container {
+            position: sticky !important;
+            bottom: 0 !important;
+            z-index: 10 !important;
+          }
+        }
       `}</style>
 
       {/* Chat Column */}
@@ -569,7 +703,7 @@ Guidelines:
           <div ref={messagesEndRef} />
         </div>
 
-        <div style={styles.inputContainer}>
+        <div style={styles.inputContainer} className="momentum-input-container">
           <input
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
@@ -598,7 +732,18 @@ Guidelines:
           <span style={styles.projectCount}>{projects.length} total</span>
         </div>
         <div style={styles.projectsContainer}>
-          {projects.map((p, i) => renderProjectCard(p, i))}
+          {[...projects]
+            .sort((a, b) => {
+              // Sort by recently updated projects first
+              const aTime = recentlyUpdatedProjects[a.id] || 0;
+              const bTime = recentlyUpdatedProjects[b.id] || 0;
+              if (aTime !== bTime) return bTime - aTime;
+              // Then by priority (high > medium > low)
+              const priorityOrder = { high: 3, medium: 2, low: 1 };
+              return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
+            })
+            .map((p, i) => renderProjectCard(p, i))
+          }
         </div>
         <div style={styles.canvasLegend}>
           <div style={styles.legendItem}><span style={{ ...styles.legendDot, backgroundColor: colors.coral }} />High</div>
@@ -982,5 +1127,20 @@ const styles = {
     width: '7px',
     height: '7px',
     borderRadius: '50%',
+  },
+  undoButton: {
+    marginLeft: 'auto',
+    padding: '4px 8px',
+    fontSize: '14px',
+    fontWeight: 'bold',
+    border: 'none',
+    borderRadius: '6px',
+    backgroundColor: colors.stone + '25',
+    color: colors.stone,
+    cursor: 'pointer',
+    transition: 'all 0.2s',
+    '&:hover': {
+      backgroundColor: colors.stone + '40',
+    }
   },
 };
