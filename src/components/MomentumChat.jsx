@@ -688,11 +688,20 @@ Guidelines:
   };
 
   return (
-    <div style={styles.container}>
+    <div style={styles.container} className="momentum-container">
       <style>{`
         @keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
         @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
         @keyframes slideIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
+
+        .momentum-container {
+          min-height: 100vh;
+          max-height: 100%;
+        }
+
+        .momentum-messages {
+          max-height: calc(100vh - 200px);
+        }
 
         /* Fix chat input positioning on small screens */
         @media (max-height: 600px) {
@@ -702,11 +711,41 @@ Guidelines:
             z-index: 10 !important;
           }
         }
+
+        @media (max-height: 800px) {
+          .momentum-chat-header {
+            padding: 12px 18px !important;
+          }
+
+          .momentum-messages {
+            padding: 14px 18px !important;
+            max-height: calc(100vh - 170px);
+          }
+
+          .momentum-input-container {
+            padding: 12px 18px !important;
+          }
+        }
+
+        @media (max-height: 650px) {
+          .momentum-chat-header {
+            padding: 10px 14px !important;
+          }
+
+          .momentum-messages {
+            padding: 10px 14px !important;
+            max-height: calc(100vh - 140px);
+          }
+
+          .momentum-input-container {
+            padding: 10px 14px !important;
+          }
+        }
       `}</style>
 
       {/* Chat Column */}
       <div style={styles.chatColumn}>
-        <div style={styles.chatHeader}>
+        <div style={styles.chatHeader} className="momentum-chat-header">
           <div style={styles.headerLeft}>
             <span style={styles.logoIcon}>⚡</span>
             <span style={styles.logoText}>Momentum</span>
@@ -715,7 +754,7 @@ Guidelines:
           <span style={styles.connectionStatus}>● Connected</span>
         </div>
 
-        <div ref={chatContainerRef} style={styles.messagesContainer}>
+        <div ref={chatContainerRef} style={styles.messagesContainer} className="momentum-messages">
           {messages.map(renderMessage)}
           {isTyping && (
             <div style={styles.typingWrapper}>
@@ -785,7 +824,9 @@ Guidelines:
 const getStyles = (colors) => ({
   container: {
     display: 'flex',
-    height: '100vh',
+    minHeight: '100vh',
+    maxHeight: '100%',
+    height: '100%',
     width: '100%',
     backgroundColor: '#FAF8F3',
     fontFamily: "system-ui, -apple-system, sans-serif",
@@ -838,6 +879,7 @@ const getStyles = (colors) => ({
     display: 'flex',
     flexDirection: 'column',
     gap: '14px',
+    maxHeight: 'calc(100vh - 200px)',
   },
   messageWrapper: {
     display: 'flex',
