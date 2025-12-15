@@ -197,6 +197,22 @@ describe('validateThrustActions', () => {
     });
   });
 
+  describe('comment validation', () => {
+    it('should reject comments without a body', () => {
+      const actions = [
+        { type: 'comment', projectId: '1', note: '   ' },
+        { type: 'comment', projectId: '1', content: '' },
+        { type: 'comment', projectId: '1' }
+      ];
+
+      const result = validateThrustActions(actions, mockProjects);
+
+      expect(result.validActions).toHaveLength(0);
+      expect(result.errors).toHaveLength(actions.length);
+      expect(result.errors[0]).toContain('missing a note');
+    });
+  });
+
   describe('all action types', () => {
     it('should validate all supported action types', () => {
       const actions = supportedMomentumActions

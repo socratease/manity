@@ -2203,16 +2203,20 @@ Write a professional executive summary that highlights the project's current sta
       switch (action.type) {
         case 'comment': {
           const activityId = generateActivityId();
+          const requestedNote = (action.note || action.content || action.comment || '').trim();
+          const note = requestedNote || 'Update logged by Momentum';
           const newActivity = {
             id: activityId,
             date: new Date().toISOString(),
-            note: action.note || action.content || 'Update logged by Momentum',
+            note,
             author: action.author || loggedInUser || 'You'
           };
           project.recentActivity = [newActivity, ...project.recentActivity];
           actionDeltas.push({ type: 'remove_activity', projectId: project.id, activityId });
           label = `Commented on ${project.name}`;
-          detail = `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author}`;
+          detail = requestedNote
+            ? `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author}`
+            : `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author} (placeholder used because the comment was empty)`;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
           break;
