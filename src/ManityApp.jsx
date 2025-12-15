@@ -913,7 +913,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         status: project.status,
         priority: project.priority,
         stakeholders: project.stakeholders, // Keep full objects for PersonPicker
-        description: project.description
+        description: project.description,
+        progressMode: project.progressMode || 'manual',
+        progress: project.progress || 0
       });
       setEditMode(true);
     }
@@ -938,6 +940,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
             priority: editValues.priority,
             stakeholders: finalStakeholders,
             description: editValues.description,
+            progressMode: editValues.progressMode || 'manual',
+            progress: editValues.progress || 0,
             recentActivity: [
               { id: generateActivityId(), date: new Date().toISOString(), note: 'Updated project details', author: loggedInUser },
               ...p.recentActivity
@@ -2992,6 +2996,19 @@ Keep tool calls granular (one discrete change per action), explain each action c
     return Math.round((completed / task.subtasks.length) * 100);
   };
 
+  const calculateProjectProgress = (project) => {
+    if (!project.plan || project.plan.length === 0) return 0;
+    const totalProgress = project.plan.reduce((sum, task) => sum + calculateTaskProgress(task), 0);
+    return Math.round(totalProgress / project.plan.length);
+  };
+
+  const getProjectProgress = (project) => {
+    if (project.progressMode === 'auto') {
+      return calculateProjectProgress(project);
+    }
+    return project.progress || 0;
+  };
+
   const viewingProject = viewingProjectId ? projects.find(p => p.id === viewingProjectId) : null;
 
   useEffect(() => {
@@ -3296,13 +3313,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
       <div style={styles.progressSection}>
         <div style={styles.progressHeader}>
           <span style={styles.progressLabel}>Progress</span>
-          <span style={styles.progressValue}>{project.progress}%</span>
+          <span style={styles.progressValue}>{getProjectProgress(project)}%</span>
         </div>
         <div style={styles.progressBar}>
           <div
             style={{
               ...styles.progressFill,
-              width: `${project.progress}%`,
+              width: `${getProjectProgress(project)}%`,
               backgroundColor: getPriorityColor(project.priority)
             }}
           />
@@ -4364,6 +4381,45 @@ Keep tool calls granular (one discrete change per action), explain each action c
                       </span>
                     )}
                   </div>
+                  <div style={styles.compactInfoItem}>
+                    <Settings size={14} style={{ color: 'var(--stone)' }} />
+                    <span style={styles.compactInfoLabel}>Progress Mode:</span>
+                    {editMode ? (
+                      <select
+                        value={editValues.progressMode || 'manual'}
+                        onChange={(e) => setEditValues({...editValues, progressMode: e.target.value})}
+                        style={styles.compactSelect}
+                      >
+                        <option value="manual">Manual</option>
+                        <option value="auto">Auto (from tasks)</option>
+                      </select>
+                    ) : (
+                      <span style={styles.statusBadgeSmall}>
+                        {viewingProject.progressMode === 'auto' ? 'Auto' : 'Manual'}
+                      </span>
+                    )}
+                  </div>
+                  {(editMode && editValues.progressMode === 'manual') || (!editMode && viewingProject.progressMode !== 'auto') ? (
+                    <div style={styles.compactInfoItem}>
+                      <TrendingUp size={14} style={{ color: 'var(--stone)' }} />
+                      <span style={styles.compactInfoLabel}>Progress:</span>
+                      {editMode ? (
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          value={editValues.progress || 0}
+                          onChange={(e) => {
+                            const val = Math.min(100, Math.max(0, parseInt(e.target.value) || 0));
+                            setEditValues({...editValues, progress: val});
+                          }}
+                          style={{...styles.compactSelect, width: '80px'}}
+                        />
+                      ) : (
+                        <span style={styles.compactInfoValue}>{viewingProject.progress}%</span>
+                      )}
+                    </div>
+                  ) : null}
                 </div>
               </div>
 

@@ -36,6 +36,7 @@ export interface Project {
   status: 'planning' | 'active' | 'completed' | string;
   priority: 'high' | 'medium' | 'low' | string;
   progress: number;
+  progressMode?: 'auto' | 'manual'; // auto: calculate from tasks, manual: set manually
   lastUpdate: string;
   description: string;
   executiveUpdate?: string;
@@ -306,6 +307,7 @@ const normalizeProject = (project: Partial<Project>, idx: number): Project => {
     status: typeof project.status === 'string' ? project.status : 'planning',
     priority: typeof project.priority === 'string' ? project.priority : 'medium',
     progress: clampProgress(project.progress),
+    progressMode: project.progressMode === 'auto' || project.progressMode === 'manual' ? project.progressMode : 'manual',
     lastUpdate: typeof project.lastUpdate === 'string' ? project.lastUpdate : '',
     description,
     executiveUpdate,
