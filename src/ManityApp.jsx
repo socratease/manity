@@ -11,6 +11,7 @@ import { supportedMomentumActions, validateThrustActions as validateThrustAction
 import MomentumChat from './MomentumChat';
 import SnowEffect from './components/SnowEffect';
 import ChristmasConfetti from './components/ChristmasConfetti';
+import FestiveBorders from './components/FestiveBorders';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -3506,14 +3507,14 @@ Keep tool calls granular (one discrete change per action), explain each action c
       <div style={{
         ...styles.container,
         ...(isSantafied && {
-          '--earth': '#8B4513',     // Saddle brown
-          '--sage': '#165B33',      // Forest green
-          '--coral': '#C41E3A',     // Christmas red
-          '--amber': '#FFD700',     // Gold
-          '--cream': '#FFF5EE',     // Seashell (warm white)
-          '--cloud': '#F0E6E0',     // Light pink/beige
-          '--stone': '#654321',     // Dark brown
-          '--charcoal': '#2C1810',  // Very dark brown
+          '--earth': '#A0522D',     // Sienna (gingerbread brown)
+          '--sage': '#228B22',      // Forest green (brighter)
+          '--coral': '#DC143C',     // Crimson (vibrant Christmas red)
+          '--amber': '#FFA500',     // Orange (warm festive glow)
+          '--cream': '#FFFAF0',     // Floral white (warm ivory)
+          '--cloud': '#FFE4E1',     // Misty rose (hint of pink)
+          '--stone': '#8B4513',     // Saddle brown (gingerbread)
+          '--charcoal': '#006400',  // Dark green (deep Christmas green)
         })
       }}>
       {/* Daily Check-in Modal */}
@@ -6000,6 +6001,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
       {/* Santa-fy Effects */}
       {isSantafied && (
         <>
+          <FestiveBorders />
           <SnowEffect />
           <ChristmasConfetti />
         </>
