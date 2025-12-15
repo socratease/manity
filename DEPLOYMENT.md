@@ -82,13 +82,19 @@ Before deploying, manually test:
 
 ### Local Deployment
 
-The application stores data in `/home/c17420g/projects/manity-data/portfolio.db` by default.
+On the dev branch, the application stores data in `/home/c17420g/projects/manity-dev-data/portfolio.db` by default. The production branch continues to use `/home/c17420g/projects/manity-data/portfolio.db` unless `DATABASE_URL` is set.
 
-**Important**: This directory must exist and be writable by the backend process.
+**Important**: The chosen directory must exist and be writable by the backend process.
 
 To change the database location:
 ```bash
 export DATABASE_URL=sqlite:////path/to/your/database.db
+```
+
+For a quick dev deployment with the dev database path and ports (`backend: 8113`, `frontend: 8114`), run:
+```bash
+chmod +x deploy_local_dev.sh
+./deploy_local_dev.sh
 ```
 
 ### Cloud Deployment (Render.com)
