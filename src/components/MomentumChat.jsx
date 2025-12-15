@@ -233,10 +233,16 @@ export default function MomentumChat({
         } else if (action.type === 'comment') {
           const project = projects.find(p => p.id === projectId);
           if (project) {
+            const requestedNote = (action.note || action.content || action.comment || '').trim();
+            const note = requestedNote || 'Update logged by Momentum';
+            const detail = requestedNote
+              ? note
+              : `${note} (placeholder used because the comment was empty)`;
+
             const newActivity = {
               id: generateActivityId(),
               date: new Date().toISOString(),
-              note: action.note || action.content || action.comment || '',
+              note,
               author: loggedInUser || 'You'
             };
             await addActivity(projectId, newActivity);
@@ -250,7 +256,7 @@ export default function MomentumChat({
               activityId: newActivity.id
             });
 
-            actionResults.push({ type: 'comment', label, deltas: actionDeltas, detail: newActivity.note });
+            actionResults.push({ type: 'comment', label, deltas: actionDeltas, detail });
           }
 
         } else if (action.type === 'add_task') {
