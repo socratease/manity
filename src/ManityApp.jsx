@@ -5195,7 +5195,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
                 </div>
 
                 <div style={styles.activityListCompact}>
-                  {viewingProject.recentActivity.map((activity, idx) => (
+                  {[...viewingProject.recentActivity].sort((a, b) => new Date(b.date) - new Date(a.date)).map((activity, idx) => (
                     <div key={activity.id || idx}>
                       <div
                         style={{
