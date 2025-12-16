@@ -567,7 +567,21 @@ def serialize_activity(activity: Activity) -> dict:
     }
 
 
+def normalize_project_activity(project: Project) -> Project:
+    if project.recentActivity is None:
+        project.recentActivity = []
+
+    project.recentActivity.sort(key=lambda a: a.date or "", reverse=True)
+
+    if project.recentActivity:
+        project.lastUpdate = project.recentActivity[0].note
+
+    return project
+
+
 def serialize_project(project: Project) -> dict:
+    normalize_project_activity(project)
+
     return {
         "id": project.id,
         "name": project.name,
@@ -642,7 +656,13 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
         project.recentActivity = []
     else:
         project.recentActivity.clear()
-    for activity_payload in payload.recentActivity:
+    activity_payloads = sorted(
+        payload.recentActivity,
+        key=lambda activity: activity.date or "",
+        reverse=True,
+    )
+
+    for activity_payload in activity_payloads:
         activity = Activity(
             id=activity_payload.id or generate_id("activity"),
             date=activity_payload.date,
@@ -650,6 +670,8 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
             author=activity_payload.author,
         )
         project.recentActivity.append(activity)
+
+    normalize_project_activity(project)
 
     session.add(project)
     session.commit()
@@ -1052,6 +1074,10 @@ def create_activity(project_id: str, payload: ActivityPayload, request: Request,
     )
     session.add(activity)
     session.commit()
+    project = load_project(session, project_id)
+    normalize_project_activity(project)
+    session.add(project)
+    session.commit()
     log_action(session, "create_activity", "activity", activity.id, {"project_id": project_id, "author": activity.author, "note_preview": activity.note[:100] if activity.note else None}, request)
     return serialize_project(load_project(session, project_id))
 
@@ -1067,18 +1093,26 @@ def update_activity(project_id: str, activity_id: str, payload: ActivityPayload,
     activity.author = payload.author
     session.add(activity)
     session.commit()
+    project = load_project(session, project_id)
+    normalize_project_activity(project)
+    session.add(project)
+    session.commit()
     log_action(session, "update_activity", "activity", activity_id, {"project_id": project_id, "author": activity.author}, request)
     return serialize_project(load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/activities/{activity_id}", status_code=status.HTTP_204_NO_CONTENT)
 def delete_activity(project_id: str, activity_id: str, request: Request, session: Session = Depends(get_session)):
-    load_project(session, project_id)
+    project = load_project(session, project_id)
     activity = session.exec(select(Activity).where(Activity.id == activity_id, Activity.project_id == project_id)).first()
     if not activity:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
     deleted_data = {"project_id": project_id, "author": activity.author}
     session.delete(activity)
+    session.commit()
+    project = load_project(session, project_id)
+    normalize_project_activity(project)
+    session.add(project)
     session.commit()
     log_action(session, "delete_activity", "activity", activity_id, deleted_data, request)
     return None
