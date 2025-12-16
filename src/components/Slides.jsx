@@ -348,6 +348,13 @@ export default function Slides({
       }
 
       const blob = await response.blob();
+      const contentType = response.headers.get('Content-Type');
+      const isPptx = contentType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+
+      if (!isPptx || blob.size === 0) {
+        throw new Error('Invalid PowerPoint file received');
+      }
+
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
