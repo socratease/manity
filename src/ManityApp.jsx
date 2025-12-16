@@ -8,9 +8,12 @@ import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
 import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
+import { MOMENTUM_THRUST_SYSTEM_PROMPT } from './lib/momentumPrompts';
+import { verifyThrustActions } from './lib/momentumVerification';
 import SnowEffect from './components/SnowEffect';
 import ChristmasConfetti from './components/ChristmasConfetti';
 import MomentumChat from './components/MomentumChat';
+import Slides from './components/Slides';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -142,8 +145,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   // Persistent portfolio filter (stays after search modal closes)
   const [portfolioFilter, setPortfolioFilter] = useState('');
 
-  // Momentum highlight state - tracks recently updated projects from AI
-  const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState(new Set());
+  // Momentum highlight state - tracks recently updated projects from AI with timestamps
+  const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState({});
 
   // Momentum chat redesign - portfolio panel state
   const [portfolioMinimized, setPortfolioMinimized] = useState(true);
@@ -168,6 +171,18 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     const saved = localStorage.getItem('manity_santafied');
     return saved !== null ? saved === 'true' : true; // Default to true
   });
+
+  const sortActivitiesDesc = (activities = []) =>
+    [...activities].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+  const syncProjectActivity = (project, activities = project.recentActivity || []) => {
+    const sorted = sortActivitiesDesc(activities);
+    return {
+      ...project,
+      recentActivity: sorted,
+      lastUpdate: sorted[0]?.note || project.lastUpdate || ''
+    };
+  };
 
   // JSON Schema for structured output - ensures LLM returns properly formatted actions
   const momentumResponseSchema = {
@@ -747,17 +762,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const handleDailyCheckin = (projectId) => {
     if (checkinNote.trim()) {
-      setProjects(projects.map(p =>
-        p.id === projectId
-          ? {
-              ...p,
-              recentActivity: [
+      setProjects(prevProjects =>
+        prevProjects.map(p =>
+          p.id === projectId
+            ? syncProjectActivity(p, [
                 { id: generateActivityId(), date: new Date().toISOString(), note: checkinNote, author: loggedInUser },
                 ...p.recentActivity
-              ]
-            }
-          : p
-      ));
+              ])
+            : p
+        )
+      );
       setCheckinNote('');
 
       // Move to next project the user is a contributor on, or close if done
@@ -773,17 +787,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const handleAddUpdate = () => {
     if (newUpdate.trim() && viewingProjectId) {
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              recentActivity: [
+      setProjects(prevProjects =>
+        prevProjects.map(p =>
+          p.id === viewingProjectId
+            ? syncProjectActivity(p, [
                 { id: generateActivityId(), date: new Date().toISOString(), note: newUpdate, author: loggedInUser },
                 ...p.recentActivity
-              ]
-            }
-          : p
-      ));
+              ])
+            : p
+        )
+      );
       setNewUpdate('');
     }
   };
@@ -844,21 +857,24 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }));
 
     setProjects(prevProjects =>
-      prevProjects.map(project => ({
-        ...project,
-        recentActivity: project.recentActivity.map(activity =>
+      prevProjects.map(project => {
+        const hasActivity = project.recentActivity.some(activity => activity.id === activityId);
+        if (!hasActivity) return project;
+        const updatedActivities = project.recentActivity.map(activity =>
           activity.id === activityId ? { ...activity, note: newNote } : activity
-        )
-      }))
+        );
+        return syncProjectActivity(project, updatedActivities);
+      })
     );
   };
 
   const deleteActivity = (activityId) => {
     setProjects(prevProjects =>
-      prevProjects.map(project => ({
-        ...project,
-        recentActivity: project.recentActivity.filter(activity => activity.id !== activityId)
-      }))
+      prevProjects.map(project => {
+        const updatedActivities = project.recentActivity.filter(activity => activity.id !== activityId);
+        const activityRemoved = updatedActivities.length !== project.recentActivity.length;
+        return activityRemoved ? syncProjectActivity(project, updatedActivities) : project;
+      })
     );
 
     setActivityEdits(prev => {
@@ -932,23 +948,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     // Sync stakeholders to People database
     await syncStakeholdersToPeople(finalStakeholders);
 
-    setProjects(projects.map(p =>
-      p.id === viewingProjectId
-        ? {
-            ...p,
-            status: editValues.status,
-            priority: editValues.priority,
-            stakeholders: finalStakeholders,
-            description: editValues.description,
-            progressMode: editValues.progressMode || 'manual',
-            progress: editValues.progress || 0,
-            recentActivity: [
+    setProjects(prevProjects =>
+      prevProjects.map(p =>
+        p.id === viewingProjectId
+          ? syncProjectActivity(p, [
               { id: generateActivityId(), date: new Date().toISOString(), note: 'Updated project details', author: loggedInUser },
               ...p.recentActivity
-            ]
-          }
-        : p
-    ));
+            ])
+          : p
+      )
+    );
     setEditMode(false);
   };
 
@@ -1078,11 +1087,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const handleSubtaskComment = (taskId, subtaskId, taskTitle, subtaskTitle) => {
     if (subtaskComment.trim()) {
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              recentActivity: [
+      setProjects(prevProjects =>
+        prevProjects.map(p =>
+          p.id === viewingProjectId
+            ? syncProjectActivity(p, [
                 {
                   id: generateActivityId(),
                   date: new Date().toISOString(),
@@ -1091,10 +1099,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                   taskContext: { taskId, subtaskId, taskTitle, subtaskTitle }
                 },
                 ...p.recentActivity
-              ]
-            }
-          : p
-      ));
+              ])
+            : p
+        )
+      );
       setSubtaskComment('');
       setCommentingOn(null);
     }
@@ -1102,11 +1110,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const handleTaskComment = (taskId, taskTitle) => {
     if (taskComment.trim()) {
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              recentActivity: [
+      setProjects(prevProjects =>
+        prevProjects.map(p =>
+          p.id === viewingProjectId
+            ? syncProjectActivity(p, [
                 {
                   id: generateActivityId(),
                   date: new Date().toISOString(),
@@ -1115,10 +1122,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                   taskContext: { taskId, subtaskId: null, taskTitle, subtaskTitle: null }
                 },
                 ...p.recentActivity
-              ]
-            }
-          : p
-      ));
+              ])
+            : p
+        )
+      );
       setTaskComment('');
       setTaskCommentingOn(null);
     }
@@ -1908,7 +1915,7 @@ Write a professional executive summary that highlights the project's current sta
     // Sync stakeholders to People database
     await syncStakeholdersToPeople(newProject.stakeholders);
 
-    setProjects(prev => [...prev, newProject]);
+    setProjects(prev => [...prev, syncProjectActivity(newProject)]);
     setShowNewProject(false);
     resetNewProjectForm();
     updateHash('overview', newProject.id);
@@ -2046,7 +2053,10 @@ Write a professional executive summary that highlights the project's current sta
 
         switch (delta.type) {
           case 'remove_activity':
-            project.recentActivity = project.recentActivity.filter(activity => activity.id !== delta.activityId);
+            Object.assign(
+              project,
+              syncProjectActivity(project, project.recentActivity.filter(activity => activity.id !== delta.activityId))
+            );
             break;
           case 'remove_task':
             project.plan = project.plan.filter(task => task.id !== delta.taskId);
@@ -2091,10 +2101,11 @@ Write a professional executive summary that highlights the project's current sta
 
   const applyThrustActions = async (actions = []) => {
     if (!actions.length) {
-      return { deltas: [], actionResults: [], updatedProjectIds: [] };
+      return { deltas: [], actionResults: [], updatedProjectIds: [], verification: { perAction: [], hasFailures: false, summary: 'No actions to verify.' } };
     }
 
     const result = { deltas: [], actionResults: [], updatedProjectIds: new Set() };
+    const originalProjects = projects.map(cloneProjectDeep);
     const workingProjects = projects.map(cloneProjectDeep);
     const projectLookup = new Map();
     workingProjects.forEach(project => {
@@ -2223,7 +2234,7 @@ Write a professional executive summary that highlights the project's current sta
         const normalizedStakeholders = normalizeStakeholderList(stakeholderEntries);
         const createdAt = new Date().toISOString();
         const newId = action.projectId || action.id || `ai-project-${Math.random().toString(36).slice(2, 7)}`;
-        const newProject = {
+        const newProject = syncProjectActivity({
           id: newId,
           name: projectName,
           priority: action.priority || 'medium',
@@ -2237,7 +2248,7 @@ Write a professional executive summary that highlights the project's current sta
           recentActivity: action.description
             ? [{ id: generateActivityId(), date: createdAt, note: action.description, author: 'Momentum' }]
             : []
-        };
+        });
 
         workingProjects.push(newProject);
         projectLookup.set(`${projectName}`.toLowerCase(), newId);
@@ -2278,7 +2289,10 @@ Write a professional executive summary that highlights the project's current sta
             note,
             author: action.author || loggedInUser || 'You'
           };
-          project.recentActivity = [newActivity, ...project.recentActivity];
+          Object.assign(
+            project,
+            syncProjectActivity(project, [newActivity, ...project.recentActivity])
+          );
           actionDeltas.push({ type: 'remove_activity', projectId: project.id, activityId });
           label = `Commented on ${project.name}`;
           detail = requestedNote
@@ -2588,10 +2602,43 @@ Write a professional executive summary that highlights the project's current sta
       setProjects(workingProjects);
     }
 
+    const verification = verifyThrustActions(actions, originalProjects, workingProjects, result.actionResults);
+    const annotatedActionResults = result.actionResults.map((actionResult, idx) => {
+      const verificationResult = verification.perAction[idx];
+      if (!verificationResult) return actionResult;
+
+      const detailParts = [];
+      if (actionResult.detail) detailParts.push(actionResult.detail);
+
+      if (verificationResult.status === 'passed') {
+        detailParts.push('Verification passed.');
+      } else if (verificationResult.status === 'skipped') {
+        detailParts.push('Verification skipped.');
+      } else if (verificationResult.status === 'failed') {
+        const discrepancyText = verificationResult.discrepancies.join('; ');
+        detailParts.push(`Verification failed: ${discrepancyText}`);
+        if (!actionResult.error) {
+          return {
+            ...actionResult,
+            verification: verificationResult,
+            detail: detailParts.join(' '),
+            error: `Verification failed: ${discrepancyText}`
+          };
+        }
+      }
+
+      return {
+        ...actionResult,
+        verification: verificationResult,
+        detail: detailParts.join(' ')
+      };
+    });
+
     return {
       deltas: result.deltas,
-      actionResults: result.actionResults,
-      updatedProjectIds: Array.from(result.updatedProjectIds)
+      actionResults: annotatedActionResults,
+      updatedProjectIds: Array.from(result.updatedProjectIds),
+      verification
     };
   };
 
@@ -2724,19 +2771,18 @@ Write a professional executive summary that highlights the project's current sta
       const targetProjectId = viewingProjectId || visibleProjects[0]?.id;
 
       if (targetProjectId) {
-        setProjects(projects.map(p =>
-          p.id === targetProjectId
-            ? {
-                ...p,
-                recentActivity: [
+        setProjects(prevProjects =>
+          prevProjects.map(p =>
+            p.id === targetProjectId
+              ? syncProjectActivity(p, [
                   { id: generateActivityId(), date: new Date().toISOString(), note: timelineUpdate, author: loggedInUser },
                   ...p.recentActivity
-                ]
-              }
-            : p
-        ));
+                ])
+              : p
+          )
+        );
       }
-      
+
       setTimelineUpdate('');
     }
   };
@@ -2832,9 +2878,7 @@ Write a professional executive summary that highlights the project's current sta
     setThrustError('');
     setThrustPendingActions([]);
 
-    const systemPrompt = `You are Momentum, an experienced technical project manager supporting the Data Science and AI team at BCBST (BlueCross BlueShield of Tennessee), a health insurance company. The team builds AI products and predictive models for healthcare applications.
-
-Using dialectic project planning methodology, be concise but explicit about what you are doing, offer guiding prompts such as "have you thought of X yet?", and rely on the provided project data for context. Respond with a JSON object containing a 'response' string and an 'actions' array.
+    const systemPrompt = `${MOMENTUM_THRUST_SYSTEM_PROMPT}
 
 LOGGED-IN USER: ${loggedInUser || 'Not set'}
 - When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
@@ -2846,21 +2890,7 @@ PEOPLE & EMAIL ADDRESSES:
 - People are stored with: name, team, and email (optional)
 - When sending emails, you can reference people by name and the system will resolve their email addresses
 - To find a person's email, use query_portfolio with scope='people' and includePeople=true
-- All project stakeholders/contributors are people with potential email addresses
-
-Supported atomic actions (never combine multiple changes into one action):
-- comment: log a project activity. Fields: projectId, note (or content), author (optional, defaults to logged-in user).
-- add_task: create a new task in a project. Fields: projectId, title, dueDate (optional), status (todo/in-progress/completed), completedDate (optional), assignee (person name, optional).
-- update_task: adjust a task. Fields: projectId, taskId or taskTitle, title (optional), status, dueDate, completedDate, assignee (person name or null to unassign).
-- add_subtask: create a subtask. Fields: projectId, taskId or taskTitle, subtaskTitle or title, status, dueDate, assignee (person name, optional).
-- update_subtask: adjust a subtask. Fields: projectId, taskId or taskTitle, subtaskId or subtaskTitle, title, status, dueDate, completedDate, assignee (person name or null to unassign).
-- update_project: change project fields. Fields: projectId, name (rename project), description (project description), executiveUpdate (executive summary), status (planning/active/on-hold/cancelled/completed), priority (low/medium/high), progress (0-100), targetDate, startDate, lastUpdate. Use project statuses: planning, active, on-hold, cancelled, or completed (never "in_progress").
-- create_project: create a new project. Fields: name (required), description (optional), priority (low/medium/high, default medium), status (planning/active/on-hold/cancelled, default active), targetDate (optional), stakeholders (comma-separated names, optional). Use the status value "active" for projects in flight.
-- add_person: add a person to the People database. Fields: name (required), team (optional), email (optional). If the person already exists, update their info instead of duplicating.
-- send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People database, comma separated or array), subject (required), body (required). Do NOT include any AI signature in the email body - the system will automatically append one.
-- query_portfolio: request portfolio data when you need fresh context. Fields: scope (portfolio/project/people), detailLevel (summary/detailed), includePeople (boolean), projectId or projectName (optional when scope is project).
-
-Keep tool calls granular (one discrete change per action), explain each action clearly, and ensure every action references the correct project. When creating projects, if you lack required information like name or description, ask the user for these details before proceeding with the action. If you need more context, call query_portfolio before taking other actions.`;
+- All project stakeholders/contributors are people with potential email addresses`;
     const context = buildThrustContext();
     const orderedMessages = [...nextMessages].sort((a, b) => new Date(a.date) - new Date(b.date));
     const messages = [
@@ -2878,7 +2908,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
     try {
       const { parsed, content } = await requestMomentumActions(messages);
       setThrustPendingActions(parsed.actions || []);
-      const { deltas, actionResults, updatedProjectIds } = await applyThrustActions(parsed.actions || []);
+      const { deltas, actionResults, updatedProjectIds, verification } = await applyThrustActions(parsed.actions || []);
+
+      if (verification?.hasFailures) {
+        setThrustError('Some Momentum actions did not match the requested changes. Review verification notes.');
+      } else {
+        setThrustError('');
+      }
 
       // Track recently updated projects for highlighting
       if (updatedProjectIds && updatedProjectIds.length > 0) {
@@ -2902,7 +2938,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
         date: new Date().toISOString(),
         actionResults,
         deltas,
-        updatedProjectIds: updatedProjectIds || []
+        updatedProjectIds: updatedProjectIds || [],
+        verificationSummary: verification?.summary
       };
 
       // Auto-expand portfolio panel if projects were updated
@@ -3331,7 +3368,11 @@ Keep tool calls granular (one discrete change per action), explain each action c
           <MessageCircle size={14} style={{ color: 'var(--stone)' }} />
           Latest Update
         </div>
-        <p style={styles.updateText}>{project.lastUpdate}</p>
+        {(() => {
+          const latestActivity = project.recentActivity?.[0];
+          const latestUpdate = project.lastUpdate || latestActivity?.note || 'No updates yet';
+          return <p style={styles.updateText}>{latestUpdate}</p>;
+        })()}
       </div>
 
       {(() => {
@@ -5655,9 +5696,16 @@ Keep tool calls granular (one discrete change per action), explain each action c
               setThrustMessages(prev => [...prev, message]);
             }}
             onApplyActions={(actionResults, updatedProjectIds) => {
-              // Track recently updated projects for highlighting
+              // Track recently updated projects for highlighting with timestamps
               if (updatedProjectIds && updatedProjectIds.length > 0) {
-                setRecentlyUpdatedProjects(new Set(updatedProjectIds));
+                const now = Date.now();
+                setRecentlyUpdatedProjects(prev => {
+                  const updated = { ...prev };
+                  updatedProjectIds.forEach(id => {
+                    updated[id] = now;
+                  });
+                  return updated;
+                });
                 setExpandedMomentumProjects(prev => {
                   const newExpanded = { ...prev };
                   updatedProjectIds.forEach(id => {
@@ -5671,291 +5719,16 @@ Keep tool calls granular (one discrete change per action), explain each action c
             loggedInUser={loggedInUser}
             people={people}
             isSantafied={isSantafied}
+            recentlyUpdatedProjects={recentlyUpdatedProjects}
           />
         ) : activeView === 'slides' ? (
-          <>
-            <header style={styles.header}>
-              <div>
-                <h2 style={styles.pageTitle}>Slides</h2>
-                <p style={styles.pageSubtitle}>
-                  Cycle through {visibleProjects.length} projects in a 16:9 frame, ready for screenshots. Use ← → arrow keys to navigate.
-                </p>
-              </div>
-              <div style={styles.headerActions}>
-                <div style={styles.slidesCounter}>
-                  Slide {visibleProjects.length > 0 ? currentSlideIndex + 1 : 0} / {visibleProjects.length}
-                </div>
-                <div style={styles.slidesControls}>
-                  <button
-                    onClick={() => handleSlideAdvance(-1)}
-                    style={styles.dataButton}
-                    disabled={visibleProjects.length === 0}
-                    aria-label="Previous slide"
-                  >
-                    <ChevronLeft size={16} />
-                  </button>
-                  <button
-                    onClick={() => handleSlideAdvance(1)}
-                    style={styles.dataButton}
-                    disabled={visibleProjects.length === 0}
-                    aria-label="Next slide"
-                  >
-                    <ChevronRight size={16} />
-                  </button>
-                </div>
-              </div>
-            </header>
-
-            {visibleProjects.length === 0 ? (
-              <div style={styles.emptyState}>No visible projects to show.</div>
-            ) : (
-              (() => {
-                const allRecentlyCompleted = getRecentlyCompletedTasks(slideProject);
-                const allNextUp = getNextUpTasks(slideProject);
-                const allRecentUpdates = slideProject.recentActivity;
-
-                // Filter out hidden items and take the first N visible ones that fit
-                const slideRecentUpdates = allRecentUpdates
-                  .filter(activity => !hiddenSlideItems.recentUpdates.includes(activity.id))
-                  .slice(0, slideItemCounts.recentUpdates);
-                const slideRecentlyCompleted = allRecentlyCompleted
-                  .filter(task => !hiddenSlideItems.recentlyCompleted.includes(task.id))
-                  .slice(0, slideItemCounts.recentlyCompleted);
-                const slideNextUp = allNextUp
-                  .filter(task => !hiddenSlideItems.nextUp.includes(task.id))
-                  .slice(0, slideItemCounts.nextUp);
-
-                return (
-                  <div style={styles.slideStage}>
-                    <div style={styles.slideSurface}>
-                      <div style={styles.slideControlRail}>
-                        {isEditingSlide && (
-                          <button
-                            onClick={() => generateExecSummary(slideProject.id)}
-                            style={{
-                              ...styles.slideControlButton,
-                              opacity: isGeneratingSummary ? 0.5 : 1,
-                            }}
-                            disabled={isGeneratingSummary}
-                            title={'AI generate summary (g)'}
-                          >
-                            <Sparkles size={14} />
-                            <span>AI generate</span>
-                            <span style={{ fontSize: '10px', opacity: 0.6, marginLeft: '4px' }}>G</span>
-                          </button>
-                        )}
-                        <button
-                          onClick={() => {
-                            if (!isEditingSlide) {
-                              startEditingExecSummary(slideProject.id, slideProject.executiveUpdate || slideProject.description);
-                            }
-                            toggleSlideEditMode();
-                          }}
-                          style={{
-                            ...styles.slideControlButton,
-                            backgroundColor: isEditingSlide ? 'var(--coral)' + '15' : 'transparent',
-                            borderColor: isEditingSlide ? 'var(--coral)' : 'var(--cloud)',
-                            color: isEditingSlide ? 'var(--coral)' : 'var(--charcoal)'
-                          }}
-                          title={isEditingSlide ? 'Save and exit edit mode (Ctrl+Enter)' : 'Edit slide (e)'}
-                        >
-                          <Edit2 size={14} />
-                          <span>{isEditingSlide ? 'Save' : 'Edit'}</span>
-                          <span style={{ fontSize: '10px', opacity: 0.6, marginLeft: '4px' }}>
-                            {isEditingSlide ? 'Ctrl+⏎' : 'E'}
-                          </span>
-                        </button>
-                      </div>
-                      <div style={styles.slideSurfaceInner}>
-                        {/* Header with name, description subtitle, and project details */}
-                        <div style={styles.slideCompactHeader}>
-                          <div style={styles.slideHeaderTop}>
-                            <h3 style={styles.slideTitle}>{slideProject.name}</h3>
-                            {slideProject.description && (
-                              <p style={styles.slideSubtitle}>{slideProject.description}</p>
-                            )}
-                          </div>
-                          <div style={styles.slideHeaderMeta}>
-                            <Calendar size={14} style={{ color: 'var(--stone)' }} />
-                            <span>Target {slideProject.targetDate ? new Date(slideProject.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : 'TBD'}</span>
-                            <span style={styles.slideDivider}>•</span>
-                            <span style={{
-                              ...styles.slideInlineBadge,
-                              backgroundColor: getPriorityColor(slideProject.priority) + '20',
-                              color: getPriorityColor(slideProject.priority)
-                            }}>
-                              {slideProject.priority} priority
-                            </span>
-                            <span style={styles.slideInlineBadge}>{slideProject.status}</span>
-                            {slideProject.stakeholders.length > 0 && (
-                              <>
-                                <span style={styles.slideDivider}>•</span>
-                                <Users size={14} style={{ color: 'var(--stone)', marginLeft: '4px' }} />
-                                <div style={styles.slideStakeholderNames}>
-                                  {formatStakeholderNames(slideProject.stakeholders)}
-                                </div>
-                              </>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Main content grid - 2 columns */}
-                        <div style={styles.slideMainGrid}>
-                          {/* Left column - Executive Summary and Recent Updates */}
-                          <div style={styles.slideLeftColumn}>
-                            {/* Executive Update */}
-                            <div style={{ ...styles.slideSecondaryPanel, ...styles.slideExecSummaryPanel }}>
-                              <div style={styles.slidePanelHeader}>
-                                <div style={styles.slidePanelTitle}>Executive Update</div>
-                              </div>
-                              {editingExecSummary === slideProject.id ? (
-                                <div>
-                                  <textarea
-                                    value={execSummaryDraft}
-                                    onChange={(e) => setExecSummaryDraft(e.target.value)}
-                                    onKeyDown={(e) => {
-                                      if (e.ctrlKey && e.key === 'Enter') {
-                                        e.preventDefault();
-                                        // Save changes
-                                        setProjects(prevProjects =>
-                                          prevProjects.map(project =>
-                                            project.id === slideProject.id
-                                              ? { ...project, executiveUpdate: execSummaryDraft }
-                                              : project
-                                          )
-                                        );
-                                        // Exit edit mode
-                                        setIsEditingSlide(false);
-                                        setEditingExecSummary(null);
-                                        setExecSummaryDraft('');
-                                      } else if (e.key === 'Escape') {
-                                        e.preventDefault();
-                                        // Cancel edit mode without saving
-                                        setIsEditingSlide(false);
-                                        setEditingExecSummary(null);
-                                        setExecSummaryDraft('');
-                                      }
-                                    }}
-                                    style={styles.execSummaryInput}
-                                    placeholder="Write executive update..."
-                                    autoFocus
-                                  />
-                                </div>
-                              ) : (
-                                <div style={styles.slideExecSummary}>
-                                  {slideProject.executiveUpdate || slideProject.description || 'No executive update yet.'}
-                                </div>
-                              )}
-                            </div>
-
-                            {/* Recent updates */}
-                            <div ref={recentUpdatesRef} style={{ ...styles.slideSecondaryPanel, ...styles.slideUpdatesPanel }}>
-                              <div style={styles.slidePanelHeader}>
-                                <div style={styles.slidePanelTitle}>Recent updates</div>
-                              </div>
-                              <div style={styles.slideUpdatesContent}>
-                                {slideRecentUpdates.length > 0 ? (
-                                  <ul style={styles.momentumList}>
-                                    {slideRecentUpdates.map((activity, idx) => (
-                                      <li key={activity.id || idx} style={styles.momentumListItem}>
-                                        <div style={styles.momentumListRow}>
-                                          <span style={styles.momentumListStrong}>{activity.author}</span>
-                                          <span style={styles.momentumListMeta}>{formatDateTime(activity.date)}</span>
-                                          {isEditingSlide && (
-                                            <button
-                                              onClick={() => hideSlideItem('recentUpdates', activity.id)}
-                                              style={styles.slideRemoveButton}
-                                              title="Remove from slide"
-                                            >
-                                              <X size={14} />
-                                            </button>
-                                          )}
-                                        </div>
-                                        <div style={styles.momentumListText}>{activity.note}</div>
-                                      </li>
-                                    ))}
-                                  </ul>
-                                ) : (
-                                  <div style={styles.momentumEmptyText}>No updates yet.</div>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-
-                          {/* Right column - Recently Completed and Next Up */}
-                          <div style={styles.slideRightColumn}>
-                            {/* Recently Completed */}
-                            <div ref={recentlyCompletedRef} style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel }}>
-                              <div style={styles.slidePanelHeader}>
-                                <div style={styles.slidePanelTitle}>Recently Completed</div>
-                              </div>
-                              {slideRecentlyCompleted.length > 0 ? (
-                                <ul style={styles.momentumList}>
-                                  {slideRecentlyCompleted.map((task, idx) => (
-                                    <li key={`${task.taskTitle}-${task.title}-${idx}`} style={styles.momentumListItem}>
-                                      <div style={styles.momentumListRow}>
-                                        <span style={styles.momentumListStrong}>{task.taskTitle} → {task.title}</span>
-                                        <span style={{ ...styles.actionDueText, color: task.dueDateInfo.color }}>
-                                          {task.dueDateInfo.text}
-                                        </span>
-                                        {isEditingSlide && (
-                                          <button
-                                            onClick={() => hideSlideItem('recentlyCompleted', task.id)}
-                                            style={styles.slideRemoveButton}
-                                            title="Remove from slide"
-                                          >
-                                            <X size={14} />
-                                          </button>
-                                        )}
-                                      </div>
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : (
-                                <div style={styles.momentumEmptyText}>No recently completed tasks.</div>
-                              )}
-                            </div>
-
-                            {/* Next Up */}
-                            <div ref={nextUpRef} style={{ ...styles.slideSecondaryPanel, ...styles.slideTasksPanel }}>
-                              <div style={styles.slidePanelHeader}>
-                                <div style={styles.slidePanelTitle}>Next Up</div>
-                              </div>
-                              {slideNextUp.length > 0 ? (
-                                <ul style={styles.momentumList}>
-                                  {slideNextUp.map((task, idx) => (
-                                    <li key={`${task.taskTitle}-${task.title}-${idx}`} style={styles.momentumListItem}>
-                                      <div style={styles.momentumListRow}>
-                                        <span style={styles.momentumListStrong}>{task.taskTitle} → {task.title}</span>
-                                        <span style={{ ...styles.actionDueText, color: task.dueDateInfo.color }}>
-                                          {task.dueDateInfo.text}
-                                        </span>
-                                        {isEditingSlide && (
-                                          <button
-                                            onClick={() => hideSlideItem('nextUp', task.id)}
-                                            style={styles.slideRemoveButton}
-                                            title="Remove from slide"
-                                          >
-                                            <X size={14} />
-                                          </button>
-                                        )}
-                                      </div>
-                                    </li>
-                                  ))}
-                                </ul>
-                              ) : (
-                                <div style={styles.momentumEmptyText}>No upcoming tasks.</div>
-                              )}
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </div>
-                );
-              })()
-            )}
-          </>
+          <Slides
+            projects={projects}
+            setProjects={setProjects}
+            onGenerateExecSummary={generateExecSummary}
+            isGeneratingSummary={isGeneratingSummary}
+            apiBaseUrl={import.meta.env.VITE_API_BASE_URL || ''}
+          />
         ) : activeView === 'people' ? (
           // People View
           <>

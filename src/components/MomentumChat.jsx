@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
 import { callOpenAIChat } from '../lib/llmClient';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil } from '../lib/momentumValidation';
+import { MOMENTUM_CHAT_SYSTEM_PROMPT } from '../lib/momentumPrompts';
 import { getTheme, getPriorityColor as getThemePriorityColor, getStatusColor as getThemeStatusColor } from '../lib/theme';
 
 // Default to base theme, can be overridden by props
@@ -41,7 +42,8 @@ export default function MomentumChat({
   onUndoAction,
   loggedInUser = 'You',
   people = [],
-  isSantafied = false
+  isSantafied = false,
+  recentlyUpdatedProjects = {}
 }) {
   const colors = getColors(isSantafied);
   const styles = getStyles(colors);
@@ -59,7 +61,6 @@ export default function MomentumChat({
   const [linkedMessageId, setLinkedMessageId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
   const [projectPositions, setProjectPositions] = useState({});
-  const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState({});
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
@@ -94,8 +95,15 @@ export default function MomentumChat({
     }
   }, [messages, updateProjectPositions]);
 
+  // Track previous messages length to only auto-scroll when new messages are added
+  const prevMessagesLengthRef = useRef(0);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Only scroll if messages were actually added (not just on mount/navigation)
+    if (messages.length > prevMessagesLengthRef.current && prevMessagesLengthRef.current > 0) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+    prevMessagesLengthRef.current = messages.length;
   }, [messages]);
 
   const generateActivityId = () => {
@@ -491,12 +499,12 @@ export default function MomentumChat({
         email: p.email || null
       }));
 
-      const systemPrompt = `You are Momentum, an experienced technical project manager. Using dialectic project planning methodology, be concise but explicit about what you are doing, offer guiding prompts such as "have you thought of X yet?", and rely on the provided project data for context. Respond with a JSON object containing a 'response' string and an 'actions' array.
+      const systemPrompt = `${MOMENTUM_CHAT_SYSTEM_PROMPT}
 
 LOGGED-IN USER: ${loggedInUser || 'Not set'}
 - When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
 - When adding comments or updates, use "${loggedInUser || 'You'}" as the author unless otherwise specified
- - You may send emails on the user's behalf when it moves the work forward (status updates, requests, reminders); the system will handle the From address.
+- You may send emails on the user's behalf when it moves the work forward (status updates, requests, reminders); the system will handle the From address.
 
 PEOPLE & EMAIL ADDRESSES:
 - Each person in the system may have an email address stored in their profile
@@ -510,14 +518,7 @@ ${JSON.stringify(portfolioContext, null, 2)}
 
 People database:
 ${JSON.stringify(peopleContext, null, 2)}
-
-Guidelines:
-- For create_project: include name, priority, status, description, targetDate
-- For update_project: include projectId or projectName, and fields to update (progress, status, priority, targetDate)
-- For add_task/update_task: include projectId/projectName and task details
-- For comment: include projectId/projectName and note/content (author will default to ${loggedInUser || 'You'})
-- For send_email: include recipients (emails or names to resolve), subject, and body. Do not add an AI signature; the system will append one automatically.
-- Always reference existing projects by their exact ID or name`;
+`;
 
       const conversationMessages = [
         { role: 'system', content: systemPrompt },
@@ -529,18 +530,6 @@ Guidelines:
       // Use validated actions with resolved project IDs
       const { validActions } = validateThrustActions(parsed.actions || []);
       const { actionResults, updatedProjectIds } = await applyThrustActions(validActions);
-
-      // Track recently updated projects with timestamps
-      if (updatedProjectIds.length > 0) {
-        const now = Date.now();
-        setRecentlyUpdatedProjects(prev => {
-          const updated = { ...prev };
-          updatedProjectIds.forEach(id => {
-            updated[id] = now;
-          });
-          return updated;
-        });
-      }
 
       const assistantMessage = {
         id: `msg-${Date.now() + 1}`,
@@ -775,15 +764,6 @@ Guidelines:
         @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
         @keyframes slideIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
 
-        .momentum-container {
-          min-height: 100vh;
-          max-height: 100%;
-        }
-
-        .momentum-messages {
-          max-height: calc(100vh - 200px);
-        }
-
         /* Fix chat input positioning on small screens */
         @media (max-height: 600px) {
           .momentum-input-container {
@@ -905,9 +885,7 @@ Guidelines:
 const getStyles = (colors) => ({
   container: {
     display: 'flex',
-    minHeight: '100vh',
-    maxHeight: '100%',
-    height: '100%',
+    height: '100vh',
     width: '100%',
     backgroundColor: '#FAF8F3',
     fontFamily: "system-ui, -apple-system, sans-serif",
@@ -960,7 +938,6 @@ const getStyles = (colors) => ({
     display: 'flex',
     flexDirection: 'column',
     gap: '14px',
-    maxHeight: 'calc(100vh - 200px)',
   },
   messageWrapper: {
     display: 'flex',
@@ -1176,7 +1153,6 @@ const getStyles = (colors) => ({
   },
   projectCardHovered: {
     backgroundColor: '#FDFCFA',
-    borderColor: '#D4CFC4',
     boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
     transform: 'translateX(-3px)',
   },
