@@ -11,7 +11,7 @@ from typing import List, Optional, Sequence
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse, Response
+from fastapi.responses import StreamingResponse, Response, JSONResponse
 from pydantic import BaseModel, Field as PydanticField
 import httpx
 from sqlalchemy import Column, String, delete, event, func
@@ -1658,16 +1658,6 @@ def export_slides_to_powerpoint(payload: SlidesExportPayload, request: Request, 
 
     try:
         pptx_bytes = create_powerpoint_presentation(payload.slides)
-
-        log_action(session, "export_slides_pptx", "slides", None, {"slide_count": len(payload.slides)}, request)
-
-        return Response(
-            content=pptx_bytes,
-            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-            headers={
-                "Content-Disposition": f"attachment; filename=portfolio-slides-{datetime.utcnow().strftime('%Y-%m-%d')}.pptx"
-            }
-        )
     except ImportError:
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
@@ -1675,7 +1665,36 @@ def export_slides_to_powerpoint(payload: SlidesExportPayload, request: Request, 
         )
     except Exception as e:
         logger.exception("Failed to generate PowerPoint")
-        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate PowerPoint: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate PowerPoint: {str(e)}"
+        )
+
+    try:
+        from pptx import Presentation
+
+        Presentation(io.BytesIO(pptx_bytes))
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="python-pptx library not installed. Please install it with: pip install python-pptx"
+        )
+    except Exception:
+        logger.exception("Generated PowerPoint failed validation")
+        return JSONResponse(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            content={"detail": "Generated PowerPoint file is invalid and could not be read."}
+        )
+
+    log_action(session, "export_slides_pptx", "slides", None, {"slide_count": len(payload.slides)}, request)
+
+    return Response(
+        content=pptx_bytes,
+        media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+        headers={
+            "Content-Disposition": f"attachment; filename=portfolio-slides-{datetime.utcnow().strftime('%Y-%m-%d')}.pptx"
+        }
+    )
 
 
 @app.get("/")

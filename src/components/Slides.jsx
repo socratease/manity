@@ -344,7 +344,21 @@ export default function Slides({
       });
 
       if (!response.ok) {
-        throw new Error('Failed to export PowerPoint');
+        let errorMessage = 'Failed to export PowerPoint';
+
+        try {
+          const errorData = await response.json();
+          if (errorData?.detail) {
+            errorMessage = errorData.detail;
+          }
+        } catch (parseError) {
+          const fallbackMessage = await response.text();
+          if (fallbackMessage) {
+            errorMessage = fallbackMessage;
+          }
+        }
+
+        throw new Error(errorMessage);
       }
 
       const blob = await response.blob();
@@ -365,7 +379,7 @@ export default function Slides({
       document.body.removeChild(a);
     } catch (error) {
       console.error('Error exporting PowerPoint:', error);
-      alert('Failed to export PowerPoint. Please try again.');
+      alert(error?.message || 'Failed to export PowerPoint. Please try again.');
     } finally {
       setIsExporting(false);
     }
