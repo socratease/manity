@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
 import { callOpenAIChat } from '../lib/llmClient';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil } from '../lib/momentumValidation';
+import { MOMENTUM_CHAT_SYSTEM_PROMPT } from '../lib/momentumPrompts';
 import { getTheme, getPriorityColor as getThemePriorityColor, getStatusColor as getThemeStatusColor } from '../lib/theme';
 
 // Default to base theme, can be overridden by props
@@ -498,12 +499,12 @@ export default function MomentumChat({
         email: p.email || null
       }));
 
-      const systemPrompt = `You are Momentum, an experienced technical project manager. Using dialectic project planning methodology, be concise but explicit about what you are doing, offer guiding prompts such as "have you thought of X yet?", and rely on the provided project data for context. Respond with a JSON object containing a 'response' string and an 'actions' array.
+      const systemPrompt = `${MOMENTUM_CHAT_SYSTEM_PROMPT}
 
 LOGGED-IN USER: ${loggedInUser || 'Not set'}
 - When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
 - When adding comments or updates, use "${loggedInUser || 'You'}" as the author unless otherwise specified
- - You may send emails on the user's behalf when it moves the work forward (status updates, requests, reminders); the system will handle the From address.
+- You may send emails on the user's behalf when it moves the work forward (status updates, requests, reminders); the system will handle the From address.
 
 PEOPLE & EMAIL ADDRESSES:
 - Each person in the system may have an email address stored in their profile
@@ -517,14 +518,7 @@ ${JSON.stringify(portfolioContext, null, 2)}
 
 People database:
 ${JSON.stringify(peopleContext, null, 2)}
-
-Guidelines:
-- For create_project: include name, priority, status, description, targetDate
-- For update_project: include projectId or projectName, and fields to update (progress, status, priority, targetDate)
-- For add_task/update_task: include projectId/projectName and task details
-- For comment: include projectId/projectName and note/content (author will default to ${loggedInUser || 'You'})
-- For send_email: include recipients (emails or names to resolve), subject, and body. Do not add an AI signature; the system will append one automatically.
-- Always reference existing projects by their exact ID or name`;
+`;
 
       const conversationMessages = [
         { role: 'system', content: systemPrompt },
