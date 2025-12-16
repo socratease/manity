@@ -41,7 +41,8 @@ export default function MomentumChat({
   onUndoAction,
   loggedInUser = 'You',
   people = [],
-  isSantafied = false
+  isSantafied = false,
+  recentlyUpdatedProjects = {}
 }) {
   const colors = getColors(isSantafied);
   const styles = getStyles(colors);
@@ -59,7 +60,6 @@ export default function MomentumChat({
   const [linkedMessageId, setLinkedMessageId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
   const [projectPositions, setProjectPositions] = useState({});
-  const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState({});
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
@@ -94,8 +94,15 @@ export default function MomentumChat({
     }
   }, [messages, updateProjectPositions]);
 
+  // Track previous messages length to only auto-scroll when new messages are added
+  const prevMessagesLengthRef = useRef(0);
+
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Only scroll if messages were actually added (not just on mount/navigation)
+    if (messages.length > prevMessagesLengthRef.current && prevMessagesLengthRef.current > 0) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+    prevMessagesLengthRef.current = messages.length;
   }, [messages]);
 
   const generateActivityId = () => {
@@ -530,18 +537,6 @@ Guidelines:
       const { validActions } = validateThrustActions(parsed.actions || []);
       const { actionResults, updatedProjectIds } = await applyThrustActions(validActions);
 
-      // Track recently updated projects with timestamps
-      if (updatedProjectIds.length > 0) {
-        const now = Date.now();
-        setRecentlyUpdatedProjects(prev => {
-          const updated = { ...prev };
-          updatedProjectIds.forEach(id => {
-            updated[id] = now;
-          });
-          return updated;
-        });
-      }
-
       const assistantMessage = {
         id: `msg-${Date.now() + 1}`,
         role: 'assistant',
@@ -775,15 +770,6 @@ Guidelines:
         @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
         @keyframes slideIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
 
-        .momentum-container {
-          min-height: 100vh;
-          max-height: 100%;
-        }
-
-        .momentum-messages {
-          max-height: calc(100vh - 200px);
-        }
-
         /* Fix chat input positioning on small screens */
         @media (max-height: 600px) {
           .momentum-input-container {
@@ -905,9 +891,7 @@ Guidelines:
 const getStyles = (colors) => ({
   container: {
     display: 'flex',
-    minHeight: '100vh',
-    maxHeight: '100%',
-    height: '100%',
+    height: '100vh',
     width: '100%',
     backgroundColor: '#FAF8F3',
     fontFamily: "system-ui, -apple-system, sans-serif",
@@ -960,7 +944,6 @@ const getStyles = (colors) => ({
     display: 'flex',
     flexDirection: 'column',
     gap: '14px',
-    maxHeight: 'calc(100vh - 200px)',
   },
   messageWrapper: {
     display: 'flex',
@@ -1176,7 +1159,6 @@ const getStyles = (colors) => ({
   },
   projectCardHovered: {
     backgroundColor: '#FDFCFA',
-    borderColor: '#D4CFC4',
     boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
     transform: 'translateX(-3px)',
   },

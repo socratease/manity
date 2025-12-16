@@ -142,8 +142,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   // Persistent portfolio filter (stays after search modal closes)
   const [portfolioFilter, setPortfolioFilter] = useState('');
 
-  // Momentum highlight state - tracks recently updated projects from AI
-  const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState(new Set());
+  // Momentum highlight state - tracks recently updated projects from AI with timestamps
+  const [recentlyUpdatedProjects, setRecentlyUpdatedProjects] = useState({});
 
   // Momentum chat redesign - portfolio panel state
   const [portfolioMinimized, setPortfolioMinimized] = useState(true);
@@ -5655,9 +5655,16 @@ Keep tool calls granular (one discrete change per action), explain each action c
               setThrustMessages(prev => [...prev, message]);
             }}
             onApplyActions={(actionResults, updatedProjectIds) => {
-              // Track recently updated projects for highlighting
+              // Track recently updated projects for highlighting with timestamps
               if (updatedProjectIds && updatedProjectIds.length > 0) {
-                setRecentlyUpdatedProjects(new Set(updatedProjectIds));
+                const now = Date.now();
+                setRecentlyUpdatedProjects(prev => {
+                  const updated = { ...prev };
+                  updatedProjectIds.forEach(id => {
+                    updated[id] = now;
+                  });
+                  return updated;
+                });
                 setExpandedMomentumProjects(prev => {
                   const newExpanded = { ...prev };
                   updatedProjectIds.forEach(id => {
@@ -5671,6 +5678,7 @@ Keep tool calls granular (one discrete change per action), explain each action c
             loggedInUser={loggedInUser}
             people={people}
             isSantafied={isSantafied}
+            recentlyUpdatedProjects={recentlyUpdatedProjects}
           />
         ) : activeView === 'slides' ? (
           <>
