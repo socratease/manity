@@ -8,6 +8,7 @@ import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
 import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
+import { verifyThrustActions } from './lib/momentumVerification';
 import SnowEffect from './components/SnowEffect';
 import ChristmasConfetti from './components/ChristmasConfetti';
 import MomentumChat from './components/MomentumChat';
@@ -2091,10 +2092,11 @@ Write a professional executive summary that highlights the project's current sta
 
   const applyThrustActions = async (actions = []) => {
     if (!actions.length) {
-      return { deltas: [], actionResults: [], updatedProjectIds: [] };
+      return { deltas: [], actionResults: [], updatedProjectIds: [], verification: { perAction: [], hasFailures: false, summary: 'No actions to verify.' } };
     }
 
     const result = { deltas: [], actionResults: [], updatedProjectIds: new Set() };
+    const originalProjects = projects.map(cloneProjectDeep);
     const workingProjects = projects.map(cloneProjectDeep);
     const projectLookup = new Map();
     workingProjects.forEach(project => {
@@ -2588,10 +2590,43 @@ Write a professional executive summary that highlights the project's current sta
       setProjects(workingProjects);
     }
 
+    const verification = verifyThrustActions(actions, originalProjects, workingProjects, result.actionResults);
+    const annotatedActionResults = result.actionResults.map((actionResult, idx) => {
+      const verificationResult = verification.perAction[idx];
+      if (!verificationResult) return actionResult;
+
+      const detailParts = [];
+      if (actionResult.detail) detailParts.push(actionResult.detail);
+
+      if (verificationResult.status === 'passed') {
+        detailParts.push('Verification passed.');
+      } else if (verificationResult.status === 'skipped') {
+        detailParts.push('Verification skipped.');
+      } else if (verificationResult.status === 'failed') {
+        const discrepancyText = verificationResult.discrepancies.join('; ');
+        detailParts.push(`Verification failed: ${discrepancyText}`);
+        if (!actionResult.error) {
+          return {
+            ...actionResult,
+            verification: verificationResult,
+            detail: detailParts.join(' '),
+            error: `Verification failed: ${discrepancyText}`
+          };
+        }
+      }
+
+      return {
+        ...actionResult,
+        verification: verificationResult,
+        detail: detailParts.join(' ')
+      };
+    });
+
     return {
       deltas: result.deltas,
-      actionResults: result.actionResults,
-      updatedProjectIds: Array.from(result.updatedProjectIds)
+      actionResults: annotatedActionResults,
+      updatedProjectIds: Array.from(result.updatedProjectIds),
+      verification
     };
   };
 
@@ -2878,7 +2913,13 @@ Keep tool calls granular (one discrete change per action), explain each action c
     try {
       const { parsed, content } = await requestMomentumActions(messages);
       setThrustPendingActions(parsed.actions || []);
-      const { deltas, actionResults, updatedProjectIds } = await applyThrustActions(parsed.actions || []);
+      const { deltas, actionResults, updatedProjectIds, verification } = await applyThrustActions(parsed.actions || []);
+
+      if (verification?.hasFailures) {
+        setThrustError('Some Momentum actions did not match the requested changes. Review verification notes.');
+      } else {
+        setThrustError('');
+      }
 
       // Track recently updated projects for highlighting
       if (updatedProjectIds && updatedProjectIds.length > 0) {
@@ -2902,7 +2943,8 @@ Keep tool calls granular (one discrete change per action), explain each action c
         date: new Date().toISOString(),
         actionResults,
         deltas,
-        updatedProjectIds: updatedProjectIds || []
+        updatedProjectIds: updatedProjectIds || [],
+        verificationSummary: verification?.summary
       };
 
       // Auto-expand portfolio panel if projects were updated
