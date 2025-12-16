@@ -1403,8 +1403,12 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
             shape.line.width = Pt(1)
         else:
             shape.line.fill.background()
-        # Set corner radius
-        shape.adjustments[0] = 0.1
+        # Set corner radius - use try/except to handle shapes without adjustments
+        try:
+            if shape.adjustments and len(shape.adjustments) > 0:
+                shape.adjustments[0] = 0.1
+        except (IndexError, TypeError):
+            pass  # Shape doesn't support adjustments
         return shape
 
     def add_text_box(slide, left, top, width, height, text, font_size=12, font_color=CHARCOAL, bold=False, alignment=PP_ALIGN.LEFT):
@@ -1436,19 +1440,12 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         blank_layout = prs.slide_layouts[6]  # Blank layout
         slide = prs.slides.add_slide(blank_layout)
 
-        # Add background gradient effect (cream to white)
-        background = slide.shapes.add_shape(
-            MSO_SHAPE.RECTANGLE,
-            Inches(0), Inches(0), prs.slide_width, prs.slide_height
-        )
-        background.fill.solid()
-        background.fill.fore_color.rgb = CREAM
-        background.line.fill.background()
-        # Send to back
-        spTree = slide.shapes._spTree
-        sp = background._element
-        spTree.remove(sp)
-        spTree.insert(2, sp)
+        # Add background - using slide background property instead of shape
+        # to avoid z-order issues and file corruption
+        slide_background = slide.background
+        fill = slide_background.fill
+        fill.solid()
+        fill.fore_color.rgb = CREAM
 
         # Layout constants
         MARGIN = Inches(0.5)
