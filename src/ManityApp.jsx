@@ -170,6 +170,18 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     return saved !== null ? saved === 'true' : true; // Default to true
   });
 
+  const sortActivitiesDesc = (activities = []) =>
+    [...activities].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+  const syncProjectActivity = (project, activities = project.recentActivity || []) => {
+    const sorted = sortActivitiesDesc(activities);
+    return {
+      ...project,
+      recentActivity: sorted,
+      lastUpdate: sorted[0]?.note || project.lastUpdate || ''
+    };
+  };
+
   // JSON Schema for structured output - ensures LLM returns properly formatted actions
   const momentumResponseSchema = {
     type: "json_schema",
@@ -748,17 +760,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const handleDailyCheckin = (projectId) => {
     if (checkinNote.trim()) {
-      setProjects(projects.map(p =>
-        p.id === projectId
-          ? {
-              ...p,
-              recentActivity: [
+      setProjects(prevProjects =>
+        prevProjects.map(p =>
+          p.id === projectId
+            ? syncProjectActivity(p, [
                 { id: generateActivityId(), date: new Date().toISOString(), note: checkinNote, author: loggedInUser },
                 ...p.recentActivity
-              ]
-            }
-          : p
-      ));
+              ])
+            : p
+        )
+      );
       setCheckinNote('');
 
       // Move to next project the user is a contributor on, or close if done
@@ -774,17 +785,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const handleAddUpdate = () => {
     if (newUpdate.trim() && viewingProjectId) {
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              recentActivity: [
+      setProjects(prevProjects =>
+        prevProjects.map(p =>
+          p.id === viewingProjectId
+            ? syncProjectActivity(p, [
                 { id: generateActivityId(), date: new Date().toISOString(), note: newUpdate, author: loggedInUser },
                 ...p.recentActivity
-              ]
-            }
-          : p
-      ));
+              ])
+            : p
+        )
+      );
       setNewUpdate('');
     }
   };
@@ -845,21 +855,24 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }));
 
     setProjects(prevProjects =>
-      prevProjects.map(project => ({
-        ...project,
-        recentActivity: project.recentActivity.map(activity =>
+      prevProjects.map(project => {
+        const hasActivity = project.recentActivity.some(activity => activity.id === activityId);
+        if (!hasActivity) return project;
+        const updatedActivities = project.recentActivity.map(activity =>
           activity.id === activityId ? { ...activity, note: newNote } : activity
-        )
-      }))
+        );
+        return syncProjectActivity(project, updatedActivities);
+      })
     );
   };
 
   const deleteActivity = (activityId) => {
     setProjects(prevProjects =>
-      prevProjects.map(project => ({
-        ...project,
-        recentActivity: project.recentActivity.filter(activity => activity.id !== activityId)
-      }))
+      prevProjects.map(project => {
+        const updatedActivities = project.recentActivity.filter(activity => activity.id !== activityId);
+        const activityRemoved = updatedActivities.length !== project.recentActivity.length;
+        return activityRemoved ? syncProjectActivity(project, updatedActivities) : project;
+      })
     );
 
     setActivityEdits(prev => {
@@ -933,23 +946,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     // Sync stakeholders to People database
     await syncStakeholdersToPeople(finalStakeholders);
 
-    setProjects(projects.map(p =>
-      p.id === viewingProjectId
-        ? {
-            ...p,
-            status: editValues.status,
-            priority: editValues.priority,
-            stakeholders: finalStakeholders,
-            description: editValues.description,
-            progressMode: editValues.progressMode || 'manual',
-            progress: editValues.progress || 0,
-            recentActivity: [
+    setProjects(prevProjects =>
+      prevProjects.map(p =>
+        p.id === viewingProjectId
+          ? syncProjectActivity(p, [
               { id: generateActivityId(), date: new Date().toISOString(), note: 'Updated project details', author: loggedInUser },
               ...p.recentActivity
-            ]
-          }
-        : p
-    ));
+            ])
+          : p
+      )
+    );
     setEditMode(false);
   };
 
@@ -1079,11 +1085,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const handleSubtaskComment = (taskId, subtaskId, taskTitle, subtaskTitle) => {
     if (subtaskComment.trim()) {
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              recentActivity: [
+      setProjects(prevProjects =>
+        prevProjects.map(p =>
+          p.id === viewingProjectId
+            ? syncProjectActivity(p, [
                 {
                   id: generateActivityId(),
                   date: new Date().toISOString(),
@@ -1092,10 +1097,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                   taskContext: { taskId, subtaskId, taskTitle, subtaskTitle }
                 },
                 ...p.recentActivity
-              ]
-            }
-          : p
-      ));
+              ])
+            : p
+        )
+      );
       setSubtaskComment('');
       setCommentingOn(null);
     }
@@ -1103,11 +1108,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const handleTaskComment = (taskId, taskTitle) => {
     if (taskComment.trim()) {
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              recentActivity: [
+      setProjects(prevProjects =>
+        prevProjects.map(p =>
+          p.id === viewingProjectId
+            ? syncProjectActivity(p, [
                 {
                   id: generateActivityId(),
                   date: new Date().toISOString(),
@@ -1116,10 +1120,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                   taskContext: { taskId, subtaskId: null, taskTitle, subtaskTitle: null }
                 },
                 ...p.recentActivity
-              ]
-            }
-          : p
-      ));
+              ])
+            : p
+        )
+      );
       setTaskComment('');
       setTaskCommentingOn(null);
     }
@@ -1909,7 +1913,7 @@ Write a professional executive summary that highlights the project's current sta
     // Sync stakeholders to People database
     await syncStakeholdersToPeople(newProject.stakeholders);
 
-    setProjects(prev => [...prev, newProject]);
+    setProjects(prev => [...prev, syncProjectActivity(newProject)]);
     setShowNewProject(false);
     resetNewProjectForm();
     updateHash('overview', newProject.id);
@@ -2047,7 +2051,10 @@ Write a professional executive summary that highlights the project's current sta
 
         switch (delta.type) {
           case 'remove_activity':
-            project.recentActivity = project.recentActivity.filter(activity => activity.id !== delta.activityId);
+            Object.assign(
+              project,
+              syncProjectActivity(project, project.recentActivity.filter(activity => activity.id !== delta.activityId))
+            );
             break;
           case 'remove_task':
             project.plan = project.plan.filter(task => task.id !== delta.taskId);
@@ -2225,7 +2232,7 @@ Write a professional executive summary that highlights the project's current sta
         const normalizedStakeholders = normalizeStakeholderList(stakeholderEntries);
         const createdAt = new Date().toISOString();
         const newId = action.projectId || action.id || `ai-project-${Math.random().toString(36).slice(2, 7)}`;
-        const newProject = {
+        const newProject = syncProjectActivity({
           id: newId,
           name: projectName,
           priority: action.priority || 'medium',
@@ -2239,7 +2246,7 @@ Write a professional executive summary that highlights the project's current sta
           recentActivity: action.description
             ? [{ id: generateActivityId(), date: createdAt, note: action.description, author: 'Momentum' }]
             : []
-        };
+        });
 
         workingProjects.push(newProject);
         projectLookup.set(`${projectName}`.toLowerCase(), newId);
@@ -2280,7 +2287,10 @@ Write a professional executive summary that highlights the project's current sta
             note,
             author: action.author || loggedInUser || 'You'
           };
-          project.recentActivity = [newActivity, ...project.recentActivity];
+          Object.assign(
+            project,
+            syncProjectActivity(project, [newActivity, ...project.recentActivity])
+          );
           actionDeltas.push({ type: 'remove_activity', projectId: project.id, activityId });
           label = `Commented on ${project.name}`;
           detail = requestedNote
@@ -2759,19 +2769,18 @@ Write a professional executive summary that highlights the project's current sta
       const targetProjectId = viewingProjectId || visibleProjects[0]?.id;
 
       if (targetProjectId) {
-        setProjects(projects.map(p =>
-          p.id === targetProjectId
-            ? {
-                ...p,
-                recentActivity: [
+        setProjects(prevProjects =>
+          prevProjects.map(p =>
+            p.id === targetProjectId
+              ? syncProjectActivity(p, [
                   { id: generateActivityId(), date: new Date().toISOString(), note: timelineUpdate, author: loggedInUser },
                   ...p.recentActivity
-                ]
-              }
-            : p
-        ));
+                ])
+              : p
+          )
+        );
       }
-      
+
       setTimelineUpdate('');
     }
   };
@@ -3373,7 +3382,11 @@ Keep tool calls granular (one discrete change per action), explain each action c
           <MessageCircle size={14} style={{ color: 'var(--stone)' }} />
           Latest Update
         </div>
-        <p style={styles.updateText}>{project.lastUpdate}</p>
+        {(() => {
+          const latestActivity = project.recentActivity?.[0];
+          const latestUpdate = project.lastUpdate || latestActivity?.note || 'No updates yet';
+          return <p style={styles.updateText}>{latestUpdate}</p>;
+        })()}
       </div>
 
       {(() => {

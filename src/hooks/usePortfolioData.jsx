@@ -9,6 +9,20 @@ const resolveUrl = (path) => {
   return `${window.location.origin}${API_BASE}${path}`;
 };
 
+const sortActivitiesDesc = (activities = []) =>
+  [...activities].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
+
+const normalizeProjectActivities = (project = {}) => {
+  const sortedActivity = sortActivitiesDesc(project.recentActivity || []);
+  return {
+    ...project,
+    recentActivity: sortedActivity,
+    lastUpdate: sortedActivity[0]?.note || project.lastUpdate || ''
+  };
+};
+
+const normalizeProjects = (projects = []) => projects.map(normalizeProjectActivities);
+
 // Local storage key for email settings
 const EMAIL_SETTINGS_KEY = 'manity_email_settings';
 
@@ -107,12 +121,13 @@ export const PortfolioProvider = ({ children }) => {
     return response.json();
   }, []);
 
-  const persistPortfolio = useCallback(async (nextProjects, nextPeople) => {
+  const persistPortfolio = useCallback(async (nextProjects, nextPeople = people) => {
     if (!hasInitializedRef.current) return;
+    const normalizedProjects = normalizeProjects(nextProjects);
     try {
       await apiRequest('/import', {
         method: 'POST',
-        body: JSON.stringify({ projects: nextProjects, people: nextPeople || people, mode: 'replace' })
+        body: JSON.stringify({ projects: normalizedProjects, people: nextPeople || people, mode: 'replace' })
       });
     } catch (error) {
       console.error('Unable to persist portfolio to API', error);
@@ -123,7 +138,7 @@ export const PortfolioProvider = ({ children }) => {
     try {
       const data = await apiRequest('/projects');
       if (Array.isArray(data)) {
-        setProjectsState(data);
+        setProjectsState(normalizeProjects(data));
         hasInitializedRef.current = true;
       }
     } catch (error) {
@@ -134,12 +149,12 @@ export const PortfolioProvider = ({ children }) => {
           body: JSON.stringify({ projects: defaultPortfolio, mode: 'replace' })
         });
         if (Array.isArray(seeded?.projects)) {
-          setProjectsState(seeded.projects);
+          setProjectsState(normalizeProjects(seeded.projects));
           hasInitializedRef.current = true;
         }
       } catch (seedError) {
         console.error('Unable to seed defaults', seedError);
-        setProjectsState(defaultPortfolio);
+        setProjectsState(normalizeProjects(defaultPortfolio));
         hasInitializedRef.current = true;
       }
     }
@@ -216,8 +231,9 @@ export const PortfolioProvider = ({ children }) => {
   const updateProjects = useCallback((updater) => {
     setProjectsState(prevProjects => {
       const nextProjects = typeof updater === 'function' ? updater(prevProjects) : updater;
-      persistPortfolio(nextProjects);
-      return nextProjects;
+      const normalized = normalizeProjects(nextProjects);
+      persistPortfolio(normalized);
+      return normalized;
     });
   }, [persistPortfolio]);
 
@@ -266,7 +282,7 @@ export const PortfolioProvider = ({ children }) => {
 
     const data = await response.json();
     if (Array.isArray(data?.projects)) {
-      setProjectsState(data.projects);
+      setProjectsState(normalizeProjects(data.projects));
       hasInitializedRef.current = true;
     }
     return data?.projects || [];
@@ -277,8 +293,9 @@ export const PortfolioProvider = ({ children }) => {
       method: 'POST',
       body: JSON.stringify(project)
     });
-    updateProjects(prev => [...prev, created]);
-    return created;
+    const normalized = normalizeProjectActivities(created);
+    updateProjects(prev => [...prev, normalized]);
+    return normalized;
   }, [apiRequest, updateProjects]);
 
   const updateProject = useCallback(async (projectId, updates) => {
@@ -287,8 +304,9 @@ export const PortfolioProvider = ({ children }) => {
       method: 'PUT',
       body: JSON.stringify({ ...existing, ...updates, id: projectId })
     });
-    updateProjects(prev => prev.map(project => project.id === projectId ? updated : project));
-    return updated;
+    const normalized = normalizeProjectActivities(updated);
+    updateProjects(prev => prev.map(project => project.id === projectId ? normalized : project));
+    return normalized;
   }, [apiRequest, updateProjects, projects]);
 
   const deleteProject = useCallback(async (projectId) => {
@@ -297,8 +315,9 @@ export const PortfolioProvider = ({ children }) => {
   }, [apiRequest, updateProjects]);
 
   const updateProjectFromResponse = useCallback((updatedProject) => {
-    updateProjects(prev => prev.map(project => project.id === updatedProject.id ? updatedProject : project));
-    return updatedProject;
+    const normalized = normalizeProjectActivities(updatedProject);
+    updateProjects(prev => prev.map(project => project.id === normalized.id ? normalized : project));
+    return normalized;
   }, [updateProjects]);
 
   const addTask = useCallback(async (projectId, task) => {
