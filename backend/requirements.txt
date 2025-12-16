@@ -4,3 +4,4 @@ sqlmodel
 httpx
 python-multipart
 pytest
+python-pptx
