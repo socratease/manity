@@ -1,3 +1,4 @@
+import io
 import logging
 import os
 import uuid
@@ -10,7 +11,7 @@ from typing import List, Optional, Sequence
 
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, Response
 from pydantic import BaseModel, Field as PydanticField
 import httpx
 from sqlalchemy import Column, String, delete, event, func
@@ -1321,6 +1322,363 @@ async def proxy_llm_chat(payload: ChatRequest, request: Request, session: Sessio
     log_action(session, "llm_chat", "llm", None, conversation_log, request)
 
     return {"content": content, "raw": data}
+
+
+# PowerPoint Export Models and Endpoint
+class SlideTaskItem(BaseModel):
+    title: str
+    date: str
+
+
+class SlideUpdateItem(BaseModel):
+    author: str
+    date: str
+    note: str
+
+
+class SlideStakeholder(BaseModel):
+    name: str
+    team: str = ""
+
+
+class SlideData(BaseModel):
+    name: str
+    description: str = ""
+    executiveUpdate: str = ""
+    targetDate: Optional[str] = None
+    priority: str = "medium"
+    status: str = "active"
+    stakeholders: List[SlideStakeholder] = []
+    recentlyCompleted: List[SlideTaskItem] = []
+    nextUp: List[SlideTaskItem] = []
+    recentUpdates: List[SlideUpdateItem] = []
+
+
+class SlidesExportPayload(BaseModel):
+    slides: List[SlideData]
+
+
+def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
+    """Generate a PowerPoint presentation from slide data matching the web UI design."""
+    from pptx import Presentation
+    from pptx.util import Inches, Pt, Emu
+    from pptx.dml.color import RGBColor
+    from pptx.enum.text import PP_ALIGN, MSO_ANCHOR
+    from pptx.enum.shapes import MSO_SHAPE
+
+    # Create presentation with 16:9 aspect ratio
+    prs = Presentation()
+    prs.slide_width = Inches(13.333)  # 16:9 standard width
+    prs.slide_height = Inches(7.5)    # 16:9 standard height
+
+    # Define colors matching the web UI (CSS variables)
+    CHARCOAL = RGBColor(58, 54, 49)      # --charcoal: #3a3631
+    STONE = RGBColor(107, 101, 84)       # --stone: #6b6554
+    CLOUD = RGBColor(232, 227, 216)      # --cloud: #e8e3d8
+    CREAM = RGBColor(250, 248, 243)      # --cream: #faf8f3
+    SAGE = RGBColor(122, 155, 118)       # --sage: #7a9b76
+    CORAL = RGBColor(215, 119, 100)      # --coral: #d77764
+    AMBER = RGBColor(218, 165, 32)       # --amber: #daa520
+    EARTH = RGBColor(139, 111, 71)       # --earth: #8b6f47
+    WHITE = RGBColor(255, 255, 255)
+
+    def get_priority_color(priority: str) -> RGBColor:
+        colors = {
+            'high': CORAL,
+            'medium': AMBER,
+            'low': SAGE
+        }
+        return colors.get(priority, STONE)
+
+    def add_rounded_rectangle(slide, left, top, width, height, fill_color=None, line_color=None):
+        """Add a rounded rectangle shape."""
+        shape = slide.shapes.add_shape(
+            MSO_SHAPE.ROUNDED_RECTANGLE,
+            left, top, width, height
+        )
+        shape.fill.solid()
+        shape.fill.fore_color.rgb = fill_color if fill_color else WHITE
+        if line_color:
+            shape.line.color.rgb = line_color
+            shape.line.width = Pt(1)
+        else:
+            shape.line.fill.background()
+        # Set corner radius
+        shape.adjustments[0] = 0.1
+        return shape
+
+    def add_text_box(slide, left, top, width, height, text, font_size=12, font_color=CHARCOAL, bold=False, alignment=PP_ALIGN.LEFT):
+        """Add a text box with specified formatting."""
+        textbox = slide.shapes.add_textbox(left, top, width, height)
+        tf = textbox.text_frame
+        tf.word_wrap = True
+        tf.auto_size = None
+        p = tf.paragraphs[0]
+        p.text = text
+        p.font.size = Pt(font_size)
+        p.font.color.rgb = font_color
+        p.font.bold = bold
+        p.font.name = "Arial"
+        p.alignment = alignment
+        return textbox
+
+    def format_datetime_simple(date_str: str) -> str:
+        """Format datetime string for display."""
+        try:
+            date = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+            return date.strftime('%b %d, %Y')
+        except:
+            return date_str
+
+    # Create a slide for each project
+    for slide_data in slides:
+        # Add a blank slide
+        blank_layout = prs.slide_layouts[6]  # Blank layout
+        slide = prs.slides.add_slide(blank_layout)
+
+        # Add background gradient effect (cream to white)
+        background = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            Inches(0), Inches(0), prs.slide_width, prs.slide_height
+        )
+        background.fill.solid()
+        background.fill.fore_color.rgb = CREAM
+        background.line.fill.background()
+        # Send to back
+        spTree = slide.shapes._spTree
+        sp = background._element
+        spTree.remove(sp)
+        spTree.insert(2, sp)
+
+        # Layout constants
+        MARGIN = Inches(0.5)
+        HEADER_HEIGHT = Inches(1.2)
+        PANEL_GAP = Inches(0.2)
+        CONTENT_TOP = MARGIN + HEADER_HEIGHT + Inches(0.3)
+        CONTENT_HEIGHT = prs.slide_height - CONTENT_TOP - MARGIN
+        HALF_WIDTH = (prs.slide_width - MARGIN * 2 - PANEL_GAP) / 2
+
+        # ===== HEADER SECTION =====
+        # Project name
+        title_box = add_text_box(
+            slide, MARGIN, MARGIN, prs.slide_width - MARGIN * 2, Inches(0.5),
+            slide_data.name, font_size=24, font_color=CHARCOAL, bold=True
+        )
+
+        # Project description (subtitle)
+        if slide_data.description:
+            add_text_box(
+                slide, MARGIN, MARGIN + Inches(0.45), prs.slide_width - MARGIN * 2, Inches(0.3),
+                slide_data.description, font_size=12, font_color=CHARCOAL
+            )
+
+        # Metadata row
+        meta_y = MARGIN + Inches(0.85)
+        meta_x = MARGIN
+
+        # Target date
+        target_text = f"Target: {slide_data.targetDate if slide_data.targetDate else 'TBD'}"
+        target_box = add_text_box(slide, meta_x, meta_y, Inches(1.5), Inches(0.25), target_text, font_size=10, font_color=STONE)
+        meta_x += Inches(1.6)
+
+        # Priority badge
+        priority_color = get_priority_color(slide_data.priority)
+        priority_shape = add_rounded_rectangle(slide, meta_x, meta_y, Inches(1.1), Inches(0.25), fill_color=CREAM, line_color=priority_color)
+        priority_tf = priority_shape.text_frame
+        priority_tf.paragraphs[0].text = f"{slide_data.priority} priority"
+        priority_tf.paragraphs[0].font.size = Pt(9)
+        priority_tf.paragraphs[0].font.color.rgb = priority_color
+        priority_tf.paragraphs[0].font.bold = True
+        priority_tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+        priority_shape.text_frame.paragraphs[0].space_before = Pt(2)
+        meta_x += Inches(1.2)
+
+        # Status badge
+        status_shape = add_rounded_rectangle(slide, meta_x, meta_y, Inches(0.9), Inches(0.25), fill_color=CLOUD)
+        status_tf = status_shape.text_frame
+        status_tf.paragraphs[0].text = slide_data.status
+        status_tf.paragraphs[0].font.size = Pt(9)
+        status_tf.paragraphs[0].font.color.rgb = CHARCOAL
+        status_tf.paragraphs[0].font.bold = True
+        status_tf.paragraphs[0].alignment = PP_ALIGN.CENTER
+        status_shape.text_frame.paragraphs[0].space_before = Pt(2)
+        meta_x += Inches(1.0)
+
+        # Stakeholders
+        if slide_data.stakeholders:
+            stakeholder_names = [s.name for s in slide_data.stakeholders[:5]]
+            stakeholder_text = ", ".join(stakeholder_names)
+            if len(slide_data.stakeholders) > 5:
+                stakeholder_text += f" +{len(slide_data.stakeholders) - 5}"
+            add_text_box(slide, meta_x, meta_y, Inches(4), Inches(0.25), f"Team: {stakeholder_text}", font_size=10, font_color=STONE)
+
+        # Header divider line
+        line = slide.shapes.add_shape(
+            MSO_SHAPE.RECTANGLE,
+            MARGIN, CONTENT_TOP - Inches(0.15), prs.slide_width - MARGIN * 2, Pt(1)
+        )
+        line.fill.solid()
+        line.fill.fore_color.rgb = CLOUD
+        line.line.fill.background()
+
+        # ===== LEFT COLUMN =====
+        left_x = MARGIN
+        panel_width = HALF_WIDTH
+        exec_height = Inches(1.5)
+        updates_height = CONTENT_HEIGHT - exec_height - PANEL_GAP
+
+        # Executive Update Panel
+        exec_panel = add_rounded_rectangle(slide, left_x, CONTENT_TOP, panel_width, exec_height, fill_color=WHITE, line_color=CLOUD)
+
+        # Executive Update title
+        add_text_box(slide, left_x + Inches(0.15), CONTENT_TOP + Inches(0.1), panel_width - Inches(0.3), Inches(0.2),
+                    "EXECUTIVE UPDATE", font_size=9, font_color=STONE, bold=True)
+
+        # Executive Update content
+        exec_content = slide_data.executiveUpdate or slide_data.description or "No executive update yet."
+        exec_text_box = slide.shapes.add_textbox(
+            left_x + Inches(0.15), CONTENT_TOP + Inches(0.35),
+            panel_width - Inches(0.3), exec_height - Inches(0.5)
+        )
+        exec_tf = exec_text_box.text_frame
+        exec_tf.word_wrap = True
+        exec_tf.paragraphs[0].text = exec_content[:500]  # Limit text length
+        exec_tf.paragraphs[0].font.size = Pt(10)
+        exec_tf.paragraphs[0].font.color.rgb = STONE
+        exec_tf.paragraphs[0].font.name = "Arial"
+
+        # Recent Updates Panel
+        updates_top = CONTENT_TOP + exec_height + PANEL_GAP
+        updates_panel = add_rounded_rectangle(slide, left_x, updates_top, panel_width, updates_height, fill_color=WHITE, line_color=CLOUD)
+
+        # Recent Updates title
+        add_text_box(slide, left_x + Inches(0.15), updates_top + Inches(0.1), panel_width - Inches(0.3), Inches(0.2),
+                    "RECENT UPDATES", font_size=9, font_color=STONE, bold=True)
+
+        # Recent Updates content
+        updates_y = updates_top + Inches(0.35)
+        for i, update in enumerate(slide_data.recentUpdates[:3]):
+            if updates_y > updates_top + updates_height - Inches(0.4):
+                break
+            # Author and date
+            add_text_box(slide, left_x + Inches(0.15), updates_y, Inches(1.5), Inches(0.2),
+                        update.author, font_size=10, font_color=CHARCOAL, bold=True)
+            add_text_box(slide, left_x + panel_width - Inches(1.5), updates_y, Inches(1.35), Inches(0.2),
+                        format_datetime_simple(update.date), font_size=9, font_color=STONE, alignment=PP_ALIGN.RIGHT)
+            updates_y += Inches(0.2)
+            # Note text
+            note_box = slide.shapes.add_textbox(left_x + Inches(0.15), updates_y, panel_width - Inches(0.3), Inches(0.4))
+            note_tf = note_box.text_frame
+            note_tf.word_wrap = True
+            note_tf.paragraphs[0].text = update.note[:150]
+            note_tf.paragraphs[0].font.size = Pt(9)
+            note_tf.paragraphs[0].font.color.rgb = STONE
+            note_tf.paragraphs[0].font.name = "Arial"
+            updates_y += Inches(0.45)
+
+        if not slide_data.recentUpdates:
+            add_text_box(slide, left_x + Inches(0.15), updates_top + Inches(0.4), panel_width - Inches(0.3), Inches(0.2),
+                        "No updates yet.", font_size=10, font_color=STONE)
+
+        # ===== RIGHT COLUMN =====
+        right_x = MARGIN + HALF_WIDTH + PANEL_GAP
+        half_height = (CONTENT_HEIGHT - PANEL_GAP) / 2
+
+        # Recently Completed Panel
+        completed_panel = add_rounded_rectangle(slide, right_x, CONTENT_TOP, panel_width, half_height, fill_color=WHITE, line_color=SAGE)
+
+        # Recently Completed title
+        add_text_box(slide, right_x + Inches(0.15), CONTENT_TOP + Inches(0.1), panel_width - Inches(0.3), Inches(0.2),
+                    "RECENTLY COMPLETED", font_size=9, font_color=STONE, bold=True)
+
+        # Recently Completed content
+        completed_y = CONTENT_TOP + Inches(0.35)
+        for task in slide_data.recentlyCompleted[:3]:
+            if completed_y > CONTENT_TOP + half_height - Inches(0.3):
+                break
+            # Task title
+            task_box = slide.shapes.add_textbox(right_x + Inches(0.15), completed_y, panel_width - Inches(1.2), Inches(0.25))
+            task_tf = task_box.text_frame
+            task_tf.word_wrap = True
+            task_tf.paragraphs[0].text = task.title[:60]
+            task_tf.paragraphs[0].font.size = Pt(10)
+            task_tf.paragraphs[0].font.color.rgb = CHARCOAL
+            task_tf.paragraphs[0].font.bold = True
+            task_tf.paragraphs[0].font.name = "Arial"
+            # Date
+            add_text_box(slide, right_x + panel_width - Inches(1), completed_y, Inches(0.85), Inches(0.2),
+                        task.date, font_size=9, font_color=SAGE, alignment=PP_ALIGN.RIGHT)
+            completed_y += Inches(0.35)
+
+        if not slide_data.recentlyCompleted:
+            add_text_box(slide, right_x + Inches(0.15), CONTENT_TOP + Inches(0.4), panel_width - Inches(0.3), Inches(0.2),
+                        "No recently completed tasks.", font_size=10, font_color=STONE)
+
+        # Next Up Panel
+        nextup_top = CONTENT_TOP + half_height + PANEL_GAP
+        nextup_panel = add_rounded_rectangle(slide, right_x, nextup_top, panel_width, half_height, fill_color=WHITE, line_color=SAGE)
+
+        # Next Up title
+        add_text_box(slide, right_x + Inches(0.15), nextup_top + Inches(0.1), panel_width - Inches(0.3), Inches(0.2),
+                    "NEXT UP", font_size=9, font_color=STONE, bold=True)
+
+        # Next Up content
+        nextup_y = nextup_top + Inches(0.35)
+        for task in slide_data.nextUp[:3]:
+            if nextup_y > nextup_top + half_height - Inches(0.3):
+                break
+            # Task title
+            task_box = slide.shapes.add_textbox(right_x + Inches(0.15), nextup_y, panel_width - Inches(1.2), Inches(0.25))
+            task_tf = task_box.text_frame
+            task_tf.word_wrap = True
+            task_tf.paragraphs[0].text = task.title[:60]
+            task_tf.paragraphs[0].font.size = Pt(10)
+            task_tf.paragraphs[0].font.color.rgb = CHARCOAL
+            task_tf.paragraphs[0].font.bold = True
+            task_tf.paragraphs[0].font.name = "Arial"
+            # Date - color based on content (overdue = coral, otherwise stone)
+            date_color = CORAL if 'overdue' in task.date.lower() else (AMBER if 'today' in task.date.lower() or 'tomorrow' in task.date.lower() else STONE)
+            add_text_box(slide, right_x + panel_width - Inches(1), nextup_y, Inches(0.85), Inches(0.2),
+                        task.date, font_size=9, font_color=date_color, alignment=PP_ALIGN.RIGHT)
+            nextup_y += Inches(0.35)
+
+        if not slide_data.nextUp:
+            add_text_box(slide, right_x + Inches(0.15), nextup_top + Inches(0.4), panel_width - Inches(0.3), Inches(0.2),
+                        "No upcoming tasks.", font_size=10, font_color=STONE)
+
+    # Save to bytes
+    pptx_bytes = io.BytesIO()
+    prs.save(pptx_bytes)
+    pptx_bytes.seek(0)
+    return pptx_bytes.getvalue()
+
+
+@app.post("/api/slides/export")
+def export_slides_to_powerpoint(payload: SlidesExportPayload, request: Request, session: Session = Depends(get_session)):
+    """Export slides to PowerPoint format."""
+    if not payload.slides:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="No slides provided")
+
+    try:
+        pptx_bytes = create_powerpoint_presentation(payload.slides)
+
+        log_action(session, "export_slides_pptx", "slides", None, {"slide_count": len(payload.slides)}, request)
+
+        return Response(
+            content=pptx_bytes,
+            media_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+            headers={
+                "Content-Disposition": f"attachment; filename=portfolio-slides-{datetime.utcnow().strftime('%Y-%m-%d')}.pptx"
+            }
+        )
+    except ImportError:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="python-pptx library not installed. Please install it with: pip install python-pptx"
+        )
+    except Exception as e:
+        logger.exception("Failed to generate PowerPoint")
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=f"Failed to generate PowerPoint: {str(e)}")
 
 
 @app.get("/")
