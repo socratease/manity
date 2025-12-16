@@ -1348,10 +1348,10 @@ class SlideData(BaseModel):
     targetDate: Optional[str] = None
     priority: str = "medium"
     status: str = "active"
-    stakeholders: List[SlideStakeholder] = []
-    recentlyCompleted: List[SlideTaskItem] = []
-    nextUp: List[SlideTaskItem] = []
-    recentUpdates: List[SlideUpdateItem] = []
+    stakeholders: List[SlideStakeholder] = PydanticField(default_factory=list)
+    recentlyCompleted: List[SlideTaskItem] = PydanticField(default_factory=list)
+    nextUp: List[SlideTaskItem] = PydanticField(default_factory=list)
+    recentUpdates: List[SlideUpdateItem] = PydanticField(default_factory=list)
 
 
 class SlidesExportPayload(BaseModel):
