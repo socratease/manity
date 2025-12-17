@@ -1,9 +1,15 @@
-import React, { useRef, useEffect, useState } from 'react';
+import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
 import { getTheme } from '../lib/theme';
 
 const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
 
-function PeopleProjectsJuggle({ projects = [], people = [], isSantafied = false }) {
+const PeopleProjectsJuggle = forwardRef(function PeopleProjectsJuggle({
+  projects = [],
+  people = [],
+  isSantafied = false,
+  avatarsReleased = false,
+  onAvatarPositions = null,
+}, ref) {
   const colors = getColors(isSantafied);
   const getPriorityColor = (priority) => {
     const priorityColors = {
@@ -14,11 +20,47 @@ function PeopleProjectsJuggle({ projects = [], people = [], isSantafied = false 
     return priorityColors[priority] || colors.stone;
   };
   const canvasRef = useRef(null);
+  const containerRef = useRef(null);
   const animationRef = useRef(null);
   const stateRef = useRef(null);
   const dimensionsRef = useRef({ width: 800, height: 450 });
   const [canvasKey, setCanvasKey] = useState(0);
   const [hoveredProject, setHoveredProject] = useState(null);
+  const avatarOpacityRef = useRef(1);
+
+  // Expose container ref to parent
+  useImperativeHandle(ref, () => containerRef.current);
+
+  // Fade out avatars when released
+  useEffect(() => {
+    if (avatarsReleased) {
+      // Animate opacity from 1 to 0
+      const fadeInterval = setInterval(() => {
+        avatarOpacityRef.current -= 0.1;
+        if (avatarOpacityRef.current <= 0) {
+          avatarOpacityRef.current = 0;
+          clearInterval(fadeInterval);
+        }
+      }, 30);
+      return () => clearInterval(fadeInterval);
+    } else {
+      avatarOpacityRef.current = 1;
+    }
+  }, [avatarsReleased]);
+
+  // Report avatar positions to parent when state changes
+  useEffect(() => {
+    if (onAvatarPositions && stateRef.current?.people && containerRef.current) {
+      const containerRect = containerRef.current.getBoundingClientRect();
+      const positions = stateRef.current.people.map(p => ({
+        id: p.id,
+        name: p.person.name,
+        x: containerRect.left + p.x,
+        y: containerRect.top + (p.y - p.jumpY),
+      }));
+      onAvatarPositions(positions);
+    }
+  }, [onAvatarPositions, canvasKey]);
 
   useEffect(() => {
     const updateDimensions = () => {
@@ -193,6 +235,10 @@ function PeopleProjectsJuggle({ projects = [], people = [], isSantafied = false 
         ctx.restore();
       });
 
+      // Apply opacity to avatars (for fade out when released)
+      ctx.save();
+      ctx.globalAlpha = avatarOpacityRef.current;
+
       state.people.forEach(personState => {
         if (personState.cooldown > 0) {
           personState.cooldown--;
@@ -322,6 +368,9 @@ function PeopleProjectsJuggle({ projects = [], people = [], isSantafied = false 
         }
       });
 
+      // Restore opacity after drawing people
+      ctx.restore();
+
       const time = Date.now() / 1000;
       for (let i = 0; i < 6; i++) {
         const px = (width * (i + 1)) / 7 + Math.sin(time * 0.7 + i) * 15;
@@ -392,14 +441,17 @@ function PeopleProjectsJuggle({ projects = [], people = [], isSantafied = false 
   };
 
   return (
-    <div style={{
-      width: '100%',
-      borderRadius: '16px',
-      overflow: 'hidden',
-      backgroundColor: '#FAF8F3',
-      border: '1px solid #E8E3D8',
-      boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
-    }}>
+    <div
+      ref={containerRef}
+      style={{
+        width: '100%',
+        borderRadius: '16px',
+        overflow: 'hidden',
+        backgroundColor: '#FAF8F3',
+        border: '1px solid #E8E3D8',
+        boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
+      }}
+    >
       <canvas
         ref={canvasRef}
         style={{ display: 'block', width: '100%' }}
@@ -429,6 +481,6 @@ function PeopleProjectsJuggle({ projects = [], people = [], isSantafied = false 
       </div>
     </div>
   );
-}
+});
 
 export default PeopleProjectsJuggle;
