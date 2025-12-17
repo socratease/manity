@@ -7,6 +7,7 @@ import PeopleGraph from './components/PeopleGraph';
 import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
 import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
+import RoamingAvatars from './components/RoamingAvatars';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 import { MOMENTUM_THRUST_SYSTEM_PROMPT } from './lib/momentumPrompts';
 import { verifyThrustActions } from './lib/momentumVerification';
@@ -23,6 +24,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const recentUpdatesRef = useRef(null);
   const recentlyCompletedRef = useRef(null);
   const nextUpRef = useRef(null);
+
+  // Refs for roaming avatars feature
+  const jugglerRef = useRef(null);
+  const projectCardRefs = useRef({});
+  const [avatarsReleased, setAvatarsReleased] = useState(false);
 
   const {
     projects,
@@ -150,6 +156,21 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       localStorage.removeItem('manity_logged_in_user');
     }
   }, [loggedInUser]);
+
+  // Track scroll position for roaming avatars release
+  useEffect(() => {
+    const handleScroll = () => {
+      if (!jugglerRef.current) return;
+      const rect = jugglerRef.current.getBoundingClientRect();
+      // Release avatars when juggler is mostly scrolled out of view
+      const shouldRelease = rect.bottom < 100;
+      setAvatarsReleased(shouldRelease);
+    };
+
+    window.addEventListener('scroll', handleScroll, { passive: true });
+    return () => window.removeEventListener('scroll', handleScroll);
+  }, []);
+
   const [focusedField, setFocusedField] = useState(null);
   const [taskEditEnabled, setTaskEditEnabled] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
@@ -3338,11 +3359,18 @@ PEOPLE & EMAIL ADDRESSES:
   const renderProjectCard = (project, index) => (
     <div
       key={project.id}
+      ref={(el) => {
+        if (el) {
+          projectCardRefs.current[project.id] = el;
+        }
+      }}
+      data-project-id={project.id}
       onClick={() => updateHash('overview', project.id)}
       style={{
         ...styles.projectCard,
         animationDelay: `${index * 100}ms`,
-        cursor: 'pointer'
+        cursor: 'pointer',
+        position: 'relative', // For avatar positioning
       }}
     >
       <div style={styles.cardHeader}>
@@ -5791,8 +5819,23 @@ PEOPLE & EMAIL ADDRESSES:
           // Projects Overview
           <>
             <div style={{ marginBottom: '24px' }}>
-              <PeopleProjectsJuggle projects={visibleProjects} people={people} isSantafied={isSantafied} />
+              <PeopleProjectsJuggle
+                ref={jugglerRef}
+                projects={visibleProjects}
+                people={people}
+                isSantafied={isSantafied}
+                avatarsReleased={avatarsReleased}
+              />
             </div>
+            {/* Roaming avatars that escape the juggler and hop between projects */}
+            <RoamingAvatars
+              people={people}
+              projects={visibleProjects}
+              jugglerRef={jugglerRef}
+              projectCardRefs={projectCardRefs}
+              isSantafied={isSantafied}
+              enabled={true}
+            />
             <header style={styles.header}>
               <div>
                 <h2 style={styles.pageTitle}>Your Projects</h2>
