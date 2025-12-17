@@ -143,6 +143,13 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     // Load from localStorage on initial mount
     return localStorage.getItem('manity_logged_in_user') || '';
   });
+  useEffect(() => {
+    if (loggedInUser) {
+      localStorage.setItem('manity_logged_in_user', loggedInUser);
+    } else {
+      localStorage.removeItem('manity_logged_in_user');
+    }
+  }, [loggedInUser]);
   const [focusedField, setFocusedField] = useState(null);
   const [taskEditEnabled, setTaskEditEnabled] = useState(false);
   const [editingTask, setEditingTask] = useState(null);
