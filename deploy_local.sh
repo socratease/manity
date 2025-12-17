@@ -163,9 +163,10 @@ ensure_dir "$BACKUP_DIR"
 
 # Resolve SQLite path for backups if using SQLite
 if [[ "$DATABASE_URL" == sqlite:* ]]; then
-  DB_PATH="${DATABASE_URL#sqlite:}"
-  DB_PATH="${DB_PATH#//}"
-  DB_PATH="${DB_PATH#//}"
+  DB_PATH="${DATABASE_URL#sqlite://}"
+  case "$DB_PATH" in
+    //*) DB_PATH="/${DB_PATH#//}" ;;
+  esac
 fi
 
 print_config_summary
@@ -180,7 +181,8 @@ if [[ -n "${DB_PATH:-}" && -f "$DB_PATH" ]]; then
   msg "Backing up database $DB_PATH -> $backup_path"
   cp "$DB_PATH" "$backup_path"
 elif [[ -n "${DB_PATH:-}" ]]; then
-  msg "No existing SQLite database found at $DB_PATH; skipping backup"
+  err "SQLite database not found at resolved path: $DB_PATH"
+  exit 1
 else
   msg "DATABASE_URL is not SQLite; skipping backup"
 fi
