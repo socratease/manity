@@ -15,6 +15,7 @@ import SnowEffect from './components/SnowEffect';
 import ChristmasConfetti from './components/ChristmasConfetti';
 import MomentumChat from './components/MomentumChat';
 import Slides from './components/Slides';
+import DataPage from './components/DataPage';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -220,6 +221,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     return saved !== null ? saved === 'true' : true; // Default to true
   });
 
+  const [showDataPage, setShowDataPage] = useState(() => {
+    const saved = localStorage.getItem('manity_show_data_page');
+    return saved === 'true';
+  });
+
   const sortActivitiesDesc = (activities = []) =>
     [...activities].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 
@@ -420,6 +426,14 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     localStorage.setItem('manity_santafied', isSantafied.toString());
   }, [isSantafied]);
 
+  useEffect(() => {
+    localStorage.setItem('manity_show_data_page', showDataPage ? 'true' : 'false');
+    if (!showDataPage && activeView === 'data') {
+      setActiveView('people');
+      window.location.hash = '#/people';
+    }
+  }, [activeView, showDataPage]);
+
   // Persist sidebar width
   useEffect(() => {
     localStorage.setItem(SIDEBAR_WIDTH_STORAGE_KEY, sidebarWidth.toString());
@@ -484,7 +498,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         setViewingProjectId(null);
       } else if (parts.length === 1) {
         const view = parts[0];
-        if (['portfolio', 'overview', 'people', 'thrust', 'slides', 'timeline'].includes(view)) {
+        if (['portfolio', 'overview', 'people', 'thrust', 'slides', 'timeline', 'data'].includes(view)) {
+          if (view === 'data' && !showDataPage) {
+            window.location.hash = '#/people';
+            return;
+          }
           setActiveView(view);
           setViewingProjectId(null);
         }
@@ -513,7 +531,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     // Listen for hash changes
     window.addEventListener('hashchange', handleHashChange);
     return () => window.removeEventListener('hashchange', handleHashChange);
-  }, []);
+  }, [showDataPage]);
 
   // Helper function to update URL hash
   const updateHash = (view, projectId = null) => {
@@ -4203,6 +4221,18 @@ PEOPLE & EMAIL ADDRESSES:
               >
                 Timeline
               </button>
+              {showDataPage && (
+                <button
+                  onClick={() => updateHash('data')}
+                  style={{
+                    ...styles.navItem,
+                    ...(activeView === 'data' && !viewingProjectId ? styles.navItemActive : {}),
+                    marginTop: '8px'
+                  }}
+                >
+                  Data
+                </button>
+              )}
             </nav>
           </div>
         )}
@@ -4304,7 +4334,9 @@ PEOPLE & EMAIL ADDRESSES:
                   setLoggedInUser(newUser);
                   localStorage.setItem('manity_logged_in_user', newUser);
                 },
-                allStakeholders: getAllStakeholders()
+                allStakeholders: getAllStakeholders(),
+                showDataPage,
+                setShowDataPage
               })}
               style={styles.settingsIconButton}
               aria-label="Open settings"
@@ -5737,6 +5769,21 @@ PEOPLE & EMAIL ADDRESSES:
               </div>
             </div>
           </>
+        ) : activeView === 'data' ? (
+          <DataPage
+            projects={projects}
+            people={people}
+            onUpdateProject={updateProject}
+            onDeleteProject={apiDeleteProject}
+            onUpdateTask={updateTask}
+            onDeleteTask={apiDeleteTask}
+            onUpdateSubtask={updateSubtask}
+            onDeleteSubtask={apiDeleteSubtask}
+            onUpdateActivity={updateActivity}
+            onDeleteActivity={apiDeleteActivity}
+            onUpdatePerson={updatePerson}
+            onDeletePerson={deletePerson}
+          />
         ) : activeView === 'thrust' ? (
           <MomentumChat
             messages={getThrustConversation()}

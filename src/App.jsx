@@ -25,6 +25,13 @@ function AppContent() {
     setSettingsData(prev => ({ ...prev, loggedInUser: newUser }));
   };
 
+  const handleToggleDataPage = (shouldShow) => {
+    if (settingsData.setShowDataPage) {
+      settingsData.setShowDataPage(shouldShow);
+    }
+    setSettingsData(prev => ({ ...prev, showDataPage: shouldShow }));
+  };
+
   const handleImportWrapper = async (file) => {
     try {
       await handleImport(file, 'merge');
@@ -48,6 +55,8 @@ function AppContent() {
         emailSettings={emailSettings}
         onSaveEmailSettings={saveEmailSettings}
         onRefreshEmailSettings={refreshEmailSettings}
+        showDataPage={settingsData.showDataPage}
+        onToggleDataPage={handleToggleDataPage}
       />
     </>
   );

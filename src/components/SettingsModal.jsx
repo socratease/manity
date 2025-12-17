@@ -13,6 +13,8 @@ export default function SettingsModal({
   emailSettings,
   onSaveEmailSettings,
   onRefreshEmailSettings,
+  showDataPage,
+  onToggleDataPage
 }) {
   const [exportTarget, setExportTarget] = useState("all");
   const importInputRef = useRef(null);
@@ -265,6 +267,27 @@ export default function SettingsModal({
               {emailStatus && <span style={styles.statusText}>{emailStatus}</span>}
             </div>
             <p style={styles.helperText}>Settings are stored in this browser only. Emails are sent anonymously without credentials.</p>
+          </div>
+        )}
+
+        {typeof showDataPage === 'boolean' && onToggleDataPage && (
+          <div style={{ ...styles.section, marginTop: 8 }}>
+            <div style={styles.sectionHeader}>
+              <Database size={18} style={styles.sectionIcon} />
+              <h3 style={styles.sectionTitle}>Admin Pages</h3>
+            </div>
+            <p style={styles.description}>
+              Enable the Data page to view and edit backend tables directly from the app.
+            </p>
+            <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={!!showDataPage}
+                onChange={(e) => onToggleDataPage(e.target.checked)}
+                style={styles.checkbox}
+              />
+              Show Data page
+            </label>
           </div>
         )}
       </div>
