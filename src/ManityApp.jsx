@@ -24,7 +24,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const recentlyCompletedRef = useRef(null);
   const nextUpRef = useRef(null);
 
-  const { projects, setProjects, people, createPerson, updatePerson, deletePerson, sendEmail } = usePortfolioData();
+  const { projects, setProjects, people, createPerson, updatePerson, deletePerson, sendEmail, updateProject, addActivity, updateActivity: apiUpdateActivity, deleteActivity: apiDeleteActivity, updateTask, updateSubtask, addTask, addSubtask, deleteTask: apiDeleteTask, deleteSubtask: apiDeleteSubtask } = usePortfolioData();
 
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
@@ -850,32 +850,39 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     setActivityEditEnabled(prev => !prev);
   };
 
-  const updateActivityNote = (activityId, newNote) => {
+  const updateActivityNote = async (activityId, newNote) => {
     setActivityEdits(prev => ({
       ...prev,
       [activityId]: newNote
     }));
 
-    setProjects(prevProjects =>
-      prevProjects.map(project => {
-        const hasActivity = project.recentActivity.some(activity => activity.id === activityId);
-        if (!hasActivity) return project;
-        const updatedActivities = project.recentActivity.map(activity =>
-          activity.id === activityId ? { ...activity, note: newNote } : activity
-        );
-        return syncProjectActivity(project, updatedActivities);
-      })
-    );
+    // Find the project and activity
+    const project = projects.find(p => p.recentActivity?.some(a => a.id === activityId));
+    if (!project) return;
+
+    const activity = project.recentActivity.find(a => a.id === activityId);
+    if (!activity) return;
+
+    try {
+      await apiUpdateActivity(project.id, activityId, {
+        ...activity,
+        note: newNote
+      });
+    } catch (error) {
+      console.error('Failed to update activity note:', error);
+    }
   };
 
-  const deleteActivity = (activityId) => {
-    setProjects(prevProjects =>
-      prevProjects.map(project => {
-        const updatedActivities = project.recentActivity.filter(activity => activity.id !== activityId);
-        const activityRemoved = updatedActivities.length !== project.recentActivity.length;
-        return activityRemoved ? syncProjectActivity(project, updatedActivities) : project;
-      })
-    );
+  const deleteActivity = async (activityId) => {
+    // Find the project containing this activity
+    const project = projects.find(p => p.recentActivity?.some(a => a.id === activityId));
+    if (!project) return;
+
+    try {
+      await apiDeleteActivity(project.id, activityId);
+    } catch (error) {
+      console.error('Failed to delete activity:', error);
+    }
 
     setActivityEdits(prev => {
       const { [activityId]: _, ...rest } = prev;
@@ -890,36 +897,43 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }));
   };
 
-  const toggleSubtaskStatus = (taskId, subtaskId) => {
-    setProjects(projects.map(p =>
-      p.id === viewingProjectId
-        ? {
-            ...p,
-            plan: p.plan.map(task =>
-              task.id === taskId
-                ? {
-                    ...task,
-                    subtasks: task.subtasks.map(subtask =>
-                      subtask.id === subtaskId
-                        ? {
-                            ...subtask,
-                            status: subtask.status === 'completed' ? 'todo' : 
-                                   subtask.status === 'in-progress' ? 'completed' :
-                                   'in-progress',
-                            completedDate: subtask.status === 'in-progress' 
-                              ? new Date().toISOString().split('T')[0]
-                              : subtask.status === 'completed'
-                              ? undefined
-                              : subtask.completedDate
-                          }
-                        : subtask
-                    )
-                  }
-                : task
-            )
-          }
-        : p
-    ));
+  const toggleSubtaskStatus = async (taskId, subtaskId) => {
+    const project = projects.find(p => p.id === viewingProjectId);
+    if (!project) return;
+
+    const task = project.plan.find(t => t.id === taskId);
+    if (!task) return;
+
+    const subtask = task.subtasks.find(st => st.id === subtaskId);
+    if (!subtask) return;
+
+    const oldStatus = subtask.status;
+    const newStatus = oldStatus === 'completed' ? 'todo' :
+                      oldStatus === 'in-progress' ? 'completed' : 'in-progress';
+    const completedDate = oldStatus === 'in-progress'
+      ? new Date().toISOString().split('T')[0]
+      : oldStatus === 'completed'
+      ? undefined
+      : subtask.completedDate;
+
+    try {
+      await updateSubtask(viewingProjectId, taskId, subtaskId, {
+        ...subtask,
+        status: newStatus,
+        completedDate
+      });
+
+      // Add activity for status change
+      await addActivity(viewingProjectId, {
+        id: generateActivityId(),
+        date: new Date().toISOString(),
+        note: `Changed subtask "${subtask.title}" status from "${oldStatus}" to "${newStatus}"`,
+        author: loggedInUser,
+        taskContext: { taskId, subtaskId, taskTitle: task.title, subtaskTitle: subtask.title }
+      });
+    } catch (error) {
+      console.error('Failed to toggle subtask status:', error);
+    }
   };
 
   const enterEditMode = () => {
@@ -938,6 +952,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   };
 
   const saveEdits = async () => {
+    const project = projects.find(p => p.id === viewingProjectId);
+    if (!project) return;
+
     // editValues.stakeholders is now an array of {name, team} objects from PersonPicker
     const stakeholdersArray = (editValues.stakeholders || []).filter(Boolean);
 
@@ -948,16 +965,60 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     // Sync stakeholders to People database
     await syncStakeholdersToPeople(finalStakeholders);
 
-    setProjects(prevProjects =>
-      prevProjects.map(p =>
-        p.id === viewingProjectId
-          ? syncProjectActivity(p, [
-              { id: generateActivityId(), date: new Date().toISOString(), note: 'Updated project details', author: loggedInUser },
-              ...p.recentActivity
-            ])
-          : p
-      )
-    );
+    // Build specific activity messages for changes
+    const changes = [];
+    if (editValues.status !== project.status) {
+      changes.push(`Changed status from "${project.status}" to "${editValues.status}"`);
+    }
+    if (editValues.priority !== project.priority) {
+      changes.push(`Changed priority from "${project.priority}" to "${editValues.priority}"`);
+    }
+    if (editValues.description !== project.description) {
+      changes.push(`Updated description to: "${editValues.description}"`);
+    }
+    if (editValues.progressMode !== (project.progressMode || 'manual')) {
+      changes.push(`Changed progress mode from "${project.progressMode || 'manual'}" to "${editValues.progressMode}"`);
+    }
+    if (editValues.progress !== project.progress) {
+      changes.push(`Changed progress from ${project.progress}% to ${editValues.progress}%`);
+    }
+    // Check if stakeholders changed
+    const oldStakeholderNames = (project.stakeholders || []).map(s => s.name).sort().join(', ');
+    const newStakeholderNames = finalStakeholders.map(s => s.name).sort().join(', ');
+    if (oldStakeholderNames !== newStakeholderNames) {
+      changes.push(`Updated stakeholders to: ${newStakeholderNames}`);
+    }
+
+    // Build the updated project data
+    const updatedProjectData = {
+      ...project,
+      status: editValues.status,
+      priority: editValues.priority,
+      description: editValues.description,
+      progressMode: editValues.progressMode,
+      progress: editValues.progress,
+      stakeholders: finalStakeholders,
+    };
+
+    try {
+      // Persist to backend
+      await updateProject(viewingProjectId, updatedProjectData);
+
+      // Add specific activity entries for each change
+      if (changes.length > 0) {
+        for (const change of changes) {
+          await addActivity(viewingProjectId, {
+            id: generateActivityId(),
+            date: new Date().toISOString(),
+            note: change,
+            author: loggedInUser
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to save project edits:', error);
+    }
+
     setEditMode(false);
   };
 
@@ -966,166 +1027,219 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     setEditValues({});
   };
 
-  const handleAddSubtask = (taskId) => {
+  const handleAddSubtask = async (taskId) => {
     if (newSubtaskTitle.trim()) {
+      const project = projects.find(p => p.id === viewingProjectId);
+      if (!project) return;
+
+      const task = project.plan.find(t => t.id === taskId);
+      if (!task) return;
+
       const newSubtaskId = `${taskId}-${Date.now()}`;
       const dueDate = newSubtaskDueDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              plan: p.plan.map(task =>
-                task.id === taskId
-                  ? {
-                      ...task,
-                      subtasks: [
-                        ...task.subtasks,
-                        {
-                          id: newSubtaskId,
-                          title: newSubtaskTitle,
-                          status: 'todo',
-                          dueDate: dueDate
-                        }
-                      ]
-                    }
-                  : task
-              )
-            }
-          : p
-      ));
+
+      try {
+        await addSubtask(viewingProjectId, taskId, {
+          id: newSubtaskId,
+          title: newSubtaskTitle,
+          status: 'todo',
+          dueDate: dueDate
+        });
+
+        await addActivity(viewingProjectId, {
+          id: generateActivityId(),
+          date: new Date().toISOString(),
+          note: `Added subtask "${newSubtaskTitle}" to task "${task.title}"`,
+          author: loggedInUser,
+          taskContext: { taskId, subtaskId: newSubtaskId, taskTitle: task.title, subtaskTitle: newSubtaskTitle }
+        });
+      } catch (error) {
+        console.error('Failed to add subtask:', error);
+      }
+
       setNewSubtaskTitle('');
       setNewSubtaskDueDate('');
       setAddingSubtaskTo(null);
     }
   };
 
-  const handleAddTask = () => {
+  const handleAddTask = async () => {
     if (newTaskTitle.trim()) {
       const newTaskId = `t${Date.now()}`;
       const dueDate = newTaskDueDate || new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              plan: [
-                ...p.plan,
-                {
-                  id: newTaskId,
-                  title: newTaskTitle,
-                  status: 'todo',
-                  dueDate: dueDate,
-                  subtasks: []
-                }
-              ]
-            }
-          : p
-      ));
+
+      try {
+        await addTask(viewingProjectId, {
+          id: newTaskId,
+          title: newTaskTitle,
+          status: 'todo',
+          dueDate: dueDate,
+          subtasks: []
+        });
+
+        await addActivity(viewingProjectId, {
+          id: generateActivityId(),
+          date: new Date().toISOString(),
+          note: `Added task "${newTaskTitle}"`,
+          author: loggedInUser,
+          taskContext: { taskId: newTaskId, subtaskId: null, taskTitle: newTaskTitle, subtaskTitle: null }
+        });
+      } catch (error) {
+        console.error('Failed to add task:', error);
+      }
+
       setNewTaskTitle('');
       setNewTaskDueDate('');
       setAddingNewTask(false);
     }
   };
 
-  const handleUpdateDueDate = (taskId, subtaskId = null) => {
+  const handleUpdateDueDate = async (taskId, subtaskId = null) => {
     if (tempDueDate) {
+      const project = projects.find(p => p.id === viewingProjectId);
+      if (!project) return;
+
+      const task = project.plan.find(t => t.id === taskId);
+      if (!task) return;
+
       const fieldToUpdate = editingCompletedDate ? 'completedDate' : 'dueDate';
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              plan: p.plan.map(task =>
-                task.id === taskId
-                  ? subtaskId
-                    ? {
-                        ...task,
-                        subtasks: task.subtasks.map(st =>
-                          st.id === subtaskId
-                            ? { ...st, [fieldToUpdate]: tempDueDate }
-                            : st
-                        )
-                      }
-                    : { ...task, [fieldToUpdate]: tempDueDate }
-                  : task
-              )
-            }
-          : p
-      ));
+      const fieldLabel = editingCompletedDate ? 'completed date' : 'due date';
+
+      try {
+        if (subtaskId) {
+          const subtask = task.subtasks.find(st => st.id === subtaskId);
+          if (!subtask) return;
+
+          const oldDate = subtask[fieldToUpdate] || 'none';
+          await updateSubtask(viewingProjectId, taskId, subtaskId, {
+            ...subtask,
+            [fieldToUpdate]: tempDueDate
+          });
+
+          await addActivity(viewingProjectId, {
+            id: generateActivityId(),
+            date: new Date().toISOString(),
+            note: `Changed subtask "${subtask.title}" ${fieldLabel} from "${oldDate}" to "${tempDueDate}"`,
+            author: loggedInUser,
+            taskContext: { taskId, subtaskId, taskTitle: task.title, subtaskTitle: subtask.title }
+          });
+        } else {
+          const oldDate = task[fieldToUpdate] || 'none';
+          await updateTask(viewingProjectId, taskId, {
+            ...task,
+            [fieldToUpdate]: tempDueDate
+          });
+
+          await addActivity(viewingProjectId, {
+            id: generateActivityId(),
+            date: new Date().toISOString(),
+            note: `Changed task "${task.title}" ${fieldLabel} from "${oldDate}" to "${tempDueDate}"`,
+            author: loggedInUser,
+            taskContext: { taskId, subtaskId: null, taskTitle: task.title, subtaskTitle: null }
+          });
+        }
+      } catch (error) {
+        console.error('Failed to update due date:', error);
+      }
+
       setEditingDueDate(null);
       setTempDueDate('');
       setEditingCompletedDate(false);
     }
   };
 
-  const handleUpdateAssignee = (taskId, subtaskId, person) => {
-    setProjects(projects.map(p =>
-      p.id === viewingProjectId
-        ? {
-            ...p,
-            plan: p.plan.map(task =>
-              task.id === taskId
-                ? subtaskId
-                  ? {
-                      ...task,
-                      subtasks: task.subtasks.map(st =>
-                        st.id === subtaskId
-                          ? { ...st, assignee: person }
-                          : st
-                      )
-                    }
-                  : { ...task, assignee: person }
-                : task
-            )
-          }
-        : p
-    ));
+  const handleUpdateAssignee = async (taskId, subtaskId, person) => {
+    const project = projects.find(p => p.id === viewingProjectId);
+    if (!project) return;
+
+    const task = project.plan.find(t => t.id === taskId);
+    if (!task) return;
+
+    try {
+      if (subtaskId) {
+        // Update subtask assignee
+        const subtask = task.subtasks.find(st => st.id === subtaskId);
+        if (!subtask) return;
+
+        const oldAssignee = subtask.assignee?.name || 'unassigned';
+        const newAssignee = person?.name || 'unassigned';
+
+        await updateSubtask(viewingProjectId, taskId, subtaskId, {
+          ...subtask,
+          assignee: person
+        });
+
+        // Add activity for assignee change
+        if (oldAssignee !== newAssignee) {
+          await addActivity(viewingProjectId, {
+            id: generateActivityId(),
+            date: new Date().toISOString(),
+            note: `Assigned subtask "${subtask.title}" to ${newAssignee}`,
+            author: loggedInUser,
+            taskContext: { taskId, subtaskId, taskTitle: task.title, subtaskTitle: subtask.title }
+          });
+        }
+      } else {
+        // Update task assignee
+        const oldAssignee = task.assignee?.name || 'unassigned';
+        const newAssignee = person?.name || 'unassigned';
+
+        await updateTask(viewingProjectId, taskId, {
+          ...task,
+          assignee: person
+        });
+
+        // Add activity for assignee change
+        if (oldAssignee !== newAssignee) {
+          await addActivity(viewingProjectId, {
+            id: generateActivityId(),
+            date: new Date().toISOString(),
+            note: `Assigned task "${task.title}" to ${newAssignee}`,
+            author: loggedInUser,
+            taskContext: { taskId, subtaskId: null, taskTitle: task.title, subtaskTitle: null }
+          });
+        }
+      }
+    } catch (error) {
+      console.error('Failed to update assignee:', error);
+    }
+
     setEditingAssignee(null);
     setAssigneeSearchTerm('');
     setAssigneeFocusedIndex(0);
   };
 
-  const handleSubtaskComment = (taskId, subtaskId, taskTitle, subtaskTitle) => {
+  const handleSubtaskComment = async (taskId, subtaskId, taskTitle, subtaskTitle) => {
     if (subtaskComment.trim()) {
-      setProjects(prevProjects =>
-        prevProjects.map(p =>
-          p.id === viewingProjectId
-            ? syncProjectActivity(p, [
-                {
-                  id: generateActivityId(),
-                  date: new Date().toISOString(),
-                  note: subtaskComment, // Just the comment text, not the prefix
-                  author: loggedInUser,
-                  taskContext: { taskId, subtaskId, taskTitle, subtaskTitle }
-                },
-                ...p.recentActivity
-              ])
-            : p
-        )
-      );
+      try {
+        await addActivity(viewingProjectId, {
+          id: generateActivityId(),
+          date: new Date().toISOString(),
+          note: subtaskComment,
+          author: loggedInUser,
+          taskContext: { taskId, subtaskId, taskTitle, subtaskTitle }
+        });
+      } catch (error) {
+        console.error('Failed to add subtask comment:', error);
+      }
       setSubtaskComment('');
       setCommentingOn(null);
     }
   };
 
-  const handleTaskComment = (taskId, taskTitle) => {
+  const handleTaskComment = async (taskId, taskTitle) => {
     if (taskComment.trim()) {
-      setProjects(prevProjects =>
-        prevProjects.map(p =>
-          p.id === viewingProjectId
-            ? syncProjectActivity(p, [
-                {
-                  id: generateActivityId(),
-                  date: new Date().toISOString(),
-                  note: taskComment,
-                  author: loggedInUser,
-                  taskContext: { taskId, subtaskId: null, taskTitle, subtaskTitle: null }
-                },
-                ...p.recentActivity
-              ])
-            : p
-        )
-      );
+      try {
+        await addActivity(viewingProjectId, {
+          id: generateActivityId(),
+          date: new Date().toISOString(),
+          note: taskComment,
+          author: loggedInUser,
+          taskContext: { taskId, subtaskId: null, taskTitle, subtaskTitle: null }
+        });
+      } catch (error) {
+        console.error('Failed to add task comment:', error);
+      }
       setTaskComment('');
       setTaskCommentingOn(null);
     }
@@ -1153,37 +1267,50 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }
   };
 
-  const deleteTask = (taskId) => {
-    setProjects(prevProjects =>
-      prevProjects.map(project =>
-        project.id === viewingProjectId
-          ? {
-              ...project,
-              plan: project.plan.filter(task => task.id !== taskId)
-            }
-          : project
-      )
-    );
+  const deleteTask = async (taskId) => {
+    const project = projects.find(p => p.id === viewingProjectId);
+    if (!project) return;
+
+    const task = project.plan.find(t => t.id === taskId);
+    if (!task) return;
+
+    try {
+      await apiDeleteTask(viewingProjectId, taskId);
+
+      await addActivity(viewingProjectId, {
+        id: generateActivityId(),
+        date: new Date().toISOString(),
+        note: `Deleted task "${task.title}"`,
+        author: loggedInUser
+      });
+    } catch (error) {
+      console.error('Failed to delete task:', error);
+    }
   };
 
-  const deleteSubtask = (taskId, subtaskId) => {
-    setProjects(prevProjects =>
-      prevProjects.map(project =>
-        project.id === viewingProjectId
-          ? {
-              ...project,
-              plan: project.plan.map(task =>
-                task.id === taskId
-                  ? {
-                      ...task,
-                      subtasks: task.subtasks.filter(st => st.id !== subtaskId)
-                    }
-                  : task
-              )
-            }
-          : project
-      )
-    );
+  const deleteSubtask = async (taskId, subtaskId) => {
+    const project = projects.find(p => p.id === viewingProjectId);
+    if (!project) return;
+
+    const task = project.plan.find(t => t.id === taskId);
+    if (!task) return;
+
+    const subtask = task.subtasks.find(st => st.id === subtaskId);
+    if (!subtask) return;
+
+    try {
+      await apiDeleteSubtask(viewingProjectId, taskId, subtaskId);
+
+      await addActivity(viewingProjectId, {
+        id: generateActivityId(),
+        date: new Date().toISOString(),
+        note: `Deleted subtask "${subtask.title}" from task "${task.title}"`,
+        author: loggedInUser,
+        taskContext: { taskId, subtaskId: null, taskTitle: task.title, subtaskTitle: null }
+      });
+    } catch (error) {
+      console.error('Failed to delete subtask:', error);
+    }
   };
 
   const startEditingTask = (taskId, currentTitle) => {
@@ -1191,22 +1318,33 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     setEditingTaskTitle(currentTitle);
   };
 
-  const saveTaskEdit = (taskId) => {
+  const saveTaskEdit = async (taskId) => {
     if (editingTaskTitle.trim()) {
-      setProjects(prevProjects =>
-        prevProjects.map(project =>
-          project.id === viewingProjectId
-            ? {
-                ...project,
-                plan: project.plan.map(task =>
-                  task.id === taskId
-                    ? { ...task, title: editingTaskTitle }
-                    : task
-                )
-              }
-            : project
-        )
-      );
+      const project = projects.find(p => p.id === viewingProjectId);
+      if (!project) return;
+
+      const task = project.plan.find(t => t.id === taskId);
+      if (!task) return;
+
+      const oldTitle = task.title;
+      if (oldTitle !== editingTaskTitle) {
+        try {
+          await updateTask(viewingProjectId, taskId, {
+            ...task,
+            title: editingTaskTitle
+          });
+
+          await addActivity(viewingProjectId, {
+            id: generateActivityId(),
+            date: new Date().toISOString(),
+            note: `Renamed task from "${oldTitle}" to "${editingTaskTitle}"`,
+            author: loggedInUser,
+            taskContext: { taskId, subtaskId: null, taskTitle: editingTaskTitle, subtaskTitle: null }
+          });
+        } catch (error) {
+          console.error('Failed to save task edit:', error);
+        }
+      }
     }
     setEditingTask(null);
     setEditingTaskTitle('');
@@ -1217,29 +1355,36 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     setEditingSubtaskTitle(currentTitle);
   };
 
-  const saveSubtaskEdit = (taskId, subtaskId) => {
+  const saveSubtaskEdit = async (taskId, subtaskId) => {
     if (editingSubtaskTitle.trim()) {
-      setProjects(prevProjects =>
-        prevProjects.map(project =>
-          project.id === viewingProjectId
-            ? {
-                ...project,
-                plan: project.plan.map(task =>
-                  task.id === taskId
-                    ? {
-                        ...task,
-                        subtasks: task.subtasks.map(st =>
-                          st.id === subtaskId
-                            ? { ...st, title: editingSubtaskTitle }
-                            : st
-                        )
-                      }
-                    : task
-                )
-              }
-            : project
-        )
-      );
+      const project = projects.find(p => p.id === viewingProjectId);
+      if (!project) return;
+
+      const task = project.plan.find(t => t.id === taskId);
+      if (!task) return;
+
+      const subtask = task.subtasks.find(st => st.id === subtaskId);
+      if (!subtask) return;
+
+      const oldTitle = subtask.title;
+      if (oldTitle !== editingSubtaskTitle) {
+        try {
+          await updateSubtask(viewingProjectId, taskId, subtaskId, {
+            ...subtask,
+            title: editingSubtaskTitle
+          });
+
+          await addActivity(viewingProjectId, {
+            id: generateActivityId(),
+            date: new Date().toISOString(),
+            note: `Renamed subtask from "${oldTitle}" to "${editingSubtaskTitle}"`,
+            author: loggedInUser,
+            taskContext: { taskId, subtaskId, taskTitle: task.title, subtaskTitle: editingSubtaskTitle }
+          });
+        } catch (error) {
+          console.error('Failed to save subtask edit:', error);
+        }
+      }
     }
     setEditingSubtask(null);
     setEditingSubtaskTitle('');

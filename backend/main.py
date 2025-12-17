@@ -168,11 +168,26 @@ def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "P
     return person
 
 
+class Assignee(TypedDict, total=False):
+    id: str
+    name: str
+    team: str
+    email: Optional[str]
+
+
+class TaskContext(TypedDict, total=False):
+    taskId: str
+    subtaskId: Optional[str]
+    taskTitle: str
+    subtaskTitle: Optional[str]
+
+
 class SubtaskBase(SQLModel):
     title: str
     status: str = "todo"
     dueDate: Optional[str] = None
     completedDate: Optional[str] = None
+    assignee: Optional[Assignee] = Field(default=None, sa_column=Column(JSON))
 
 
 class Subtask(SubtaskBase, table=True):
@@ -186,6 +201,7 @@ class TaskBase(SQLModel):
     status: str = "todo"
     dueDate: Optional[str] = None
     completedDate: Optional[str] = None
+    assignee: Optional[Assignee] = Field(default=None, sa_column=Column(JSON))
 
 
 class Task(TaskBase, table=True):
@@ -202,6 +218,7 @@ class ActivityBase(SQLModel):
     date: str
     note: str
     author: str
+    taskContext: Optional[TaskContext] = Field(default=None, sa_column=Column(JSON))
 
 
 class Activity(ActivityBase, table=True):
@@ -545,6 +562,7 @@ def serialize_subtask(subtask: Subtask) -> dict:
         "status": subtask.status,
         "dueDate": subtask.dueDate,
         "completedDate": subtask.completedDate,
+        "assignee": subtask.assignee,
     }
 
 
@@ -555,6 +573,7 @@ def serialize_task(task: Task) -> dict:
         "status": task.status,
         "dueDate": task.dueDate,
         "completedDate": task.completedDate,
+        "assignee": task.assignee,
         "subtasks": [serialize_subtask(st) for st in task.subtasks],
     }
 
@@ -565,6 +584,7 @@ def serialize_activity(activity: Activity) -> dict:
         "date": activity.date,
         "note": activity.note,
         "author": activity.author,
+        "taskContext": activity.taskContext,
     }
 
 
@@ -605,6 +625,7 @@ def apply_task_payload(task: Task, payload: TaskPayload) -> Task:
     task.status = payload.status
     task.dueDate = payload.dueDate
     task.completedDate = payload.completedDate
+    task.assignee = payload.assignee
     if task.subtasks is None:
         task.subtasks = []
     else:
@@ -616,6 +637,7 @@ def apply_task_payload(task: Task, payload: TaskPayload) -> Task:
             status=subtask_payload.status,
             dueDate=subtask_payload.dueDate,
             completedDate=subtask_payload.completedDate,
+            assignee=subtask_payload.assignee,
         )
         task.subtasks.append(subtask)
     return task
@@ -1025,6 +1047,7 @@ def create_subtask(project_id: str, task_id: str, payload: SubtaskPayload, reque
         status=payload.status,
         dueDate=payload.dueDate,
         completedDate=payload.completedDate,
+        assignee=payload.assignee,
         task_id=task.id,
     )
     session.add(subtask)
@@ -1044,6 +1067,7 @@ def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: Subt
     subtask.status = payload.status
     subtask.dueDate = payload.dueDate
     subtask.completedDate = payload.completedDate
+    subtask.assignee = payload.assignee
     session.add(subtask)
     session.commit()
     log_action(session, "update_subtask", "subtask", subtask_id, {"project_id": project_id, "task_id": task_id, "title": subtask.title, "old_status": old_status, "new_status": subtask.status}, request)
@@ -1071,6 +1095,7 @@ def create_activity(project_id: str, payload: ActivityPayload, request: Request,
         date=payload.date,
         note=payload.note,
         author=payload.author,
+        taskContext=payload.taskContext,
         project_id=project.id,
     )
     session.add(activity)
@@ -1092,6 +1117,7 @@ def update_activity(project_id: str, activity_id: str, payload: ActivityPayload,
     activity.note = payload.note
     activity.date = payload.date
     activity.author = payload.author
+    activity.taskContext = payload.taskContext
     session.add(activity)
     session.commit()
     project = load_project(session, project_id)
