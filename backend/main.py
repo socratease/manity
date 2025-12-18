@@ -22,6 +22,10 @@ from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, sele
 
 logger = logging.getLogger(__name__)
 
+DEV_DEMO_SEED_ENV = "MANITY_ENABLE_DEMO_SEED"
+ENVIRONMENT_ENV = "MANITY_ENV"
+PROTECTED_ENVIRONMENTS = {"prod", "production", "test", "testing"}
+
 # Configure database path with persistent storage
 # Default to persistent directory outside of application folder
 DEFAULT_DEV_DB_PATH = "/home/c17420g/projects/manity-dev-data/portfolio.db"
@@ -99,6 +103,30 @@ engine = create_engine_from_env()
 
 def generate_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def _normalize_env_value(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def current_environment() -> str:
+    return _normalize_env_value(os.getenv(ENVIRONMENT_ENV, os.getenv("ENVIRONMENT")))
+
+
+def is_dev_seeding_enabled() -> bool:
+    environment = current_environment()
+    if environment in PROTECTED_ENVIRONMENTS:
+        logger.info("Skipping demo seeding because environment is set to %s", environment)
+        return False
+
+    flag_value = _normalize_env_value(os.getenv(DEV_DEMO_SEED_ENV))
+    enabled = flag_value in {"1", "true", "yes", "on"}
+    if not enabled:
+        logger.info(
+            "Demo project seeding disabled; set %s=1 to seed defaults in local development",
+            DEV_DEMO_SEED_ENV,
+        )
+    return enabled
 
 
 class Stakeholder(BaseModel):
@@ -894,6 +922,9 @@ def run_people_backfill(session: Session) -> None:
 @app.on_event("startup")
 def on_startup() -> None:
     create_db_and_tables()
+    if not is_dev_seeding_enabled():
+        return
+
     with Session(engine) as session:
         run_people_backfill(session)
         existing = session.exec(select(Project)).first()
