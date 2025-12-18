@@ -22,6 +22,10 @@ from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, sele
 
 logger = logging.getLogger(__name__)
 
+DEV_DEMO_SEED_ENV = "MANITY_ENABLE_DEMO_SEED"
+ENVIRONMENT_ENV = "MANITY_ENV"
+PROTECTED_ENVIRONMENTS = {"prod", "production", "test", "testing"}
+
 # Configure database path with persistent storage
 # Default to persistent directory outside of application folder
 DEFAULT_DEV_DB_PATH = "/home/c17420g/projects/manity-dev-data/portfolio.db"
@@ -99,6 +103,30 @@ engine = create_engine_from_env()
 
 def generate_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
+
+
+def _normalize_env_value(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def current_environment() -> str:
+    return _normalize_env_value(os.getenv(ENVIRONMENT_ENV, os.getenv("ENVIRONMENT")))
+
+
+def is_dev_seeding_enabled() -> bool:
+    environment = current_environment()
+    if environment in PROTECTED_ENVIRONMENTS:
+        logger.info("Skipping demo seeding because environment is set to %s", environment)
+        return False
+
+    flag_value = _normalize_env_value(os.getenv(DEV_DEMO_SEED_ENV))
+    enabled = flag_value in {"1", "true", "yes", "on"}
+    if not enabled:
+        logger.info(
+            "Demo project seeding disabled; set %s=1 to seed defaults in local development",
+            DEV_DEMO_SEED_ENV,
+        )
+    return enabled
 
 
 class Stakeholder(BaseModel):
@@ -682,83 +710,96 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     return load_project(session, project.id)
 
 
+def default_project_payloads() -> list[ProjectPayload]:
+    return [
+        ProjectPayload(
+            name="Website Redesign",
+            status="active",
+            priority="high",
+            progress=45,
+            lastUpdate="Completed homepage mockups and testing",
+            description="Overhaul of company site for better UX.",
+            executiveUpdate="Overhaul of company site for better UX.",
+            startDate="2025-10-15",
+            targetDate="2025-12-20",
+            stakeholders=[Stakeholder(name="Sarah Chen", team="Design"), Stakeholder(name="Marcus Rodriguez", team="Development")],
+            plan=[
+                TaskPayload(
+                    title="Discovery & Research",
+                    status="completed",
+                    dueDate="2025-11-01",
+                    completedDate="2025-11-01",
+                    subtasks=[
+                        SubtaskPayload(title="Competitive analysis", status="completed", completedDate="2025-10-22", dueDate="2025-10-22"),
+                        SubtaskPayload(title="User interviews", status="completed", completedDate="2025-10-28", dueDate="2025-10-28"),
+                    ],
+                ),
+                TaskPayload(
+                    title="Design Phase",
+                    status="in-progress",
+                    dueDate="2025-12-05",
+                    subtasks=[
+                        SubtaskPayload(title="Homepage mockups", status="completed", completedDate="2025-11-28", dueDate="2025-11-28"),
+                        SubtaskPayload(title="Product page designs", status="in-progress", dueDate="2025-12-03"),
+                    ],
+                ),
+            ],
+            recentActivity=[
+                ActivityPayload(date="2025-11-29T14:30:00", note="Positive feedback on homepage direction", author="You"),
+                ActivityPayload(date="2025-11-28T16:15:00", note="Completed homepage mockups", author="You"),
+            ],
+        ),
+        ProjectPayload(
+            name="Q4 Marketing Campaign",
+            status="active",
+            priority="medium",
+            progress=30,
+            lastUpdate="Draft content calendar completed",
+            description="Multi-channel campaign for Q4.",
+            executiveUpdate="Multi-channel campaign for Q4.",
+            startDate="2025-11-01",
+            targetDate="2025-12-31",
+            stakeholders=[Stakeholder(name="Jennifer Liu", team="Marketing"), Stakeholder(name="Alex Thompson", team="Creative")],
+            plan=[
+                TaskPayload(
+                    title="Campaign Strategy",
+                    status="completed",
+                    dueDate="2025-11-15",
+                    completedDate="2025-11-15",
+                    subtasks=[
+                        SubtaskPayload(title="Define target audience", status="completed", completedDate="2025-11-05", dueDate="2025-11-05"),
+                        SubtaskPayload(title="Set campaign goals", status="completed", completedDate="2025-11-10", dueDate="2025-11-10"),
+                    ],
+                ),
+            ],
+            recentActivity=[
+                ActivityPayload(date="2025-11-27T16:30:00", note="Met with marketing to discuss timeline", author="You"),
+            ],
+        ),
+    ]
+
+
+def seed_default_projects(session: Session) -> bool:
+    existing = session.exec(select(Project)).first()
+    if existing:
+        logger.info("Database already contains projects; skipping demo seed")
+        return False
+
+    defaults = default_project_payloads()
+    for project_payload in defaults:
+        upsert_project(session, project_payload)
+    logger.info("Seeded %s demo projects", len(defaults))
+    return True
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     create_db_and_tables()
+    if not is_dev_seeding_enabled():
+        return
+
     with Session(engine) as session:
-        existing = session.exec(select(Project)).first()
-        if existing:
-            return
-
-        default_projects = [
-            ProjectPayload(
-                name="Website Redesign",
-                status="active",
-                priority="high",
-                progress=45,
-                lastUpdate="Completed homepage mockups and testing",
-                description="Overhaul of company site for better UX.",
-                executiveUpdate="Overhaul of company site for better UX.",
-                startDate="2025-10-15",
-                targetDate="2025-12-20",
-                stakeholders=[Stakeholder(name="Sarah Chen", team="Design"), Stakeholder(name="Marcus Rodriguez", team="Development")],
-                plan=[
-                    TaskPayload(
-                        title="Discovery & Research",
-                        status="completed",
-                        dueDate="2025-11-01",
-                        completedDate="2025-11-01",
-                        subtasks=[
-                            SubtaskPayload(title="Competitive analysis", status="completed", completedDate="2025-10-22", dueDate="2025-10-22"),
-                            SubtaskPayload(title="User interviews", status="completed", completedDate="2025-10-28", dueDate="2025-10-28"),
-                        ],
-                    ),
-                    TaskPayload(
-                        title="Design Phase",
-                        status="in-progress",
-                        dueDate="2025-12-05",
-                        subtasks=[
-                            SubtaskPayload(title="Homepage mockups", status="completed", completedDate="2025-11-28", dueDate="2025-11-28"),
-                            SubtaskPayload(title="Product page designs", status="in-progress", dueDate="2025-12-03"),
-                        ],
-                    ),
-                ],
-                recentActivity=[
-                    ActivityPayload(date="2025-11-29T14:30:00", note="Positive feedback on homepage direction", author="You"),
-                    ActivityPayload(date="2025-11-28T16:15:00", note="Completed homepage mockups", author="You"),
-                ],
-            ),
-            ProjectPayload(
-                name="Q4 Marketing Campaign",
-                status="active",
-                priority="medium",
-                progress=30,
-                lastUpdate="Draft content calendar completed",
-                description="Multi-channel campaign for Q4.",
-                executiveUpdate="Multi-channel campaign for Q4.",
-                startDate="2025-11-01",
-                targetDate="2025-12-31",
-                stakeholders=[Stakeholder(name="Jennifer Liu", team="Marketing"), Stakeholder(name="Alex Thompson", team="Creative")],
-                plan=[
-                    TaskPayload(
-                        title="Campaign Strategy",
-                        status="completed",
-                        dueDate="2025-11-15",
-                        completedDate="2025-11-15",
-                        subtasks=[
-                            SubtaskPayload(title="Define target audience", status="completed", completedDate="2025-11-05", dueDate="2025-11-05"),
-                            SubtaskPayload(title="Set campaign goals", status="completed", completedDate="2025-11-10", dueDate="2025-11-10"),
-                        ],
-                    ),
-                ],
-                recentActivity=[
-                    ActivityPayload(date="2025-11-27T16:30:00", note="Met with marketing to discuss timeline", author="You"),
-                ],
-            ),
-        ]
-
-        for project_payload in default_projects:
-            upsert_project(session, project_payload)
+        seed_default_projects(session)
 
 
 def load_project(session: Session, project_id: str) -> Project:
