@@ -14,7 +14,7 @@ def create_isolated_client(db_path: Path):
     """Create a TestClient bound to a temporary SQLite database."""
 
     main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
-    SQLModel.metadata.create_all(main.engine)
+    main.create_db_and_tables()
 
     original_startup = list(main.app.router.on_startup)
     original_overrides = dict(main.app.dependency_overrides)
@@ -134,7 +134,9 @@ def test_crud_and_persistence(tmp_path):
         project = client.post(
             f"/projects/{project_id}/activities", json=activity_two
         ).json()
-        activity_two_id = project["recentActivity"][1]["id"]
+        activity_two_id = next(
+            activity["id"] for activity in project["recentActivity"] if activity["note"] == activity_two["note"]
+        )
 
         delete_activity = client.delete(
             f"/projects/{project_id}/activities/{activity_two_id}"

@@ -1,6 +1,8 @@
 export interface User {
+  id?: string;
   name: string;
   team: string;
+  email?: string | null;
 }
 
 export interface Activity {
@@ -8,6 +10,8 @@ export interface Activity {
   date: string;
   note: string;
   author: string;
+  authorId?: string | null;
+  authorPerson?: User | null;
 }
 
 export interface Subtask {
@@ -16,7 +20,8 @@ export interface Subtask {
   status: 'todo' | 'in-progress' | 'completed';
   dueDate?: string;
   completedDate?: string;
-  assignee?: User;
+  assigneeId?: string | null;
+  assignee?: User | null;
 }
 
 export interface Task {
@@ -25,7 +30,8 @@ export interface Task {
   status: 'todo' | 'in-progress' | 'completed';
   dueDate?: string;
   completedDate?: string;
-  assignee?: User;
+  assigneeId?: string | null;
+  assignee?: User | null;
   subtasks: Subtask[];
 }
 

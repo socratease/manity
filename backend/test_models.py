@@ -12,7 +12,7 @@ import backend.main as main
 def _create_test_client(tmp_path):
     db_path = tmp_path / "test.db"
     main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
-    SQLModel.metadata.create_all(main.engine)
+    main.create_db_and_tables()
     return TestClient(main.app)
 
 
@@ -21,7 +21,7 @@ def test_models_can_be_mapped_and_related(tmp_path):
     main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
 
     # Ensure we start from a clean metadata state
-    SQLModel.metadata.create_all(main.engine)
+    main.create_db_and_tables()
 
     with Session(main.engine) as session:
         project = main.Project(id="project-1", name="Test Project")
@@ -39,11 +39,11 @@ def test_models_can_be_mapped_and_related(tmp_path):
         assert refreshed_project.recentActivity[0].note == "note"
 
 
-def test_stakeholders_are_normalized_to_json(tmp_path):
+def test_stakeholders_are_mapped_to_people(tmp_path):
     db_path = tmp_path / "test.db"
     main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
 
-    SQLModel.metadata.create_all(main.engine)
+    main.create_db_and_tables()
 
     payload = main.ProjectPayload(
         name="Stakeholder Project",
@@ -51,26 +51,23 @@ def test_stakeholders_are_normalized_to_json(tmp_path):
         priority="high",
         progress=10,
         stakeholders=[
-            main.Stakeholder(id="person-1", name="Alice", team="Product"),
-            main.Stakeholder(id="person-2", name="Bob", team="Engineering"),
+            main.PersonReference(name="Alice", team="Product"),
+            main.PersonReference(name="Bob", team="Engineering"),
         ],
     )
 
     with Session(main.engine) as session:
         project = main.upsert_project(session, payload)
 
-        expected = [
-            {"id": "person-1", "name": "Alice", "team": "Product"},
-            {"id": "person-2", "name": "Bob", "team": "Engineering"},
-        ]
-
-        assert project.stakeholders == expected
+        assert {person.name for person in project.stakeholders} == {"Alice", "Bob"}
+        assert {person.team for person in project.stakeholders} == {"Product", "Engineering"}
 
         serialized = main.serialize_project(project)
-        assert serialized["stakeholders"] == expected
+        assert len(serialized["stakeholders"]) == 2
+        assert {person["name"] for person in serialized["stakeholders"]} == {"Alice", "Bob"}
 
         refreshed_project = session.get(main.Project, project.id)
-        assert refreshed_project.stakeholders == expected
+        assert len(refreshed_project.stakeholders) == 2
 
 
 def test_upsert_project_loads_relationships(tmp_path):
