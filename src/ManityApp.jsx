@@ -1860,11 +1860,17 @@ Write a professional executive summary that highlights the project's current sta
   };
 
   const normalizeStakeholderEntry = (person) => {
-    if (!person || !person.name) return null;
-    const existing = findPersonByName(person.name);
+    if (!person || (!person.name && !person.id)) return null;
+    const existing = person.id
+      ? people.find(p => p.id === person.id) || findPersonByName(person.name)
+      : findPersonByName(person.name);
+    const name = person.name || existing?.name;
+    if (!name) return null;
     return {
-      name: person.name,
-      team: existing?.team || person.team || 'Contributor'
+      id: person.id || existing?.id || null,
+      name,
+      team: existing?.team || person.team || 'Contributor',
+      email: person.email || existing?.email || null
     };
   };
 
@@ -1875,7 +1881,8 @@ Write a professional executive summary that highlights the project's current sta
       const normalized = normalizeStakeholderEntry(entry);
       if (!normalized) return;
 
-      map.set(normalized.name.toLowerCase(), normalized);
+      const key = normalized.id || normalized.name.toLowerCase();
+      map.set(key, normalized);
     });
 
     return Array.from(map.values());
@@ -1923,8 +1930,16 @@ Write a professional executive summary that highlights the project's current sta
       // Add authors from activities
       if (project.recentActivity) {
         project.recentActivity.forEach(activity => {
-          if (activity.author && activity.author.trim() && activity.author !== 'You') {
-            peopleToSync.set(activity.author.toLowerCase(), normalizeStakeholderEntry({ name: activity.author }));
+          if (activity.authorPerson && activity.authorPerson.name) {
+            const normalized = normalizeStakeholderEntry(activity.authorPerson);
+            if (normalized) {
+              peopleToSync.set((normalized.id || normalized.name).toString().toLowerCase(), normalized);
+            }
+          } else if (activity.author && activity.author.trim() && activity.author !== 'You') {
+            const normalized = normalizeStakeholderEntry({ name: activity.author });
+            if (normalized) {
+              peopleToSync.set(normalized.name.toLowerCase(), normalized);
+            }
           }
         });
       }
@@ -2750,7 +2765,7 @@ Write a professional executive summary that highlights the project's current sta
       const normalized = normalizeStakeholderEntry(entry);
       if (!normalized) return;
 
-      const key = normalized.name.toLowerCase();
+      const key = normalized.id || normalized.name.toLowerCase();
       const existing = stakeholderMap.get(key);
 
       if (!existing || (!existing.team && normalized.team)) {
