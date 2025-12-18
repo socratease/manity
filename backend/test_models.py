@@ -70,6 +70,56 @@ def test_stakeholders_are_mapped_to_people(tmp_path):
         assert len(refreshed_project.stakeholders) == 2
 
 
+def test_people_created_from_project_relations(tmp_path):
+    db_path = tmp_path / "test.db"
+    main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
+
+    SQLModel.metadata.create_all(main.engine)
+
+    payload = main.ProjectPayload(
+        name="People Project",
+        status="active",
+        priority="high",
+        stakeholders=[main.Stakeholder(name="Taylor Swift", team="Product")],
+        recentActivity=[main.ActivityPayload(date="2025-01-01", note="Kickoff", author="Taylor Swift")],
+    )
+
+    with Session(main.engine) as session:
+        project = main.upsert_project(session, payload)
+        people = session.exec(select(main.Person)).all()
+        assert len(people) == 1
+        person = people[0]
+
+        serialized = main.serialize_project_with_people(session, project)
+        assert serialized["stakeholders"][0]["id"] == person.id
+        assert serialized["recentActivity"][0]["authorId"] == person.id
+
+
+def test_backfill_populates_missing_people(tmp_path):
+    db_path = tmp_path / "backfill.db"
+    main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
+
+    SQLModel.metadata.create_all(main.engine)
+
+    with Session(main.engine) as session:
+        project = main.Project(
+            id="legacy-project",
+            name="Legacy",
+            stakeholders=[{"name": "Legacy Owner", "team": "Ops"}],
+            recentActivity=[main.Activity(id="activity-1", date="2025-01-01", note="note", author="Legacy Owner")],
+        )
+        session.add(project)
+        session.commit()
+
+        main.run_people_backfill(session)
+
+        refreshed_project = session.get(main.Project, "legacy-project")
+        people = session.exec(select(main.Person)).all()
+
+        assert len(people) == 1
+        assert refreshed_project.stakeholders[0]["id"] == people[0].id
+
+
 def test_upsert_project_loads_relationships(tmp_path):
     """Test that upsert_project properly loads all relationships (subtasks, activities)"""
     db_path = tmp_path / "test.db"
@@ -129,8 +179,8 @@ def test_upsert_project_loads_relationships(tmp_path):
         assert project.recentActivity is not None
         assert len(project.recentActivity) == 2
         activity_notes = [activity.note for activity in project.recentActivity]
-        assert activity_notes[0] == "Made progress"
-        assert activity_notes[1] == "Started project"
+        assert activity_notes == ["Started project", "Made progress"]
+        assert activity_notes[1] == "Made progress"
 
         # Verify serialization includes all relationships
         serialized = main.serialize_project(project)

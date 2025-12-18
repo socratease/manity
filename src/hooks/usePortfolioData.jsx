@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { defaultPortfolio } from '../lib/data/portfolio';
 
 const PortfolioContext = createContext(null);
 
@@ -84,6 +83,7 @@ const loadEmailSettingsFromStorage = () => {
 export const PortfolioProvider = ({ children }) => {
   const [projects, setProjectsState] = useState([]);
   const [people, setPeopleState] = useState([]);
+  const [projectsError, setProjectsError] = useState('');
   // Email settings stored in localStorage (browser-specific)
   const [emailSettings, setEmailSettings] = useState(loadEmailSettingsFromStorage);
   const hasInitializedRef = useRef(false);
@@ -227,23 +227,12 @@ export const PortfolioProvider = ({ children }) => {
       if (Array.isArray(data)) {
         setProjectsState(normalizeProjects(data));
         hasInitializedRef.current = true;
+        setProjectsError('');
       }
     } catch (error) {
-      console.error('Failed to load projects, seeding defaults', error);
-      try {
-        const seeded = await apiRequest('/import', {
-          method: 'POST',
-          body: JSON.stringify({ projects: defaultPortfolio, mode: 'replace' })
-        });
-        if (Array.isArray(seeded?.projects)) {
-          setProjectsState(normalizeProjects(seeded.projects));
-          hasInitializedRef.current = true;
-        }
-      } catch (seedError) {
-        console.error('Unable to seed defaults', seedError);
-        setProjectsState(normalizeProjects(defaultPortfolio));
-        hasInitializedRef.current = true;
-      }
+      console.error('Failed to load projects', error);
+      const errorMessage = error?.message || 'Unable to load projects. Please try again.';
+      setProjectsError(errorMessage);
     }
   }, [apiRequest]);
 
@@ -537,6 +526,7 @@ export const PortfolioProvider = ({ children }) => {
     deleteActivity,
     refreshProjects,
     people,
+    projectsError,
     createPerson,
     updatePerson,
     deletePerson,
@@ -564,6 +554,7 @@ export const PortfolioProvider = ({ children }) => {
     deleteActivity,
     refreshProjects,
     people,
+    projectsError,
     createPerson,
     updatePerson,
     deletePerson,

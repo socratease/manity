@@ -22,6 +22,10 @@ from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, sele
 
 logger = logging.getLogger(__name__)
 
+DEV_DEMO_SEED_ENV = "MANITY_ENABLE_DEMO_SEED"
+ENVIRONMENT_ENV = "MANITY_ENV"
+PROTECTED_ENVIRONMENTS = {"prod", "production", "test", "testing"}
+
 # Configure database path with persistent storage
 # Default to persistent directory outside of application folder
 DEFAULT_DEV_DB_PATH = "/home/c17420g/projects/manity-dev-data/portfolio.db"
@@ -131,10 +135,35 @@ def generate_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
+def _normalize_env_value(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def current_environment() -> str:
+    return _normalize_env_value(os.getenv(ENVIRONMENT_ENV, os.getenv("ENVIRONMENT")))
+
+
+def is_dev_seeding_enabled() -> bool:
+    environment = current_environment()
+    if environment in PROTECTED_ENVIRONMENTS:
+        logger.info("Skipping demo seeding because environment is set to %s", environment)
+        return False
+
+    flag_value = _normalize_env_value(os.getenv(DEV_DEMO_SEED_ENV))
+    enabled = flag_value in {"1", "true", "yes", "on"}
+    if not enabled:
+        logger.info(
+            "Demo project seeding disabled; set %s=1 to seed defaults in local development",
+            DEV_DEMO_SEED_ENV,
+        )
+    return enabled
+
+
 class Stakeholder(BaseModel):
     id: str | None = None
     name: str
-    team: str
+    team: str = ""
+    email: str | None = None
 
 
 class PersonReference(SQLModel):
@@ -148,17 +177,21 @@ def normalize_stakeholders(stakeholders: Optional[List[Stakeholder | dict]]) -> 
     normalized: list[dict] = []
     for stakeholder in stakeholders or []:
         if isinstance(stakeholder, Stakeholder):
-            normalized.append(stakeholder.model_dump())
+            data = stakeholder.model_dump()
         elif isinstance(stakeholder, dict):
-            normalized.append(
-                {
-                    "id": stakeholder.get("id"),
-                    "name": stakeholder.get("name", ""),
-                    "team": stakeholder.get("team", ""),
-                }
-            )
+            data = {
+                "id": stakeholder.get("id"),
+                "name": stakeholder.get("name", ""),
+                "team": stakeholder.get("team", ""),
+                "email": stakeholder.get("email"),
+            }
         else:  # pragma: no cover - defensive
             raise TypeError("Unsupported stakeholder type")
+
+        data["name"] = (data.get("name") or "").strip()
+        data["team"] = data.get("team") or ""
+        data["email"] = (data.get("email") or None)
+        normalized.append(data)
     return normalized
 
 
@@ -183,13 +216,91 @@ def get_person_by_name(session: Session, name: str) -> "Person | None":
     return session.exec(statement).first()
 
 
+def get_person_by_email(session: Session, email: str | None) -> "Person | None":
+    if not email:
+        return None
+
+    normalized_email = email.strip().lower()
+    if not normalized_email:
+        return None
+
+    statement = select(Person).where(func.lower(Person.email) == normalized_email)
+    return session.exec(statement).first()
+
+
+class PersonIndex:
+    def __init__(self, people: Sequence["Person"]):
+        self.by_id: dict[str, Person] = {}
+        self.by_name: dict[str, Person] = {}
+        self.by_email: dict[str, Person] = {}
+
+        for person in people:
+            if person.id:
+                self.by_id[person.id] = person
+            if person.name:
+                self.by_name[person.name.lower()] = person
+            if person.email:
+                self.by_email[person.email.lower()] = person
+
+    def resolve(self, *, name: str | None = None, email: str | None = None, person_id: str | None = None) -> "Person | None":
+        if person_id and person_id in self.by_id:
+            return self.by_id[person_id]
+
+        if email and (email.lower() in self.by_email):
+            return self.by_email[email.lower()]
+
+        if name and (name.lower() in self.by_name):
+            return self.by_name[name.lower()]
+
+        return None
+
+
+def build_person_index(session: Session) -> PersonIndex:
+    return PersonIndex(session.exec(select(Person)).all())
+
+
+def _normalize_person_identity(name: str, email: str | None = None) -> tuple[str, str | None]:
+    normalized_name = name.strip()
+    normalized_email = email.strip().lower() if email else None
+    return normalized_name, normalized_email
+
+
+def _resolve_existing_person(
+    session: Session,
+    *,
+    normalized_name: str,
+    normalized_email: str | None = None,
+    person_id: str | None = None,
+) -> "Person | None":
+    if person_id:
+        person = session.get(Person, person_id)
+        if person:
+            return person
+
+    person = get_person_by_email(session, normalized_email)
+    if person:
+        return person
+
+    return get_person_by_name(session, normalized_name)
+
+
 def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "Person":
-    normalized_name = payload.name.strip()
-    existing = get_person_by_name(session, normalized_name)
+    normalized_name, normalized_email = _normalize_person_identity(payload.name, payload.email)
+
+    existing = _resolve_existing_person(
+        session,
+        normalized_name=normalized_name,
+        normalized_email=normalized_email,
+        person_id=payload.id,
+    )
 
     if existing:
         existing.team = payload.team or existing.team
-        existing.email = payload.email
+        existing.email = normalized_email or existing.email
+        if normalized_name and existing.name.lower() != normalized_name.lower():
+            conflict = get_person_by_name(session, normalized_name)
+            if conflict is None or conflict.id == existing.id:
+                existing.name = normalized_name
         session.add(existing)
         session.commit()
         session.refresh(existing)
@@ -199,7 +310,7 @@ def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "P
         id=payload.id or generate_id("person"),
         name=normalized_name,
         team=payload.team,
-        email=payload.email,
+        email=normalized_email,
     )
     session.add(person)
     session.commit()
@@ -394,7 +505,7 @@ class Project(ProjectBase, table=True):
 
 class PersonBase(SQLModel):
     name: str = Field(sa_column=Column(String, unique=True, index=True))
-    team: str
+    team: str = ""
     email: Optional[str] = None
 
 
@@ -426,6 +537,13 @@ class AuditLog(SQLModel, table=True):
     details: Optional[str] = Field(default=None, sa_column=Column(String))  # JSON string with additional details
     user_agent: Optional[str] = None  # Client user agent
     ip_address: Optional[str] = None  # Client IP address
+
+
+class MigrationState(SQLModel, table=True):
+    """Track lightweight migrations run in-application."""
+
+    key: str = Field(primary_key=True)
+    applied_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 def log_action(
@@ -465,6 +583,8 @@ class TaskPayload(TaskBase):
 
 class ActivityPayload(ActivityBase):
     id: Optional[str] = None
+    authorId: Optional[str] = None
+    authorEmail: Optional[str] = None
 
 
 class PersonPayload(PersonBase):
@@ -740,7 +860,9 @@ def serialize_task(task: Task) -> dict:
     }
 
 
-def serialize_activity(activity: Activity) -> dict:
+def serialize_activity(activity: Activity, person_index: PersonIndex | None = None) -> dict:
+    person = person_index.resolve(name=activity.author) if person_index else None
+
     return {
         "id": activity.id,
         "date": activity.date,
@@ -749,6 +871,25 @@ def serialize_activity(activity: Activity) -> dict:
         "authorId": activity.author_id,
         "authorPerson": serialize_person(activity.author_person) if activity.author_person else None,
     }
+
+
+def serialize_stakeholder(raw_stakeholder: dict, person_index: PersonIndex | None = None) -> dict:
+    stakeholder = normalize_stakeholders([raw_stakeholder])[0]
+    person: Person | None = None
+    if person_index:
+        person = person_index.resolve(
+            name=stakeholder.get("name"),
+            email=stakeholder.get("email"),
+            person_id=stakeholder.get("id"),
+        )
+
+    if person:
+        stakeholder["id"] = person.id
+        stakeholder["name"] = person.name
+        stakeholder["team"] = stakeholder.get("team") or person.team or ""
+        stakeholder["email"] = person.email or stakeholder.get("email")
+
+    return stakeholder
 
 
 def normalize_project_activity(project: Project) -> Project:
@@ -762,7 +903,7 @@ def normalize_project_activity(project: Project) -> Project:
     project.recentActivity.sort(key=lambda a: a.date or "", reverse=True)
 
     if project.recentActivity:
-        project.lastUpdate = project.recentActivity[0].note
+        project.lastUpdate = project.recentActivity[-1].note
 
     return project
 
@@ -836,11 +977,16 @@ def serialize_project(project: Project) -> dict:
         "targetDate": project.targetDate,
         "stakeholders": [serialize_person(person) for person in project.stakeholders],
         "plan": [serialize_task(task) for task in project.plan],
-        "recentActivity": [serialize_activity(activity) for activity in project.recentActivity],
+        "recentActivity": [serialize_activity(activity, person_index) for activity in project.recentActivity],
     }
 
 
-def apply_task_payload(task: Task, payload: TaskPayload, session: Session | None = None) -> Task:
+def serialize_project_with_people(session: Session, project: Project) -> dict:
+    person_index = build_person_index(session)
+    return serialize_project(project, person_index)
+
+
+def apply_task_payload(task: Task, payload: TaskPayload) -> Task:
     task.title = payload.title
     task.status = payload.status
     task.dueDate = payload.dueDate
@@ -868,6 +1014,47 @@ def apply_task_payload(task: Task, payload: TaskPayload, session: Session | None
             subtask.assignee_id = assignee.id if assignee else None
         task.subtasks.append(subtask)
     return task
+
+
+def normalize_project_stakeholders(session: Session, stakeholders: Optional[List[Stakeholder | dict]]) -> list[dict]:
+    normalized: list[dict] = []
+    for stakeholder in normalize_stakeholders(stakeholders):
+        if not stakeholder.get("name"):
+            continue
+
+        person = upsert_person_from_details(
+            session,
+            name=stakeholder.get("name", ""),
+            team=stakeholder.get("team", ""),
+            email=stakeholder.get("email"),
+            person_id=stakeholder.get("id"),
+        )
+
+        normalized.append(
+            {
+                "id": person.id,
+                "name": person.name,
+                "team": stakeholder.get("team") or person.team or "",
+                "email": person.email,
+            }
+        )
+
+    return normalized
+
+
+def resolve_activity_author(session: Session, activity_payload: "ActivityPayload") -> Person | None:
+    if not activity_payload.author:
+        return None
+
+    author_email = getattr(activity_payload, "authorEmail", None)
+    author_id = getattr(activity_payload, "authorId", None)
+
+    return upsert_person_from_details(
+        session,
+        name=activity_payload.author,
+        email=author_email,
+        person_id=author_id,
+    )
 
 
 def upsert_project(session: Session, payload: ProjectPayload) -> Project:
@@ -931,7 +1118,6 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     activity_payloads = sorted(
         payload.recentActivity,
         key=lambda activity: activity.date or "",
-        reverse=True,
     )
 
     for activity_payload in activity_payloads:
@@ -954,9 +1140,48 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     return load_project(session, project.id)
 
 
+def run_people_backfill(session: Session) -> None:
+    migration_key = "people-backfill-v1"
+    if session.get(MigrationState, migration_key):
+        return
+
+    projects = session.exec(
+        select(Project)
+        .options(
+            selectinload(Project.plan).selectinload(Task.subtasks),
+            selectinload(Project.recentActivity),
+        )
+    ).all()
+
+    for project in projects:
+        updated = False
+
+        normalized_stakeholders = normalize_project_stakeholders(session, project.stakeholders)
+        if normalized_stakeholders != project.stakeholders:
+            project.stakeholders = normalized_stakeholders
+            updated = True
+
+        for activity in project.recentActivity or []:
+            if not activity.author:
+                continue
+            person = upsert_person_from_details(session, name=activity.author)
+            if person and activity.author != person.name:
+                activity.author = person.name
+                updated = True
+
+        if updated:
+            session.add(project)
+
+    session.add(MigrationState(key=migration_key))
+    session.commit()
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     create_db_and_tables()
+    if not is_dev_seeding_enabled():
+        return
+
     with Session(engine) as session:
         migrate_people_links(session)
         existing = session.exec(select(Project)).first()
@@ -1059,20 +1284,39 @@ def list_people(session: Session = Depends(get_session)):
     people = session.exec(statement).all()
 
     unique_people: dict[str, Person] = {}
+    seen_people: set[str] = set()
     for person in people:
-        key = person.name.lower()
-        if key not in unique_people:
-            unique_people[key] = person
+        email_key = person.email.lower() if person.email else None
+        name_key = person.name.lower() if person.name else None
+
+        existing = None
+        if email_key and email_key in unique_people:
+            existing = unique_people[email_key]
+        elif name_key and name_key in unique_people:
+            existing = unique_people[name_key]
+
+        if existing is None:
+            if name_key:
+                unique_people[name_key] = person
+            if email_key:
+                unique_people[email_key] = person
             continue
 
         # Collapse legacy duplicates by preferring the first encountered record
-        legacy = unique_people[key]
-        legacy.team = legacy.team or person.team
-        legacy.email = legacy.email or person.email
+        existing.team = existing.team or person.team
+        existing.email = existing.email or person.email
         session.delete(person)
 
+    # Ensure each person appears only once even though we index by multiple keys
+    deduped_people: list[Person] = []
+    for person in unique_people.values():
+        if person.id in seen_people:
+            continue
+        seen_people.add(person.id)
+        deduped_people.append(person)
+
     session.commit()
-    return [serialize_person(person) for person in unique_people.values()]
+    return [serialize_person(person) for person in deduped_people]
 
 
 @app.post("/people", status_code=status.HTTP_201_CREATED)
@@ -1205,6 +1449,7 @@ def send_email_action(payload: EmailSendPayload, request: Request, session: Sess
 
 @app.get("/projects")
 def list_projects(session: Session = Depends(get_session)):
+    person_index = build_person_index(session)
     statement = select(Project).options(
         selectinload(Project.plan).selectinload(Task.subtasks),
         selectinload(Project.plan).selectinload(Task.assignee),
@@ -1214,20 +1459,20 @@ def list_projects(session: Session = Depends(get_session)):
         selectinload(Project.stakeholders),
     )
     projects = session.exec(statement).all()
-    return [serialize_project(project) for project in projects]
+    return [serialize_project(project, person_index) for project in projects]
 
 
 @app.post("/projects", status_code=status.HTTP_201_CREATED)
 def create_project(payload: ProjectPayload, request: Request, session: Session = Depends(get_session)):
     project = upsert_project(session, payload)
     log_action(session, "create_project", "project", project.id, {"name": project.name, "status": project.status}, request)
-    return serialize_project(project)
+    return serialize_project_with_people(session, project)
 
 
 @app.get("/projects/{project_id}")
 def get_project(project_id: str, session: Session = Depends(get_session)):
     project = load_project(session, project_id)
-    return serialize_project(project)
+    return serialize_project_with_people(session, project)
 
 
 @app.put("/projects/{project_id}")
@@ -1237,7 +1482,7 @@ def update_project(project_id: str, payload: ProjectPayload, request: Request, s
     payload.id = project_id
     project = upsert_project(session, payload)
     log_action(session, "update_project", "project", project_id, {"name": project.name, "status": project.status}, request)
-    return serialize_project(project)
+    return serialize_project_with_people(session, project)
 
 
 @app.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1267,7 +1512,7 @@ def create_task(project_id: str, payload: TaskPayload, request: Request, session
     session.commit()
     session.refresh(task)
     log_action(session, "create_task", "task", task.id, {"project_id": project_id, "title": task.title}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/tasks/{task_id}")
@@ -1281,7 +1526,7 @@ def update_task(project_id: str, task_id: str, payload: TaskPayload, request: Re
     session.add(task)
     session.commit()
     log_action(session, "update_task", "task", task_id, {"project_id": project_id, "title": task.title, "old_status": old_status, "new_status": task.status}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1318,7 +1563,7 @@ def create_subtask(project_id: str, task_id: str, payload: SubtaskPayload, reque
     session.add(subtask)
     session.commit()
     log_action(session, "create_subtask", "subtask", subtask.id, {"project_id": project_id, "task_id": task_id, "title": subtask.title}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/tasks/{task_id}/subtasks/{subtask_id}")
@@ -1338,7 +1583,7 @@ def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: Subt
     session.add(subtask)
     session.commit()
     log_action(session, "update_subtask", "subtask", subtask_id, {"project_id": project_id, "task_id": task_id, "title": subtask.title, "old_status": old_status, "new_status": subtask.status}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/tasks/{task_id}/subtasks/{subtask_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1374,7 +1619,7 @@ def create_activity(project_id: str, payload: ActivityPayload, request: Request,
     session.add(project)
     session.commit()
     log_action(session, "create_activity", "activity", activity.id, {"project_id": project_id, "author": activity.author, "note_preview": activity.note[:100] if activity.note else None}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/activities/{activity_id}")
@@ -1395,7 +1640,7 @@ def update_activity(project_id: str, activity_id: str, payload: ActivityPayload,
     session.add(project)
     session.commit()
     log_action(session, "update_activity", "activity", activity_id, {"project_id": project_id, "author": activity.author}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/activities/{activity_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1419,7 +1664,7 @@ def delete_activity(project_id: str, activity_id: str, request: Request, session
 def export_portfolio(project_id: Optional[str] = None, session: Session = Depends(get_session)):
     projects = []
     if project_id:
-        projects.append(serialize_project(load_project(session, project_id)))
+        projects.append(serialize_project_with_people(session, load_project(session, project_id)))
     else:
         projects = list_projects(session)
 
