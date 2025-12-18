@@ -1,5 +1,22 @@
+
 #!/usr/bin/env bash
 set -euo pipefail
+
+##############################################
+# Environment sanitization (avoid lingering exports)
+##############################################
+# Set ALLOW_ENV=1 to allow inherited shell exports; default is to ignore them.
+ALLOW_ENV="${ALLOW_ENV:-0}"
+
+sanitize_env() {
+  if [[ "$ALLOW_ENV" != "1" ]]; then
+    # Unset variables that commonly linger from prod or other shells
+    for v in BACKEND_PORT FRONTEND_PORT VITE_API_BASE NODE_ENV SERVE_CMD PYTHON_BIN NODE_BIN NPM_BIN; do
+      unset "$v" || true
+    done
+  fi
+}
+sanitize_env
 
 ##############################################
 # Dotenv loader (+ overlay .env.local)
@@ -75,12 +92,7 @@ start_bg() {
 }
 
 ##############################################
-# Load .env before computing defaults
-##############################################
-load_dotenv
-
-##############################################
-# Configuration (env-driven with dev defaults)
+# Configuration defaults FIRST (stable baseline)
 ##############################################
 BACKEND_DIR="${BACKEND_DIR:-backend}"
 BACKEND_APP="${BACKEND_APP:-main:app}"
@@ -99,8 +111,19 @@ LOG_DIR="${LOG_DIR:-$HOME/.local/manity-dev/logs}"
 VENV_DIR="${VENV_DIR:-$HOME/.local/venvs/manity-dev}"
 RUN_DIR="${RUN_DIR:-$HOME/.local/manity-dev/run}"
 DATABASE_URL="${DATABASE_URL:-sqlite:////home/c17420g/projects/manity-dev-data/portfolio.db}"
+
+# Derived defaults (temporary; will recompute after dotenv overlay)
 VITE_API_BASE="${VITE_API_BASE:-http://localhost:$BACKEND_PORT}"
-NODE_ENV="${NODE_ENV:-production}"
+NODE_ENV="${NODE_ENV:-development}"
+
+##############################################
+# Overlay .env / .env.local AFTER defaults
+##############################################
+load_dotenv
+
+# Recompute derived values AFTER overlays (so env files can override if desired)
+VITE_API_BASE="${VITE_API_BASE:-http://localhost:$BACKEND_PORT}"
+NODE_ENV="${NODE_ENV:-development}"
 
 validate_port "BACKEND_PORT" "$BACKEND_PORT"
 validate_port "FRONTEND_PORT" "$FRONTEND_PORT"
@@ -125,7 +148,8 @@ msg "Configuration:"
 for k in BACKEND_DIR BACKEND_APP BACKEND_PORT FRONTEND_DIR FRONTEND_PORT VITE_ROOT DATABASE_URL LOG_DIR VENV_DIR RUN_DIR; do
   v="${!k}"; printf "  %-14s = %s\n" "$k" "$v"
 done
-msg "  %-14s = %s" "VITE_API_BASE" "$VITE_API_BASE"
+printf "  %-14s = %s\n" "VITE_API_BASE" "$VITE_API_BASE"
+printf "  %-14s = %s\n" "NODE_ENV" "$NODE_ENV"
 
 ##############################################
 # Python venv and backend dependencies
@@ -149,13 +173,20 @@ else
 fi
 
 ##############################################
-# Build frontend (root has package.json + index.html)
+# Build frontend (explicit dev mode; sanitize env)
 ##############################################
 msg "Installing frontend dependencies"
 pushd "$FRONTEND_DIR" >/dev/null
 npm ci --include=dev || npm install --include=dev
-export VITE_API_BASE NODE_ENV
-msg "Building React app"
+
+# Export only the variables we want Vite to see.
+# Prefer using .env.development in the repo; this is a safeguard for CI/local.
+export NODE_ENV=development
+export VITE_API_BASE
+
+msg "Building React app (dev mode)"
+# If you add "build:dev": "vite build --mode development" to package.json, use that:
+# $NPM_BIN run build:dev
 $NPM_BIN run build
 popd >/dev/null
 
@@ -166,21 +197,25 @@ kill_if_running "backend"
 kill_if_running "frontend"
 
 ##############################################
-# Start backend (uvicorn)
+# Start backend (uvicorn) with sanitized environment
 ##############################################
 BACKEND_LOG="$LOG_DIR/backend.log"
-BACKEND_CMD="cd \"$BACKEND_DIR\" && DATABASE_URL=\"$DATABASE_URL\" \"$VENV_DIR/bin/uvicorn\" \"$BACKEND_APP\" --host 0.0.0.0 --port $BACKEND_PORT"
+BACKEND_CMD="cd \"$BACKEND_DIR\" && \
+  env -u BACKEND_PORT -u FRONTEND_PORT -u VITE_API_BASE -u NODE_ENV \
+  DATABASE_URL=\"$DATABASE_URL\" \"$VENV_DIR/bin/uvicorn\" \"$BACKEND_APP\" --host 0.0.0.0 --port $BACKEND_PORT"
 start_bg "$BACKEND_CMD" "$BACKEND_LOG" "backend"
 
 ##############################################
-# Start frontend (serve SPA build)
+# Start frontend (serve SPA build) with sanitized environment
 ##############################################
 FRONTEND_BUILD_DIR="${FRONTEND_BUILD_DIR:-$FRONTEND_DIR/dist}"
 FRONTEND_LOG="$LOG_DIR/frontend.log"
 
 [[ -d "$FRONTEND_BUILD_DIR" ]] || { err "Frontend build directory not found: $FRONTEND_BUILD_DIR"; exit 1; }
 
-FRONTEND_CMD="cd \"$FRONTEND_DIR\" && $SERVE_CMD -s \"$FRONTEND_BUILD_DIR\" -l $FRONTEND_PORT"
+FRONTEND_CMD="cd \"$FRONTEND_DIR\" && \
+  env -u BACKEND_PORT -u FRONTEND_PORT -u VITE_API_BASE -u NODE_ENV \
+  $SERVE_CMD -s \"$FRONTEND_BUILD_DIR\" -l $FRONTEND_PORT"
 start_bg "$FRONTEND_CMD" "$FRONTEND_LOG" "frontend"
 
 ##############################################
@@ -192,4 +227,3 @@ echo "Frontend: http://localhost:$FRONTEND_PORT"
 echo "Logs:"
 echo "  $BACKEND_LOG"
 echo "  $FRONTEND_LOG"
-echo
