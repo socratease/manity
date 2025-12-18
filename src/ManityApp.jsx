@@ -1171,7 +1171,14 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         await addActivity(viewingProjectId, {
           date: new Date().toISOString(),
           note: noteWithContext,
-          author: loggedInUser || 'Anonymous'
+          author: loggedInUser || 'Anonymous',
+          // Include taskContext for persistent task/subtask association
+          taskContext: {
+            taskId,
+            subtaskId,
+            taskTitle,
+            subtaskTitle
+          }
         });
       } catch (error) {
         console.error('Failed to add subtask comment:', error);
@@ -1191,7 +1198,12 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         await addActivity(viewingProjectId, {
           date: new Date().toISOString(),
           note: noteWithContext,
-          author: loggedInUser || 'Anonymous'
+          author: loggedInUser || 'Anonymous',
+          // Include taskContext for persistent task association
+          taskContext: {
+            taskId,
+            taskTitle
+          }
         });
       } catch (error) {
         console.error('Failed to add task comment:', error);
@@ -1848,11 +1860,17 @@ Write a professional executive summary that highlights the project's current sta
   };
 
   const normalizeStakeholderEntry = (person) => {
-    if (!person || !person.name) return null;
-    const existing = findPersonByName(person.name);
+    if (!person || (!person.name && !person.id)) return null;
+    const existing = person.id
+      ? people.find(p => p.id === person.id) || findPersonByName(person.name)
+      : findPersonByName(person.name);
+    const name = person.name || existing?.name;
+    if (!name) return null;
     return {
-      name: person.name,
-      team: existing?.team || person.team || 'Contributor'
+      id: person.id || existing?.id || null,
+      name,
+      team: existing?.team || person.team || 'Contributor',
+      email: person.email || existing?.email || null
     };
   };
 
@@ -1863,7 +1881,8 @@ Write a professional executive summary that highlights the project's current sta
       const normalized = normalizeStakeholderEntry(entry);
       if (!normalized) return;
 
-      map.set(normalized.name.toLowerCase(), normalized);
+      const key = normalized.id || normalized.name.toLowerCase();
+      map.set(key, normalized);
     });
 
     return Array.from(map.values());
@@ -1911,8 +1930,16 @@ Write a professional executive summary that highlights the project's current sta
       // Add authors from activities
       if (project.recentActivity) {
         project.recentActivity.forEach(activity => {
-          if (activity.author && activity.author.trim() && activity.author !== 'You') {
-            peopleToSync.set(activity.author.toLowerCase(), normalizeStakeholderEntry({ name: activity.author }));
+          if (activity.authorPerson && activity.authorPerson.name) {
+            const normalized = normalizeStakeholderEntry(activity.authorPerson);
+            if (normalized) {
+              peopleToSync.set((normalized.id || normalized.name).toString().toLowerCase(), normalized);
+            }
+          } else if (activity.author && activity.author.trim() && activity.author !== 'You') {
+            const normalized = normalizeStakeholderEntry({ name: activity.author });
+            if (normalized) {
+              peopleToSync.set(normalized.name.toLowerCase(), normalized);
+            }
           }
         });
       }
@@ -2366,7 +2393,7 @@ Write a professional executive summary that highlights the project's current sta
             const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
             if (assigneeName) {
               const person = findPersonByName(assigneeName);
-              taskAssignee = person ? { name: person.name, team: person.team } : { name: assigneeName };
+              taskAssignee = person ? { id: person.id, name: person.name, team: person.team } : { name: assigneeName };
             }
           }
           const newTask = {
@@ -2433,7 +2460,7 @@ Write a professional executive summary that highlights the project's current sta
               if (newAssigneeName && newAssigneeName !== currentAssigneeName) {
                 const person = findPersonByName(newAssigneeName);
                 changes.push(`assigned to ${newAssigneeName}`);
-                task.assignee = person ? { name: person.name, team: person.team } : { name: newAssigneeName };
+                task.assignee = person ? { id: person.id, name: person.name, team: person.team } : { name: newAssigneeName };
               }
             }
           }
@@ -2460,7 +2487,7 @@ Write a professional executive summary that highlights the project's current sta
             const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
             if (assigneeName) {
               const person = findPersonByName(assigneeName);
-              subtaskAssignee = person ? { name: person.name, team: person.team } : { name: assigneeName };
+              subtaskAssignee = person ? { id: person.id, name: person.name, team: person.team } : { name: assigneeName };
             }
           }
           const newSubtask = {
@@ -2738,7 +2765,7 @@ Write a professional executive summary that highlights the project's current sta
       const normalized = normalizeStakeholderEntry(entry);
       if (!normalized) return;
 
-      const key = normalized.name.toLowerCase();
+      const key = normalized.id || normalized.name.toLowerCase();
       const existing = stakeholderMap.get(key);
 
       if (!existing || (!existing.team && normalized.team)) {

@@ -1,6 +1,15 @@
 export interface User {
+  id?: string;
   name: string;
   team: string;
+  email?: string | null;
+}
+
+export interface TaskContext {
+  taskId: string;
+  subtaskId?: string;
+  taskTitle: string;
+  subtaskTitle?: string;
 }
 
 export interface Activity {
@@ -8,6 +17,9 @@ export interface Activity {
   date: string;
   note: string;
   author: string;
+  taskContext?: TaskContext;
+  authorId?: string | null;
+  authorPerson?: User | null;
 }
 
 export interface Subtask {
@@ -16,7 +28,8 @@ export interface Subtask {
   status: 'todo' | 'in-progress' | 'completed';
   dueDate?: string;
   completedDate?: string;
-  assignee?: User;
+  assigneeId?: string | null;
+  assignee?: User | null;
 }
 
 export interface Task {
@@ -25,7 +38,8 @@ export interface Task {
   status: 'todo' | 'in-progress' | 'completed';
   dueDate?: string;
   completedDate?: string;
-  assignee?: User;
+  assigneeId?: string | null;
+  assignee?: User | null;
   subtasks: Subtask[];
 }
 
@@ -284,7 +298,8 @@ const normalizeActivity = (activity: Partial<Activity>, idx: number): Activity =
   id: activity.id ?? `activity-${idx + 1}`,
   date: typeof activity.date === 'string' ? activity.date : new Date().toISOString(),
   note: typeof activity.note === 'string' ? activity.note : '',
-  author: typeof activity.author === 'string' ? activity.author : 'Unknown'
+  author: typeof activity.author === 'string' ? activity.author : 'Unknown',
+  taskContext: activity.taskContext
 });
 
 const clampProgress = (progress: unknown): number => {

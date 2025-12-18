@@ -29,7 +29,7 @@ const PersonPicker = ({
   // Filter people based on input
   const filteredPeople = allPeople.filter(person => {
     // Don't show already selected people
-    const isSelected = selectedPeople.some(p => p.name === person.name);
+    const isSelected = selectedPeople.some(p => (p.id && person.id ? p.id === person.id : p.name === person.name));
     if (isSelected) return false;
 
     // Filter by search term
@@ -52,7 +52,10 @@ const PersonPicker = ({
 
   // Handle person removal
   const handleRemovePerson = (personToRemove) => {
-    onChange(selectedPeople.filter(p => p.name !== personToRemove.name));
+    onChange(selectedPeople.filter(p => {
+      if (p.id && personToRemove.id) return p.id !== personToRemove.id;
+      return p.name !== personToRemove.name;
+    }));
   };
 
   // Handle input change
@@ -129,7 +132,7 @@ const PersonPicker = ({
       <div style={styles.inputWrapper}>
         {/* Selected people chips */}
         {selectedPeople.map((person) => (
-          <div key={person.name} style={styles.chip}>
+          <div key={person.id || person.name} style={styles.chip}>
             <User size={12} style={styles.chipIcon} />
             <span style={styles.chipName}>{person.name}</span>
             <span style={styles.chipTeam}>({person.team})</span>
@@ -164,7 +167,7 @@ const PersonPicker = ({
             <>
               {filteredPeople.map((person, index) => (
                 <div
-                  key={person.name}
+                  key={person.id || person.name}
                   data-index={index}
                   onClick={() => handleSelectPerson(person)}
                   onMouseEnter={() => setFocusedIndex(index)}

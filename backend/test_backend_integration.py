@@ -14,7 +14,7 @@ def create_isolated_client(db_path: Path):
     """Create a TestClient bound to a temporary SQLite database."""
 
     main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
-    SQLModel.metadata.create_all(main.engine)
+    main.create_db_and_tables()
 
     original_startup = list(main.app.router.on_startup)
     original_overrides = dict(main.app.dependency_overrides)
@@ -134,7 +134,9 @@ def test_crud_and_persistence(tmp_path):
         project = client.post(
             f"/projects/{project_id}/activities", json=activity_two
         ).json()
-        activity_two_id = project["recentActivity"][1]["id"]
+        activity_two_id = next(
+            activity["id"] for activity in project["recentActivity"] if activity["note"] == activity_two["note"]
+        )
 
         delete_activity = client.delete(
             f"/projects/{project_id}/activities/{activity_two_id}"
@@ -162,6 +164,39 @@ def test_crud_and_persistence(tmp_path):
         assert len(persisted) == 1
         assert persisted[0]["plan"][0]["subtasks"][0]["title"] == "Draft proposal"
         assert persisted[0]["recentActivity"][0]["note"] == "Kickoff complete"
+
+
+def test_people_normalized_from_projects(tmp_path):
+    db_path = tmp_path / "people.db"
+
+    with create_isolated_client(db_path) as client:
+        payload = {
+            "name": "Normalization",
+            "status": "active",
+            "priority": "medium",
+            "progress": 0,
+            "description": "",
+            "plan": [],
+            "recentActivity": [
+                {"date": "2025-11-30", "note": "Kickoff", "author": "Jordan Lee"}
+            ],
+            "stakeholders": [{"name": "Jordan Lee", "team": "Ops"}],
+            "lastUpdate": None,
+            "executiveUpdate": None,
+            "startDate": None,
+            "targetDate": None,
+        }
+
+        project = client.post("/projects", json=payload).json()
+        stakeholder = project["stakeholders"][0]
+        assert stakeholder["id"]
+
+        activity = project["recentActivity"][0]
+        assert activity["authorId"] == stakeholder["id"]
+
+        people = client.get("/people").json()
+        assert len(people) == 1
+        assert people[0]["id"] == stakeholder["id"]
 
 
 def test_export_and_import_round_trip(tmp_path):
@@ -274,3 +309,18 @@ def test_email_settings_and_sending(tmp_path, monkeypatch):
         assert message["from"] == "bot@example.com"
         assert message["subject"] == "Status"
         assert "Update ready" in message["body"]
+
+
+def test_cors_allows_default_local_origins():
+    with TestClient(main.app) as client:
+        response = client.get("/", headers={"Origin": "http://localhost:3000"})
+
+        assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+        assert response.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_cors_blocks_unlisted_origins():
+    with TestClient(main.app) as client:
+        response = client.get("/", headers={"Origin": "http://untrusted.example.com"})
+
+        assert response.headers.get("access-control-allow-origin") is None
