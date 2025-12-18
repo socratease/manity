@@ -102,6 +102,7 @@ def generate_id(prefix: str) -> str:
 
 
 class Stakeholder(BaseModel):
+    id: str | None = None
     name: str
     team: str
 
@@ -114,6 +115,7 @@ def normalize_stakeholders(stakeholders: Optional[List[Stakeholder | dict]]) -> 
         elif isinstance(stakeholder, dict):
             normalized.append(
                 {
+                    "id": stakeholder.get("id"),
                     "name": stakeholder.get("name", ""),
                     "team": stakeholder.get("team", ""),
                 }

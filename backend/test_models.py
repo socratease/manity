@@ -51,8 +51,8 @@ def test_stakeholders_are_normalized_to_json(tmp_path):
         priority="high",
         progress=10,
         stakeholders=[
-            main.Stakeholder(name="Alice", team="Product"),
-            main.Stakeholder(name="Bob", team="Engineering"),
+            main.Stakeholder(id="person-1", name="Alice", team="Product"),
+            main.Stakeholder(id="person-2", name="Bob", team="Engineering"),
         ],
     )
 
@@ -60,8 +60,8 @@ def test_stakeholders_are_normalized_to_json(tmp_path):
         project = main.upsert_project(session, payload)
 
         expected = [
-            {"name": "Alice", "team": "Product"},
-            {"name": "Bob", "team": "Engineering"},
+            {"id": "person-1", "name": "Alice", "team": "Product"},
+            {"id": "person-2", "name": "Bob", "team": "Engineering"},
         ]
 
         assert project.stakeholders == expected
@@ -131,8 +131,9 @@ def test_upsert_project_loads_relationships(tmp_path):
         # Verify activities are loaded
         assert project.recentActivity is not None
         assert len(project.recentActivity) == 2
-        assert project.recentActivity[0].note == "Started project"
-        assert project.recentActivity[1].note == "Made progress"
+        activity_notes = [activity.note for activity in project.recentActivity]
+        assert activity_notes[0] == "Made progress"
+        assert activity_notes[1] == "Started project"
 
         # Verify serialization includes all relationships
         serialized = main.serialize_project(project)
