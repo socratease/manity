@@ -891,35 +891,44 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   };
 
   const toggleSubtaskStatus = (taskId, subtaskId) => {
-    setProjects(projects.map(p =>
-      p.id === viewingProjectId
-        ? {
-            ...p,
-            plan: p.plan.map(task =>
-              task.id === taskId
-                ? {
-                    ...task,
-                    subtasks: task.subtasks.map(subtask =>
-                      subtask.id === subtaskId
-                        ? {
-                            ...subtask,
-                            status: subtask.status === 'completed' ? 'todo' : 
-                                   subtask.status === 'in-progress' ? 'completed' :
-                                   'in-progress',
-                            completedDate: subtask.status === 'in-progress' 
-                              ? new Date().toISOString().split('T')[0]
-                              : subtask.status === 'completed'
-                              ? undefined
-                              : subtask.completedDate
-                          }
-                        : subtask
-                    )
-                  }
-                : task
-            )
-          }
-        : p
-    ));
+    setProjects(projects.map(p => {
+      if (p.id !== viewingProjectId) return p;
+
+      const task = p.plan.find(t => t.id === taskId);
+      const subtask = task?.subtasks.find(st => st.id === subtaskId);
+      if (!subtask) return p;
+
+      const newStatus = subtask.status === 'completed' ? 'todo' :
+                       subtask.status === 'in-progress' ? 'completed' :
+                       'in-progress';
+      const newCompletedDate = subtask.status === 'in-progress'
+        ? new Date().toISOString().split('T')[0]
+        : subtask.status === 'completed'
+        ? undefined
+        : subtask.completedDate;
+
+      const updatedProject = {
+        ...p,
+        plan: p.plan.map(t =>
+          t.id === taskId
+            ? {
+                ...t,
+                subtasks: t.subtasks.map(st =>
+                  st.id === subtaskId
+                    ? { ...st, status: newStatus, completedDate: newCompletedDate }
+                    : st
+                )
+              }
+            : t
+        )
+      };
+
+      const activityNote = `Updated subtask "${subtask.title}" status to: ${newStatus}`;
+      return syncProjectActivity(updatedProject, [
+        { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: loggedInUser },
+        ...p.recentActivity
+      ]);
+    }));
   };
 
   const enterEditMode = () => {
@@ -949,14 +958,50 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     await syncStakeholdersToPeople(finalStakeholders);
 
     setProjects(prevProjects =>
-      prevProjects.map(p =>
-        p.id === viewingProjectId
-          ? syncProjectActivity(p, [
-              { id: generateActivityId(), date: new Date().toISOString(), note: 'Updated project details', author: loggedInUser },
-              ...p.recentActivity
-            ])
-          : p
-      )
+      prevProjects.map(p => {
+        if (p.id !== viewingProjectId) return p;
+
+        // Build specific activity messages for each change
+        const changes = [];
+        if (editValues.status !== undefined && editValues.status !== p.status) {
+          changes.push({ id: generateActivityId(), date: new Date().toISOString(), note: `Updated project status to: ${editValues.status}`, author: loggedInUser });
+        }
+        if (editValues.priority !== undefined && editValues.priority !== p.priority) {
+          changes.push({ id: generateActivityId(), date: new Date().toISOString(), note: `Updated project priority to: ${editValues.priority}`, author: loggedInUser });
+        }
+        if (editValues.description !== undefined && editValues.description !== p.description) {
+          changes.push({ id: generateActivityId(), date: new Date().toISOString(), note: `Updated project description to: ${editValues.description}`, author: loggedInUser });
+        }
+        if (editValues.progress !== undefined && editValues.progress !== p.progress) {
+          changes.push({ id: generateActivityId(), date: new Date().toISOString(), note: `Updated project progress to: ${editValues.progress}%`, author: loggedInUser });
+        }
+        if (editValues.progressMode !== undefined && editValues.progressMode !== p.progressMode) {
+          changes.push({ id: generateActivityId(), date: new Date().toISOString(), note: `Updated project progress mode to: ${editValues.progressMode}`, author: loggedInUser });
+        }
+        // Check stakeholder changes
+        const oldStakeholderNames = (p.stakeholders || []).map(s => s.name).sort().join(',');
+        const newStakeholderNames = finalStakeholders.map(s => s.name).sort().join(',');
+        if (oldStakeholderNames !== newStakeholderNames) {
+          changes.push({ id: generateActivityId(), date: new Date().toISOString(), note: `Updated project stakeholders to: ${finalStakeholders.map(s => s.name).join(', ')}`, author: loggedInUser });
+        }
+
+        // Apply the actual changes to the project
+        const updatedProject = {
+          ...p,
+          status: editValues.status !== undefined ? editValues.status : p.status,
+          priority: editValues.priority !== undefined ? editValues.priority : p.priority,
+          description: editValues.description !== undefined ? editValues.description : p.description,
+          progress: editValues.progress !== undefined ? editValues.progress : p.progress,
+          progressMode: editValues.progressMode !== undefined ? editValues.progressMode : p.progressMode,
+          stakeholders: finalStakeholders,
+        };
+
+        // Add activity entries for changes
+        if (changes.length > 0) {
+          return syncProjectActivity(updatedProject, [...changes, ...p.recentActivity]);
+        }
+        return updatedProject;
+      })
     );
     setEditMode(false);
   };
@@ -970,30 +1015,37 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     if (newSubtaskTitle.trim()) {
       const newSubtaskId = `${taskId}-${Date.now()}`;
       const dueDate = newSubtaskDueDate || new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              plan: p.plan.map(task =>
-                task.id === taskId
-                  ? {
-                      ...task,
-                      subtasks: [
-                        ...task.subtasks,
-                        {
-                          id: newSubtaskId,
-                          title: newSubtaskTitle,
-                          status: 'todo',
-                          dueDate: dueDate
-                        }
-                      ]
+
+      setProjects(projects.map(p => {
+        if (p.id !== viewingProjectId) return p;
+
+        const task = p.plan.find(t => t.id === taskId);
+        const updatedProject = {
+          ...p,
+          plan: p.plan.map(t =>
+            t.id === taskId
+              ? {
+                  ...t,
+                  subtasks: [
+                    ...t.subtasks,
+                    {
+                      id: newSubtaskId,
+                      title: newSubtaskTitle,
+                      status: 'todo',
+                      dueDate: dueDate
                     }
-                  : task
-              )
-            }
-          : p
-      ));
+                  ]
+                }
+              : t
+          )
+        };
+
+        const activityNote = `Added subtask "${newSubtaskTitle}" to task "${task?.title || 'Unknown'}"`;
+        return syncProjectActivity(updatedProject, [
+          { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: loggedInUser },
+          ...p.recentActivity
+        ]);
+      }));
       setNewSubtaskTitle('');
       setNewSubtaskDueDate('');
       setAddingSubtaskTo(null);
@@ -1004,24 +1056,30 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     if (newTaskTitle.trim()) {
       const newTaskId = `t${Date.now()}`;
       const dueDate = newTaskDueDate || new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
-      
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              plan: [
-                ...p.plan,
-                {
-                  id: newTaskId,
-                  title: newTaskTitle,
-                  status: 'todo',
-                  dueDate: dueDate,
-                  subtasks: []
-                }
-              ]
+
+      setProjects(projects.map(p => {
+        if (p.id !== viewingProjectId) return p;
+
+        const updatedProject = {
+          ...p,
+          plan: [
+            ...p.plan,
+            {
+              id: newTaskId,
+              title: newTaskTitle,
+              status: 'todo',
+              dueDate: dueDate,
+              subtasks: []
             }
-          : p
-      ));
+          ]
+        };
+
+        const activityNote = `Added task "${newTaskTitle}"`;
+        return syncProjectActivity(updatedProject, [
+          { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: loggedInUser },
+          ...p.recentActivity
+        ]);
+      }));
       setNewTaskTitle('');
       setNewTaskDueDate('');
       setAddingNewTask(false);
@@ -1031,27 +1089,40 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const handleUpdateDueDate = (taskId, subtaskId = null) => {
     if (tempDueDate) {
       const fieldToUpdate = editingCompletedDate ? 'completedDate' : 'dueDate';
-      setProjects(projects.map(p =>
-        p.id === viewingProjectId
-          ? {
-              ...p,
-              plan: p.plan.map(task =>
-                task.id === taskId
-                  ? subtaskId
-                    ? {
-                        ...task,
-                        subtasks: task.subtasks.map(st =>
-                          st.id === subtaskId
-                            ? { ...st, [fieldToUpdate]: tempDueDate }
-                            : st
-                        )
-                      }
-                    : { ...task, [fieldToUpdate]: tempDueDate }
-                  : task
-              )
-            }
-          : p
-      ));
+      const fieldLabel = editingCompletedDate ? 'completed date' : 'due date';
+
+      setProjects(projects.map(p => {
+        if (p.id !== viewingProjectId) return p;
+
+        const task = p.plan.find(t => t.id === taskId);
+        const subtask = subtaskId ? task?.subtasks.find(st => st.id === subtaskId) : null;
+        const itemTitle = subtask ? subtask.title : task?.title;
+        const itemType = subtask ? 'subtask' : 'task';
+
+        const updatedProject = {
+          ...p,
+          plan: p.plan.map(t =>
+            t.id === taskId
+              ? subtaskId
+                ? {
+                    ...t,
+                    subtasks: t.subtasks.map(st =>
+                      st.id === subtaskId
+                        ? { ...st, [fieldToUpdate]: tempDueDate }
+                        : st
+                    )
+                  }
+                : { ...t, [fieldToUpdate]: tempDueDate }
+              : t
+          )
+        };
+
+        const activityNote = `Updated ${itemType} "${itemTitle}" ${fieldLabel} to: ${tempDueDate}`;
+        return syncProjectActivity(updatedProject, [
+          { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: loggedInUser },
+          ...p.recentActivity
+        ]);
+      }));
       setEditingDueDate(null);
       setTempDueDate('');
       setEditingCompletedDate(false);
@@ -1059,27 +1130,40 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   };
 
   const handleUpdateAssignee = (taskId, subtaskId, person) => {
-    setProjects(projects.map(p =>
-      p.id === viewingProjectId
-        ? {
-            ...p,
-            plan: p.plan.map(task =>
-              task.id === taskId
-                ? subtaskId
-                  ? {
-                      ...task,
-                      subtasks: task.subtasks.map(st =>
-                        st.id === subtaskId
-                          ? { ...st, assignee: person }
-                          : st
-                      )
-                    }
-                  : { ...task, assignee: person }
-                : task
-            )
-          }
-        : p
-    ));
+    setProjects(projects.map(p => {
+      if (p.id !== viewingProjectId) return p;
+
+      const task = p.plan.find(t => t.id === taskId);
+      const subtask = subtaskId ? task?.subtasks.find(st => st.id === subtaskId) : null;
+      const itemTitle = subtask ? subtask.title : task?.title;
+      const itemType = subtask ? 'subtask' : 'task';
+
+      const updatedProject = {
+        ...p,
+        plan: p.plan.map(t =>
+          t.id === taskId
+            ? subtaskId
+              ? {
+                  ...t,
+                  subtasks: t.subtasks.map(st =>
+                    st.id === subtaskId
+                      ? { ...st, assignee: person }
+                      : st
+                  )
+                }
+              : { ...t, assignee: person }
+            : t
+        )
+      };
+
+      const activityNote = person
+        ? `Assigned "${person.name}" to ${itemType} "${itemTitle}"`
+        : `Removed assignee from ${itemType} "${itemTitle}"`;
+      return syncProjectActivity(updatedProject, [
+        { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: loggedInUser },
+        ...p.recentActivity
+      ]);
+    }));
     setEditingAssignee(null);
     setAssigneeSearchTerm('');
     setAssigneeFocusedIndex(0);
@@ -1155,34 +1239,49 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const deleteTask = (taskId) => {
     setProjects(prevProjects =>
-      prevProjects.map(project =>
-        project.id === viewingProjectId
-          ? {
-              ...project,
-              plan: project.plan.filter(task => task.id !== taskId)
-            }
-          : project
-      )
+      prevProjects.map(project => {
+        if (project.id !== viewingProjectId) return project;
+
+        const task = project.plan.find(t => t.id === taskId);
+        const updatedProject = {
+          ...project,
+          plan: project.plan.filter(t => t.id !== taskId)
+        };
+
+        const activityNote = `Deleted task "${task?.title || 'Unknown'}"`;
+        return syncProjectActivity(updatedProject, [
+          { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: loggedInUser },
+          ...project.recentActivity
+        ]);
+      })
     );
   };
 
   const deleteSubtask = (taskId, subtaskId) => {
     setProjects(prevProjects =>
-      prevProjects.map(project =>
-        project.id === viewingProjectId
-          ? {
-              ...project,
-              plan: project.plan.map(task =>
-                task.id === taskId
-                  ? {
-                      ...task,
-                      subtasks: task.subtasks.filter(st => st.id !== subtaskId)
-                    }
-                  : task
-              )
-            }
-          : project
-      )
+      prevProjects.map(project => {
+        if (project.id !== viewingProjectId) return project;
+
+        const task = project.plan.find(t => t.id === taskId);
+        const subtask = task?.subtasks.find(st => st.id === subtaskId);
+        const updatedProject = {
+          ...project,
+          plan: project.plan.map(t =>
+            t.id === taskId
+              ? {
+                  ...t,
+                  subtasks: t.subtasks.filter(st => st.id !== subtaskId)
+                }
+              : t
+          )
+        };
+
+        const activityNote = `Deleted subtask "${subtask?.title || 'Unknown'}" from task "${task?.title || 'Unknown'}"`;
+        return syncProjectActivity(updatedProject, [
+          { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: loggedInUser },
+          ...project.recentActivity
+        ]);
+      })
     );
   };
 
@@ -1194,18 +1293,29 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const saveTaskEdit = (taskId) => {
     if (editingTaskTitle.trim()) {
       setProjects(prevProjects =>
-        prevProjects.map(project =>
-          project.id === viewingProjectId
-            ? {
-                ...project,
-                plan: project.plan.map(task =>
-                  task.id === taskId
-                    ? { ...task, title: editingTaskTitle }
-                    : task
-                )
-              }
-            : project
-        )
+        prevProjects.map(project => {
+          if (project.id !== viewingProjectId) return project;
+
+          const task = project.plan.find(t => t.id === taskId);
+          const oldTitle = task?.title;
+
+          if (oldTitle === editingTaskTitle) return project; // No change
+
+          const updatedProject = {
+            ...project,
+            plan: project.plan.map(t =>
+              t.id === taskId
+                ? { ...t, title: editingTaskTitle }
+                : t
+            )
+          };
+
+          const activityNote = `Updated task title from "${oldTitle}" to "${editingTaskTitle}"`;
+          return syncProjectActivity(updatedProject, [
+            { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: loggedInUser },
+            ...project.recentActivity
+          ]);
+        })
       );
     }
     setEditingTask(null);
@@ -1220,25 +1330,37 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const saveSubtaskEdit = (taskId, subtaskId) => {
     if (editingSubtaskTitle.trim()) {
       setProjects(prevProjects =>
-        prevProjects.map(project =>
-          project.id === viewingProjectId
-            ? {
-                ...project,
-                plan: project.plan.map(task =>
-                  task.id === taskId
-                    ? {
-                        ...task,
-                        subtasks: task.subtasks.map(st =>
-                          st.id === subtaskId
-                            ? { ...st, title: editingSubtaskTitle }
-                            : st
-                        )
-                      }
-                    : task
-                )
-              }
-            : project
-        )
+        prevProjects.map(project => {
+          if (project.id !== viewingProjectId) return project;
+
+          const task = project.plan.find(t => t.id === taskId);
+          const subtask = task?.subtasks.find(st => st.id === subtaskId);
+          const oldTitle = subtask?.title;
+
+          if (oldTitle === editingSubtaskTitle) return project; // No change
+
+          const updatedProject = {
+            ...project,
+            plan: project.plan.map(t =>
+              t.id === taskId
+                ? {
+                    ...t,
+                    subtasks: t.subtasks.map(st =>
+                      st.id === subtaskId
+                        ? { ...st, title: editingSubtaskTitle }
+                        : st
+                    )
+                  }
+                : t
+            )
+          };
+
+          const activityNote = `Updated subtask title from "${oldTitle}" to "${editingSubtaskTitle}"`;
+          return syncProjectActivity(updatedProject, [
+            { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: loggedInUser },
+            ...project.recentActivity
+          ]);
+        })
       );
     }
     setEditingSubtask(null);
@@ -1252,11 +1374,18 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
   const saveExecSummary = (projectId) => {
     setProjects(prevProjects =>
-      prevProjects.map(project =>
-        project.id === projectId
-          ? { ...project, executiveUpdate: execSummaryDraft }
-          : project
-      )
+      prevProjects.map(project => {
+        if (project.id !== projectId) return project;
+        if (project.executiveUpdate === execSummaryDraft) return project; // No change
+
+        const updatedProject = { ...project, executiveUpdate: execSummaryDraft };
+
+        const activityNote = `Updated executive summary to: ${execSummaryDraft}`;
+        return syncProjectActivity(updatedProject, [
+          { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: loggedInUser },
+          ...project.recentActivity
+        ]);
+      })
     );
     setEditingExecSummary(null);
     setExecSummaryDraft('');
@@ -1298,11 +1427,16 @@ Write a professional executive summary that highlights the project's current sta
       });
 
       setProjects(prevProjects =>
-        prevProjects.map(p =>
-          p.id === projectId
-            ? { ...p, executiveUpdate: response.content }
-            : p
-        )
+        prevProjects.map(p => {
+          if (p.id !== projectId) return p;
+
+          const updatedProject = { ...p, executiveUpdate: response.content };
+          const activityNote = `Generated executive summary with AI: ${response.content}`;
+          return syncProjectActivity(updatedProject, [
+            { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: 'AI Assistant' },
+            ...p.recentActivity
+          ]);
+        })
       );
     } catch (error) {
       console.error('Error generating summary:', error);
@@ -1320,11 +1454,17 @@ Write a professional executive summary that highlights the project's current sta
       if (editingExecSummary) {
         const projectId = editingExecSummary;
         setProjects(prevProjects =>
-          prevProjects.map(project =>
-            project.id === projectId
-              ? { ...project, executiveUpdate: execSummaryDraft }
-              : project
-          )
+          prevProjects.map(project => {
+            if (project.id !== projectId) return project;
+            if (project.executiveUpdate === execSummaryDraft) return project; // No change
+
+            const updatedProject = { ...project, executiveUpdate: execSummaryDraft };
+            const activityNote = `Updated executive summary to: ${execSummaryDraft}`;
+            return syncProjectActivity(updatedProject, [
+              { id: generateActivityId(), date: new Date().toISOString(), note: activityNote, author: loggedInUser },
+              ...project.recentActivity
+            ]);
+          })
         );
         setEditingExecSummary(null);
         setExecSummaryDraft('');
