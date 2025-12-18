@@ -416,6 +416,7 @@ class SubtaskBase(SQLModel):
 class Subtask(SubtaskBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     task_id: Optional[str] = Field(default=None, foreign_key="task.id")
+    assignee_id: Optional[str] = Field(default=None, foreign_key="person.id")
     task: "Task" = Relationship(back_populates="subtasks")
     assignee: Optional["Person"] = Relationship(sa_relationship_kwargs={"lazy": "joined"})
 
@@ -436,6 +437,7 @@ class TaskBase(SQLModel):
 class Task(TaskBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     project_id: Optional[str] = Field(default=None, foreign_key="project.id")
+    assignee_id: Optional[str] = Field(default=None, foreign_key="person.id")
     project: "Project" = Relationship(back_populates="plan")
     assignee: Optional["Person"] = Relationship(sa_relationship_kwargs={"lazy": "joined"})
     subtasks: list[Subtask] = Relationship(
@@ -458,6 +460,8 @@ class ActivityBase(SQLModel):
 class Activity(ActivityBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     project_id: Optional[str] = Field(default=None, foreign_key="project.id")
+    # Store task context as JSON for comments on tasks/subtasks
+    task_context: Optional[str] = Field(default=None, sa_column=Column(String))
     project: "Project" = Relationship(back_populates="recentActivity")
     author_person: Optional["Person"] = Relationship(sa_relationship_kwargs={"lazy": "joined"})
 
@@ -570,19 +574,35 @@ def log_action(
     logger.info(f"Action logged: {action} on {entity_type}:{entity_id}")
 
 
+class AssigneePayload(BaseModel):
+    """Assignee information - can include id, name, or both"""
+    id: Optional[str] = None
+    name: Optional[str] = None
+    team: Optional[str] = None
+
+
+class TaskContextPayload(BaseModel):
+    """Task context for comments on tasks/subtasks"""
+    taskId: str
+    subtaskId: Optional[str] = None
+    taskTitle: str
+    subtaskTitle: Optional[str] = None
+
+
 class SubtaskPayload(SubtaskBase):
     id: Optional[str] = None
-    assignee: Optional[PersonReference] = None
+    assignee: Optional[AssigneePayload] = None
 
 
 class TaskPayload(TaskBase):
     id: Optional[str] = None
     subtasks: List[SubtaskPayload] = Field(default_factory=list)
-    assignee: Optional[PersonReference] = None
+    assignee: Optional[AssigneePayload] = None
 
 
 class ActivityPayload(ActivityBase):
     id: Optional[str] = None
+    taskContext: Optional[TaskContextPayload] = None
     authorId: Optional[str] = None
     authorEmail: Optional[str] = None
 
@@ -835,6 +855,17 @@ def get_session():
         yield session
 
 
+def serialize_person(person: Optional["Person"]) -> Optional[dict]:
+    """Serialize a person object for inclusion in task/subtask assignee"""
+    if person is None:
+        return None
+    return {
+        "id": person.id,
+        "name": person.name,
+        "team": person.team,
+    }
+
+
 def serialize_subtask(subtask: Subtask) -> dict:
     return {
         "id": subtask.id,
@@ -861,12 +892,20 @@ def serialize_task(task: Task) -> dict:
 
 
 def serialize_activity(activity: Activity, person_index: PersonIndex | None = None) -> dict:
+    import json
+    task_context = None
+    if activity.task_context:
+        try:
+            task_context = json.loads(activity.task_context)
+        except (json.JSONDecodeError, TypeError):
+            task_context = None
     person = person_index.resolve(name=activity.author) if person_index else None
 
     return {
         "id": activity.id,
         "date": activity.date,
         "note": activity.note,
+        "taskContext": task_context,
         "author": activity.author or (activity.author_person.name if activity.author_person else None),
         "authorId": activity.author_id,
         "authorPerson": serialize_person(activity.author_person) if activity.author_person else None,
@@ -981,24 +1020,72 @@ def serialize_project(project: Project) -> dict:
     }
 
 
+def resolve_assignee_id(session: Session, assignee_payload: Optional[AssigneePayload]) -> Optional[str]:
+    """Resolve an assignee payload to a person ID, looking up by id or name"""
+    if assignee_payload is None:
+        return None
+
+    # If ID is provided, verify it exists
+    if assignee_payload.id:
+        person = session.exec(select(Person).where(Person.id == assignee_payload.id)).first()
+        if person:
+            return person.id
+
+    # If name is provided, look up by name
+    if assignee_payload.name:
+        person = session.exec(select(Person).where(
+            func.lower(Person.name) == assignee_payload.name.lower()
+        )).first()
+        if person:
+            return person.id
+        # Create new person if not found
+        new_person = Person(
+            id=generate_id("person"),
+            name=assignee_payload.name,
+            team=assignee_payload.team or "Contributor"
+        )
+        session.add(new_person)
+        session.commit()
+        session.refresh(new_person)
+        return new_person.id
+
+    return None
+
 def serialize_project_with_people(session: Session, project: Project) -> dict:
     person_index = build_person_index(session)
     return serialize_project(project, person_index)
 
 
-def apply_task_payload(task: Task, payload: TaskPayload) -> Task:
+def apply_task_payload(task: Task, payload: TaskPayload, session: Session | None = None) -> Task:
     task.title = payload.title
     task.status = payload.status
     task.dueDate = payload.dueDate
     task.completedDate = payload.completedDate
-    if session:
-        assignee = resolve_person_reference(session, payload.assignee or payload.assignee_id)
-        task.assignee = assignee
-        task.assignee_id = assignee.id if assignee else None
+
+    # --- Task assignee ---
+    if session is not None:
+        # If payload explicitly includes the assignee field and it is None, clear it.
+        if hasattr(payload, "assignee") and payload.assignee is None:
+            task.assignee = None
+            task.assignee_id = None
+        else:
+            ref = None
+            if hasattr(payload, "assignee") and payload.assignee:
+                ref = payload.assignee
+            elif hasattr(payload, "assignee_id") and payload.assignee_id:
+                ref = payload.assignee_id
+
+            if ref is not None:
+                assignee = resolve_person_reference(session, ref)
+                task.assignee = assignee
+                task.assignee_id = assignee.id if assignee else None
+
+    # --- Subtasks ---
     if task.subtasks is None:
         task.subtasks = []
     else:
         task.subtasks.clear()
+
     for subtask_payload in payload.subtasks:
         subtask = Subtask(
             id=subtask_payload.id or generate_id("subtask"),
@@ -1008,11 +1095,26 @@ def apply_task_payload(task: Task, payload: TaskPayload) -> Task:
             completedDate=subtask_payload.completedDate,
             assignee_id=subtask_payload.assignee_id,
         )
-        if session:
-            assignee = resolve_person_reference(session, subtask_payload.assignee or subtask_payload.assignee_id)
-            subtask.assignee = assignee
-            subtask.assignee_id = assignee.id if assignee else None
+
+        if session is not None:
+            # Same explicit-clear behavior for subtasks if 'assignee' exists
+            if hasattr(subtask_payload, "assignee") and subtask_payload.assignee is None:
+                subtask.assignee = None
+                subtask.assignee_id = None
+            else:
+                ref = None
+                if hasattr(subtask_payload, "assignee") and subtask_payload.assignee:
+                    ref = subtask_payload.assignee
+                elif hasattr(subtask_payload, "assignee_id") and subtask_payload.assignee_id:
+                    ref = subtask_payload.assignee_id
+
+                if ref is not None:
+                    assignee = resolve_person_reference(session, ref)
+                    subtask.assignee = assignee
+                    subtask.assignee_id = assignee.id if assignee else None
+
         task.subtasks.append(subtask)
+
     return task
 
 
@@ -1120,13 +1222,24 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
         key=lambda activity: activity.date or "",
     )
 
+    import json as json_module
     for activity_payload in activity_payloads:
+        # Serialize taskContext to JSON string if present
+        task_context_str = None
+        if activity_payload.taskContext is not None:
+            task_context_str = json_module.dumps({
+                "taskId": activity_payload.taskContext.taskId,
+                "subtaskId": activity_payload.taskContext.subtaskId,
+                "taskTitle": activity_payload.taskContext.taskTitle,
+                "subtaskTitle": activity_payload.taskContext.subtaskTitle,
+            })
         author_person = resolve_person_reference(session, activity_payload.author or activity_payload.author_id)
         author_name = activity_payload.author or (author_person.name if author_person else None)
         activity = Activity(
             id=activity_payload.id or generate_id("activity"),
             date=activity_payload.date,
             note=activity_payload.note,
+            task_context=task_context_str,
             author=author_name,
             author_id=author_person.id if author_person else activity_payload.author_id,
         )
@@ -1140,6 +1253,26 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     return load_project(session, project.id)
 
 
+def add_data_change_activity(session: Session, project_id: str, author: str, note: str) -> Activity:
+    """Add an activity entry for a data change to the project's activity feed"""
+    activity = Activity(
+        id=generate_id("activity"),
+        date=datetime.utcnow().isoformat(),
+        note=note,
+        author=author,
+        project_id=project_id,
+    )
+    session.add(activity)
+    session.commit()
+
+    # Normalize project activity to update lastUpdate
+    project = session.exec(select(Project).where(Project.id == project_id)).first()
+    if project:
+        normalize_project_activity(project)
+        session.add(project)
+        session.commit()
+
+    return activity
 def run_people_backfill(session: Session) -> None:
     migration_key = "people-backfill-v1"
     if session.get(MigrationState, migration_key):
@@ -1479,8 +1612,51 @@ def get_project(project_id: str, session: Session = Depends(get_session)):
 def update_project(project_id: str, payload: ProjectPayload, request: Request, session: Session = Depends(get_session)):
     if payload.id and payload.id != project_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Project ID mismatch")
+
+    # Get existing project to track changes
+    existing = session.exec(select(Project).where(Project.id == project_id)).first()
+    old_values = {}
+    if existing:
+        old_values = {
+            "name": existing.name,
+            "status": existing.status,
+            "priority": existing.priority,
+            "progress": existing.progress,
+            "description": existing.description,
+            "executiveUpdate": existing.executiveUpdate,
+            "startDate": existing.startDate,
+            "targetDate": existing.targetDate,
+        }
+
     payload.id = project_id
     project = upsert_project(session, payload)
+
+    # Build activity description with specific changes
+    changes = []
+    if old_values:
+        if old_values["name"] != project.name:
+            changes.append(f"name to: {project.name}")
+        if old_values["status"] != project.status:
+            changes.append(f"status to: {project.status}")
+        if old_values["priority"] != project.priority:
+            changes.append(f"priority to: {project.priority}")
+        if old_values["progress"] != project.progress:
+            changes.append(f"progress to: {project.progress}%")
+        if old_values["description"] != project.description:
+            changes.append(f"description to: {project.description[:100]}{'...' if len(project.description or '') > 100 else ''}")
+        if old_values["executiveUpdate"] != project.executiveUpdate:
+            changes.append(f"executive update to: {(project.executiveUpdate or '')[:100]}{'...' if len(project.executiveUpdate or '') > 100 else ''}")
+        if old_values["startDate"] != project.startDate:
+            changes.append(f"start date to: {project.startDate or 'none'}")
+        if old_values["targetDate"] != project.targetDate:
+            changes.append(f"target date to: {project.targetDate or 'none'}")
+
+        if changes:
+            add_data_change_activity(
+                session, project_id, "System",
+                f"Updated project: {', '.join(changes)}"
+            )
+
     log_action(session, "update_project", "project", project_id, {"name": project.name, "status": project.status}, request)
     return serialize_project_with_people(session, project)
 
@@ -1511,6 +1687,17 @@ def create_task(project_id: str, payload: TaskPayload, request: Request, session
     session.add(task)
     session.commit()
     session.refresh(task)
+
+    # Add activity for task creation
+    assignee_name = None
+    if task.assignee_id:
+        assignee = session.exec(select(Person).where(Person.id == task.assignee_id)).first()
+        assignee_name = assignee.name if assignee else None
+    add_data_change_activity(
+        session, project_id, "System",
+        f"Created task: {task.title}" + (f" (assigned to {assignee_name})" if assignee_name else "")
+    )
+
     log_action(session, "create_task", "task", task.id, {"project_id": project_id, "title": task.title}, request)
     return serialize_project_with_people(session, load_project(session, project_id))
 
@@ -1521,10 +1708,34 @@ def update_task(project_id: str, task_id: str, payload: TaskPayload, request: Re
     task = session.exec(select(Task).where(Task.id == task_id, Task.project_id == project.id)).first()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    # Track changes for activity feed
+    changes = []
     old_status = task.status
     apply_task_payload(task, payload, session)
     session.add(task)
     session.commit()
+
+    # Build activity description with specific changes
+    if old_title != task.title:
+        changes.append(f"title to: {task.title}")
+    if old_status != task.status:
+        changes.append(f"status from {old_status} to {task.status}")
+    if old_due_date != task.dueDate:
+        changes.append(f"due date to: {task.dueDate or 'none'}")
+    if old_assignee_id != task.assignee_id:
+        if task.assignee_id:
+            new_assignee = session.exec(select(Person).where(Person.id == task.assignee_id)).first()
+            changes.append(f"assigned to {new_assignee.name if new_assignee else 'unknown'}")
+        else:
+            changes.append("unassigned")
+
+    if changes:
+        add_data_change_activity(
+            session, project_id, "System",
+            f"Updated task '{task.title}': {', '.join(changes)}"
+        )
+
     log_action(session, "update_task", "task", task_id, {"project_id": project_id, "title": task.title, "old_status": old_status, "new_status": task.status}, request)
     return serialize_project_with_people(session, load_project(session, project_id))
 
@@ -1536,8 +1747,13 @@ def remove_task(project_id: str, task_id: str, request: Request, session: Sessio
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     deleted_data = {"project_id": project_id, "title": task.title}
+    task_title = task.title
     session.delete(task)
     session.commit()
+
+    # Add activity for task deletion
+    add_data_change_activity(session, project_id, "System", f"Deleted task: {task_title}")
+
     log_action(session, "delete_task", "task", task_id, deleted_data, request)
     return None
 
@@ -1562,6 +1778,17 @@ def create_subtask(project_id: str, task_id: str, payload: SubtaskPayload, reque
         subtask.assignee = assignee
     session.add(subtask)
     session.commit()
+
+    # Add activity for subtask creation
+    assignee_name = None
+    if subtask.assignee_id:
+        assignee = session.exec(select(Person).where(Person.id == subtask.assignee_id)).first()
+        assignee_name = assignee.name if assignee else None
+    add_data_change_activity(
+        session, project_id, "System",
+        f"Created subtask '{subtask.title}' in task '{task.title}'" + (f" (assigned to {assignee_name})" if assignee_name else "")
+    )
+
     log_action(session, "create_subtask", "subtask", subtask.id, {"project_id": project_id, "task_id": task_id, "title": subtask.title}, request)
     return serialize_project_with_people(session, load_project(session, project_id))
 
@@ -1572,16 +1799,50 @@ def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: Subt
     subtask = session.exec(select(Subtask).where(Subtask.id == subtask_id, Subtask.task_id == task_id)).first()
     if not subtask:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+
+    # Get parent task for activity message
+    task = session.exec(select(Task).where(Task.id == task_id)).first()
+    task_title = task.title if task else "Unknown Task"
+
+    # Track changes for activity feed
+    changes = []
     old_status = subtask.status
     assignee = resolve_person_reference(session, payload.assignee or payload.assignee_id)
     subtask.title = payload.title
     subtask.status = payload.status
     subtask.dueDate = payload.dueDate
     subtask.completedDate = payload.completedDate
-    subtask.assignee = assignee
-    subtask.assignee_id = assignee.id if assignee else payload.assignee_id
+    # If caller explicitly provides assignee=None, treat that as "clear", regardless of assignee_id.
+    if hasattr(payload, "assignee") and payload.assignee is None:
+        subtask.assignee = None
+        subtask.assignee_id = None
+    else:
+        subtask.assignee = assignee
+        subtask.assignee_id = assignee.id if assignee else payload.assignee_id
+    
     session.add(subtask)
     session.commit()
+
+    # Build activity description with specific changes
+    if old_title != subtask.title:
+        changes.append(f"title to: {subtask.title}")
+    if old_status != subtask.status:
+        changes.append(f"status from {old_status} to {subtask.status}")
+    if old_due_date != subtask.dueDate:
+        changes.append(f"due date to: {subtask.dueDate or 'none'}")
+    if old_assignee_id != subtask.assignee_id:
+        if subtask.assignee_id:
+            new_assignee = session.exec(select(Person).where(Person.id == subtask.assignee_id)).first()
+            changes.append(f"assigned to {new_assignee.name if new_assignee else 'unknown'}")
+        else:
+            changes.append("unassigned")
+
+    if changes:
+        add_data_change_activity(
+            session, project_id, "System",
+            f"Updated subtask '{subtask.title}' in task '{task_title}': {', '.join(changes)}"
+        )
+
     log_action(session, "update_subtask", "subtask", subtask_id, {"project_id": project_id, "task_id": task_id, "title": subtask.title, "old_status": old_status, "new_status": subtask.status}, request)
     return serialize_project_with_people(session, load_project(session, project_id))
 
@@ -1592,16 +1853,38 @@ def delete_subtask(project_id: str, task_id: str, subtask_id: str, request: Requ
     subtask = session.exec(select(Subtask).where(Subtask.id == subtask_id, Subtask.task_id == task_id)).first()
     if not subtask:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+
+    # Get parent task for activity message
+    task = session.exec(select(Task).where(Task.id == task_id)).first()
+    task_title = task.title if task else "Unknown Task"
+
     deleted_data = {"project_id": project_id, "task_id": task_id, "title": subtask.title}
+    subtask_title = subtask.title
     session.delete(subtask)
     session.commit()
+
+    # Add activity for subtask deletion
+    add_data_change_activity(session, project_id, "System", f"Deleted subtask '{subtask_title}' from task '{task_title}'")
+
     log_action(session, "delete_subtask", "subtask", subtask_id, deleted_data, request)
     return None
 
 
 @app.post("/projects/{project_id}/activities")
 def create_activity(project_id: str, payload: ActivityPayload, request: Request, session: Session = Depends(get_session)):
+    import json as json_module
     project = load_project(session, project_id)
+
+    # Serialize taskContext to JSON string if present
+    task_context_str = None
+    if payload.taskContext is not None:
+        task_context_str = json_module.dumps({
+            "taskId": payload.taskContext.taskId,
+            "subtaskId": payload.taskContext.subtaskId,
+            "taskTitle": payload.taskContext.taskTitle,
+            "subtaskTitle": payload.taskContext.subtaskTitle,
+        })
+
     author_person = resolve_person_reference(session, payload.author or payload.author_id)
     author_name = payload.author or (author_person.name if author_person else "Unknown")
     activity = Activity(
@@ -1611,6 +1894,7 @@ def create_activity(project_id: str, payload: ActivityPayload, request: Request,
         author=author_name,
         author_id=author_person.id if author_person else payload.author_id,
         project_id=project.id,
+        task_context=task_context_str,
     )
     session.add(activity)
     session.commit()
@@ -1624,6 +1908,7 @@ def create_activity(project_id: str, payload: ActivityPayload, request: Request,
 
 @app.put("/projects/{project_id}/activities/{activity_id}")
 def update_activity(project_id: str, activity_id: str, payload: ActivityPayload, request: Request, session: Session = Depends(get_session)):
+    import json as json_module
     load_project(session, project_id)
     activity = session.exec(select(Activity).where(Activity.id == activity_id, Activity.project_id == project_id)).first()
     if not activity:
@@ -1631,6 +1916,14 @@ def update_activity(project_id: str, activity_id: str, payload: ActivityPayload,
     author_person = resolve_person_reference(session, payload.author or payload.author_id)
     activity.note = payload.note
     activity.date = payload.date
+    # Update taskContext if provided
+    if payload.taskContext is not None:
+        activity.task_context = json_module.dumps({
+            "taskId": payload.taskContext.taskId,
+            "subtaskId": payload.taskContext.subtaskId,
+            "taskTitle": payload.taskContext.taskTitle,
+            "subtaskTitle": payload.taskContext.subtaskTitle,
+        })
     activity.author = payload.author or (author_person.name if author_person else "Unknown")
     activity.author_id = author_person.id if author_person else payload.author_id
     session.add(activity)
