@@ -859,17 +859,23 @@ def configured_frontend_origins() -> tuple[list[str], str | None]:
 
 app = FastAPI(title="Manity Portfolio API")
 
+# CORS configuration
+# Note: allow_credentials=True with allow_origins=["*"] violates CORS spec.
+# When credentials are needed, the server must echo the specific origin.
+# Setting allow_credentials=False allows the wildcard origin to work properly.
+# If cookie/auth credentials are needed, specify explicit origins in CORS_ORIGINS env var.
+
 allowed_origins, allowed_origin_regex = configured_frontend_origins()
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=allowed_origins,
     allow_origin_regex=allowed_origin_regex,
-    allow_credentials=True,
+    allow_credentials=False,   # ✅ no cookies, no sessions
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
-
 
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
