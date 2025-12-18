@@ -865,7 +865,15 @@ app = FastAPI(title="Manity Portfolio API")
 # Setting allow_credentials=False allows the wildcard origin to work properly.
 # If cookie/auth credentials are needed, specify explicit origins in CORS_ORIGINS env var.
 
+# Echo the requesting origin when possible so browsers see a concrete value
+# instead of "*". When an explicit wildcard is requested, fall back to a
+# permissive regex that still mirrors the Origin header while keeping
+# allow_credentials disabled.
 allowed_origins, allowed_origin_regex = configured_frontend_origins()
+
+if "*" in allowed_origins and not allowed_origin_regex:
+    allowed_origin_regex = ".*"
+    allowed_origins = []
 
 app.add_middleware(
     CORSMiddleware,
