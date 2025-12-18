@@ -345,6 +345,10 @@ def resolve_person_reference(session: Session, reference) -> "Person | None":
         person_id = reference.id
         name = reference.name
         team = reference.team
+    elif isinstance(reference, AssigneePayload):
+        person_id = reference.id
+        name = reference.name
+        team = reference.team
     elif isinstance(reference, PersonPayload):
         person_id = reference.id
         name = reference.name
@@ -603,7 +607,6 @@ class TaskPayload(TaskBase):
 class ActivityPayload(ActivityBase):
     id: Optional[str] = None
     taskContext: Optional[TaskContextPayload] = None
-    authorId: Optional[str] = None
     authorEmail: Optional[str] = None
 
 
@@ -899,16 +902,24 @@ def serialize_activity(activity: Activity, person_index: PersonIndex | None = No
             task_context = json.loads(activity.task_context)
         except (json.JSONDecodeError, TypeError):
             task_context = None
-    person = person_index.resolve(name=activity.author) if person_index else None
+
+    resolved_person: Person | None = None
+    if activity.author_person:
+        resolved_person = activity.author_person
+    elif person_index:
+        resolved_person = person_index.resolve(
+            person_id=activity.author_id,
+            name=activity.author,
+        )
 
     return {
         "id": activity.id,
         "date": activity.date,
         "note": activity.note,
         "taskContext": task_context,
-        "author": activity.author or (activity.author_person.name if activity.author_person else None),
-        "authorId": activity.author_id,
-        "authorPerson": serialize_person(activity.author_person) if activity.author_person else None,
+        "author": (resolved_person.name if resolved_person else None) or activity.author,
+        "authorId": resolved_person.id if resolved_person else activity.author_id,
+        "authorPerson": serialize_person(resolved_person) if resolved_person else None,
     }
 
 
@@ -1000,7 +1011,7 @@ def migrate_people_links(session: Session) -> None:
         session.commit()
 
 
-def serialize_project(project: Project) -> dict:
+def serialize_project(project: Project, person_index: PersonIndex | None = None) -> dict:
     normalize_project_activity(project)
 
     return {
@@ -1149,7 +1160,7 @@ def resolve_activity_author(session: Session, activity_payload: "ActivityPayload
         return None
 
     author_email = getattr(activity_payload, "authorEmail", None)
-    author_id = getattr(activity_payload, "authorId", None)
+    author_id = activity_payload.author_id
 
     return upsert_person_from_details(
         session,
@@ -1233,8 +1244,8 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
                 "taskTitle": activity_payload.taskContext.taskTitle,
                 "subtaskTitle": activity_payload.taskContext.subtaskTitle,
             })
-        author_person = resolve_person_reference(session, activity_payload.author or activity_payload.author_id)
-        author_name = activity_payload.author or (author_person.name if author_person else None)
+        author_person = resolve_person_reference(session, activity_payload.author_id or activity_payload.author)
+        author_name = (author_person.name if author_person else None) or activity_payload.author
         activity = Activity(
             id=activity_payload.id or generate_id("activity"),
             date=activity_payload.date,
@@ -1255,11 +1266,13 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
 
 def add_data_change_activity(session: Session, project_id: str, author: str, note: str) -> Activity:
     """Add an activity entry for a data change to the project's activity feed"""
+    author_person = resolve_person_reference(session, author)
     activity = Activity(
         id=generate_id("activity"),
         date=datetime.utcnow().isoformat(),
         note=note,
-        author=author,
+        author=author_person.name if author_person else author,
+        author_id=author_person.id if author_person else None,
         project_id=project_id,
     )
     session.add(activity)
@@ -1712,6 +1725,9 @@ def update_task(project_id: str, task_id: str, payload: TaskPayload, request: Re
     # Track changes for activity feed
     changes = []
     old_status = task.status
+    old_title = task.title
+    old_due_date = task.dueDate
+    old_assignee_id = task.assignee_id
     apply_task_payload(task, payload, session)
     session.add(task)
     session.commit()
@@ -1807,6 +1823,9 @@ def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: Subt
     # Track changes for activity feed
     changes = []
     old_status = subtask.status
+    old_title = subtask.title
+    old_due_date = subtask.dueDate
+    old_assignee_id = subtask.assignee_id
     assignee = resolve_person_reference(session, payload.assignee or payload.assignee_id)
     subtask.title = payload.title
     subtask.status = payload.status
@@ -1885,8 +1904,8 @@ def create_activity(project_id: str, payload: ActivityPayload, request: Request,
             "subtaskTitle": payload.taskContext.subtaskTitle,
         })
 
-    author_person = resolve_person_reference(session, payload.author or payload.author_id)
-    author_name = payload.author or (author_person.name if author_person else "Unknown")
+    author_person = resolve_person_reference(session, payload.author_id or payload.author)
+    author_name = (author_person.name if author_person else None) or payload.author or "Unknown"
     activity = Activity(
         id=payload.id or generate_id("activity"),
         date=payload.date,
@@ -1913,10 +1932,11 @@ def update_activity(project_id: str, activity_id: str, payload: ActivityPayload,
     activity = session.exec(select(Activity).where(Activity.id == activity_id, Activity.project_id == project_id)).first()
     if not activity:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
-    author_person = resolve_person_reference(session, payload.author or payload.author_id)
+    author_person = resolve_person_reference(session, payload.author_id or payload.author)
     activity.note = payload.note
     activity.date = payload.date
     # Update taskContext if provided
+    fields_set = getattr(payload, "model_fields_set", None) or getattr(payload, "__fields_set__", set())
     if payload.taskContext is not None:
         activity.task_context = json_module.dumps({
             "taskId": payload.taskContext.taskId,
@@ -1924,7 +1944,9 @@ def update_activity(project_id: str, activity_id: str, payload: ActivityPayload,
             "taskTitle": payload.taskContext.taskTitle,
             "subtaskTitle": payload.taskContext.subtaskTitle,
         })
-    activity.author = payload.author or (author_person.name if author_person else "Unknown")
+    elif "taskContext" in fields_set:
+        activity.task_context = None
+    activity.author = (author_person.name if author_person else None) or payload.author or "Unknown"
     activity.author_id = author_person.id if author_person else payload.author_id
     session.add(activity)
     session.commit()
