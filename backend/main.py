@@ -522,12 +522,20 @@ class ChatRequest(BaseModel):
 
 app = FastAPI(title="Manity Portfolio API")
 
+# CORS configuration
+# Note: allow_credentials=True with allow_origins=["*"] violates CORS spec.
+# When credentials are needed, the server must echo the specific origin.
+# Setting allow_credentials=False allows the wildcard origin to work properly.
+# If cookie/auth credentials are needed, specify explicit origins in CORS_ORIGINS env var.
+CORS_ORIGINS = os.getenv("CORS_ORIGINS", "").split(",") if os.getenv("CORS_ORIGINS") else []
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=CORS_ORIGINS if CORS_ORIGINS else ["*"],
+    allow_credentials=bool(CORS_ORIGINS),  # Only enable credentials when specific origins are set
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 
