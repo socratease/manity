@@ -309,3 +309,18 @@ def test_email_settings_and_sending(tmp_path, monkeypatch):
         assert message["from"] == "bot@example.com"
         assert message["subject"] == "Status"
         assert "Update ready" in message["body"]
+
+
+def test_cors_allows_default_local_origins():
+    with TestClient(main.app) as client:
+        response = client.get("/", headers={"Origin": "http://localhost:3000"})
+
+        assert response.headers.get("access-control-allow-origin") == "http://localhost:3000"
+        assert response.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_cors_blocks_unlisted_origins():
+    with TestClient(main.app) as client:
+        response = client.get("/", headers={"Origin": "http://untrusted.example.com"})
+
+        assert response.headers.get("access-control-allow-origin") is None

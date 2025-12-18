@@ -834,11 +834,37 @@ class ChatRequest(BaseModel):
     response_format: Optional[dict] = None
 
 
+FRONTEND_ORIGINS_ENV = "FRONTEND_ORIGINS"
+FRONTEND_ORIGIN_REGEX_ENV = "FRONTEND_ORIGIN_REGEX"
+
+
+def parse_origins(value: str | None) -> list[str]:
+    return [origin.strip() for origin in (value or "").split(",") if origin.strip()]
+
+
+def configured_frontend_origins() -> tuple[list[str], str | None]:
+    origins = parse_origins(os.getenv(FRONTEND_ORIGINS_ENV))
+    origin_regex = os.getenv(FRONTEND_ORIGIN_REGEX_ENV) or None
+
+    if not origins and not origin_regex:
+        origins = [
+            "http://localhost:3000",
+            "http://localhost:5173",
+            "http://127.0.0.1:3000",
+            "http://127.0.0.1:5173",
+        ]
+
+    return origins, origin_regex
+
+
 app = FastAPI(title="Manity Portfolio API")
+
+allowed_origins, allowed_origin_regex = configured_frontend_origins()
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=allowed_origins,
+    allow_origin_regex=allowed_origin_regex,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"]
