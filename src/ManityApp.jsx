@@ -24,7 +24,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const recentlyCompletedRef = useRef(null);
   const nextUpRef = useRef(null);
 
-  const { projects, setProjects, people, createPerson, updatePerson, deletePerson, sendEmail, updateProject, addActivity, updateActivity: apiUpdateActivity, deleteActivity: apiDeleteActivity, updateTask, updateSubtask, addTask, addSubtask, deleteTask: apiDeleteTask, deleteSubtask: apiDeleteSubtask } = usePortfolioData();
+  const { projects, setProjects, people, createPerson, updatePerson, deletePerson, sendEmail, updateProject, addActivity, updateActivity: apiUpdateActivity, deleteActivity: apiDeleteActivity, updateTask, updateSubtask, addTask, addSubtask, deleteTask: apiDeleteTask, deleteSubtask: apiDeleteSubtask, createProject, deleteProject: apiDeleteProject } = usePortfolioData();
 
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
@@ -614,19 +614,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         // Only handle Ctrl+Enter when in textarea to save and exit edit mode
         if (e.ctrlKey && e.key === 'Enter' && isEditingSlide && editingExecSummary) {
           e.preventDefault();
-          // Explicitly save changes
-          const projectId = editingExecSummary;
-          setProjects(prevProjects =>
-            prevProjects.map(project =>
-              project.id === projectId
-                ? { ...project, executiveUpdate: execSummaryDraft }
-                : project
-            )
-          );
-          // Exit edit mode
+          // Save changes and exit edit mode (saveExecSummary handles cleanup)
+          saveExecSummary(editingExecSummary);
           setIsEditingSlide(false);
-          setEditingExecSummary(null);
-          setExecSummaryDraft('');
         }
         // Handle Esc to cancel edit mode without saving
         if (e.key === 'Escape' && isEditingSlide) {
@@ -645,19 +635,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       // Ctrl+Enter: Save and exit edit mode (when focus is outside textarea)
       if (e.ctrlKey && e.key === 'Enter' && isEditingSlide && editingExecSummary) {
         e.preventDefault();
-        // Explicitly save changes
-        const projectId = editingExecSummary;
-        setProjects(prevProjects =>
-          prevProjects.map(project =>
-            project.id === projectId
-              ? { ...project, executiveUpdate: execSummaryDraft }
-              : project
-          )
-        );
-        // Exit edit mode
+        // Save changes and exit edit mode (saveExecSummary handles cleanup)
+        saveExecSummary(editingExecSummary);
         setIsEditingSlide(false);
-        setEditingExecSummary(null);
-        setExecSummaryDraft('');
         return;
       }
 
@@ -760,18 +740,18 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, [editingAssignee]);
 
-  const handleDailyCheckin = (projectId) => {
+  const handleDailyCheckin = async (projectId) => {
     if (checkinNote.trim()) {
-      setProjects(prevProjects =>
-        prevProjects.map(p =>
-          p.id === projectId
-            ? syncProjectActivity(p, [
-                { id: generateActivityId(), date: new Date().toISOString(), note: checkinNote, author: loggedInUser },
-                ...p.recentActivity
-              ])
-            : p
-        )
-      );
+      try {
+        await addActivity(projectId, {
+          id: generateActivityId(),
+          date: new Date().toISOString(),
+          note: checkinNote,
+          author: loggedInUser
+        });
+      } catch (error) {
+        console.error('Failed to add daily checkin:', error);
+      }
       setCheckinNote('');
 
       // Move to next project the user is a contributor on, or close if done
@@ -785,18 +765,18 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }
   };
 
-  const handleAddUpdate = () => {
+  const handleAddUpdate = async () => {
     if (newUpdate.trim() && viewingProjectId) {
-      setProjects(prevProjects =>
-        prevProjects.map(p =>
-          p.id === viewingProjectId
-            ? syncProjectActivity(p, [
-                { id: generateActivityId(), date: new Date().toISOString(), note: newUpdate, author: loggedInUser },
-                ...p.recentActivity
-              ])
-            : p
-        )
-      );
+      try {
+        await addActivity(viewingProjectId, {
+          id: generateActivityId(),
+          date: new Date().toISOString(),
+          note: newUpdate,
+          author: loggedInUser
+        });
+      } catch (error) {
+        console.error('Failed to add update:', error);
+      }
       setNewUpdate('');
     }
   };
@@ -1395,14 +1375,31 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     setExecSummaryDraft(currentDescription || '');
   };
 
-  const saveExecSummary = (projectId) => {
-    setProjects(prevProjects =>
-      prevProjects.map(project =>
-        project.id === projectId
-          ? { ...project, executiveUpdate: execSummaryDraft }
-          : project
-      )
-    );
+  const saveExecSummary = async (projectId) => {
+    const project = projects.find(p => p.id === projectId);
+    if (!project) return;
+
+    const oldSummary = project.executiveUpdate || '';
+    const newSummary = execSummaryDraft;
+
+    if (oldSummary !== newSummary) {
+      try {
+        await updateProject(projectId, {
+          ...project,
+          executiveUpdate: newSummary
+        });
+
+        await addActivity(projectId, {
+          id: generateActivityId(),
+          date: new Date().toISOString(),
+          note: `Updated executive summary to: "${newSummary.slice(0, 100)}${newSummary.length > 100 ? '...' : ''}"`,
+          author: loggedInUser
+        });
+      } catch (error) {
+        console.error('Failed to save executive summary:', error);
+      }
+    }
+
     setEditingExecSummary(null);
     setExecSummaryDraft('');
   };
@@ -1442,13 +1439,20 @@ Write a professional executive summary that highlights the project's current sta
         ]
       });
 
-      setProjects(prevProjects =>
-        prevProjects.map(p =>
-          p.id === projectId
-            ? { ...p, executiveUpdate: response.content }
-            : p
-        )
-      );
+      const newSummary = response.content;
+
+      // Persist to backend
+      await updateProject(projectId, {
+        ...project,
+        executiveUpdate: newSummary
+      });
+
+      await addActivity(projectId, {
+        id: generateActivityId(),
+        date: new Date().toISOString(),
+        note: `Generated AI executive summary: "${newSummary.slice(0, 100)}${newSummary.length > 100 ? '...' : ''}"`,
+        author: loggedInUser
+      });
     } catch (error) {
       console.error('Error generating summary:', error);
     } finally {
@@ -1456,23 +1460,14 @@ Write a professional executive summary that highlights the project's current sta
     }
   };
 
-  const toggleSlideEditMode = () => {
+  const toggleSlideEditMode = async () => {
     const wasEditing = isEditingSlide;
     setIsEditingSlide(prev => !prev);
 
     if (wasEditing) {
       // Save exec summary when exiting edit mode
       if (editingExecSummary) {
-        const projectId = editingExecSummary;
-        setProjects(prevProjects =>
-          prevProjects.map(project =>
-            project.id === projectId
-              ? { ...project, executiveUpdate: execSummaryDraft }
-              : project
-          )
-        );
-        setEditingExecSummary(null);
-        setExecSummaryDraft('');
+        await saveExecSummary(editingExecSummary);
       }
 
       // Don't reset hidden items - keep the changes persistent
@@ -2052,18 +2047,30 @@ Write a professional executive summary that highlights the project's current sta
       startDate: createdAt.split('T')[0],
       targetDate: newProjectTargetDate,
       plan: [],
-      recentActivity: newProjectDescription
-        ? [{ id: generateActivityId(), date: createdAt, note: newProjectDescription, author: loggedInUser || 'You' }]
-        : []
+      recentActivity: []
     };
 
     // Sync stakeholders to People database
     await syncStakeholdersToPeople(newProject.stakeholders);
 
-    setProjects(prev => [...prev, syncProjectActivity(newProject)]);
-    setShowNewProject(false);
-    resetNewProjectForm();
-    updateHash('overview', newProject.id);
+    try {
+      // Create project in backend
+      const created = await createProject(newProject);
+
+      // Add creation activity
+      await addActivity(created.id, {
+        id: generateActivityId(),
+        date: createdAt,
+        note: `Created project "${newProject.name}"${newProjectDescription ? `: ${newProjectDescription}` : ''}`,
+        author: loggedInUser || 'You'
+      });
+
+      setShowNewProject(false);
+      resetNewProjectForm();
+      updateHash('overview', created.id);
+    } catch (error) {
+      console.error('Failed to create project:', error);
+    }
   };
 
   const handleStakeholderSelection = (selectedPeople) => {
@@ -2911,21 +2918,21 @@ Write a professional executive summary that highlights the project's current sta
   const activeProjects = userActiveProjects;
   const completedProjects = userCompletedProjects;
 
-  const handleAddTimelineUpdate = () => {
+  const handleAddTimelineUpdate = async () => {
     if (timelineUpdate.trim()) {
       const targetProjectId = viewingProjectId || visibleProjects[0]?.id;
 
       if (targetProjectId) {
-        setProjects(prevProjects =>
-          prevProjects.map(p =>
-            p.id === targetProjectId
-              ? syncProjectActivity(p, [
-                  { id: generateActivityId(), date: new Date().toISOString(), note: timelineUpdate, author: loggedInUser },
-                  ...p.recentActivity
-                ])
-              : p
-          )
-        );
+        try {
+          await addActivity(targetProjectId, {
+            id: generateActivityId(),
+            date: new Date().toISOString(),
+            note: timelineUpdate,
+            author: loggedInUser
+          });
+        } catch (error) {
+          console.error('Failed to add timeline update:', error);
+        }
       }
 
       setTimelineUpdate('');
@@ -2943,10 +2950,14 @@ Write a professional executive summary that highlights the project's current sta
     setDeleteConfirmation('');
   };
 
-  const handleConfirmDeleteProject = () => {
+  const handleConfirmDeleteProject = async () => {
     if (!projectToDelete || deleteConfirmation.trim() !== projectToDelete.name) return;
 
-    setProjects(prevProjects => prevProjects.filter(p => p.id !== projectToDelete.id));
+    try {
+      await apiDeleteProject(projectToDelete.id);
+    } catch (error) {
+      console.error('Failed to delete project:', error);
+    }
 
     if (viewingProjectId === projectToDelete.id) {
       setViewingProjectId(null);
