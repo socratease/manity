@@ -164,6 +164,39 @@ def test_crud_and_persistence(tmp_path):
         assert persisted[0]["recentActivity"][0]["note"] == "Kickoff complete"
 
 
+def test_people_normalized_from_projects(tmp_path):
+    db_path = tmp_path / "people.db"
+
+    with create_isolated_client(db_path) as client:
+        payload = {
+            "name": "Normalization",
+            "status": "active",
+            "priority": "medium",
+            "progress": 0,
+            "description": "",
+            "plan": [],
+            "recentActivity": [
+                {"date": "2025-11-30", "note": "Kickoff", "author": "Jordan Lee"}
+            ],
+            "stakeholders": [{"name": "Jordan Lee", "team": "Ops"}],
+            "lastUpdate": None,
+            "executiveUpdate": None,
+            "startDate": None,
+            "targetDate": None,
+        }
+
+        project = client.post("/projects", json=payload).json()
+        stakeholder = project["stakeholders"][0]
+        assert stakeholder["id"]
+
+        activity = project["recentActivity"][0]
+        assert activity["authorId"] == stakeholder["id"]
+
+        people = client.get("/people").json()
+        assert len(people) == 1
+        assert people[0]["id"] == stakeholder["id"]
+
+
 def test_export_and_import_round_trip(tmp_path):
     source_db = tmp_path / "source.db"
 

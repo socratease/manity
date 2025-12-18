@@ -132,24 +132,29 @@ def is_dev_seeding_enabled() -> bool:
 class Stakeholder(BaseModel):
     id: str | None = None
     name: str
-    team: str
+    team: str = ""
+    email: str | None = None
 
 
 def normalize_stakeholders(stakeholders: Optional[List[Stakeholder | dict]]) -> list[dict]:
     normalized: list[dict] = []
     for stakeholder in stakeholders or []:
         if isinstance(stakeholder, Stakeholder):
-            normalized.append(stakeholder.model_dump())
+            data = stakeholder.model_dump()
         elif isinstance(stakeholder, dict):
-            normalized.append(
-                {
-                    "id": stakeholder.get("id"),
-                    "name": stakeholder.get("name", ""),
-                    "team": stakeholder.get("team", ""),
-                }
-            )
+            data = {
+                "id": stakeholder.get("id"),
+                "name": stakeholder.get("name", ""),
+                "team": stakeholder.get("team", ""),
+                "email": stakeholder.get("email"),
+            }
         else:  # pragma: no cover - defensive
             raise TypeError("Unsupported stakeholder type")
+
+        data["name"] = (data.get("name") or "").strip()
+        data["team"] = data.get("team") or ""
+        data["email"] = (data.get("email") or None)
+        normalized.append(data)
     return normalized
 
 
@@ -174,13 +179,91 @@ def get_person_by_name(session: Session, name: str) -> "Person | None":
     return session.exec(statement).first()
 
 
+def get_person_by_email(session: Session, email: str | None) -> "Person | None":
+    if not email:
+        return None
+
+    normalized_email = email.strip().lower()
+    if not normalized_email:
+        return None
+
+    statement = select(Person).where(func.lower(Person.email) == normalized_email)
+    return session.exec(statement).first()
+
+
+class PersonIndex:
+    def __init__(self, people: Sequence["Person"]):
+        self.by_id: dict[str, Person] = {}
+        self.by_name: dict[str, Person] = {}
+        self.by_email: dict[str, Person] = {}
+
+        for person in people:
+            if person.id:
+                self.by_id[person.id] = person
+            if person.name:
+                self.by_name[person.name.lower()] = person
+            if person.email:
+                self.by_email[person.email.lower()] = person
+
+    def resolve(self, *, name: str | None = None, email: str | None = None, person_id: str | None = None) -> "Person | None":
+        if person_id and person_id in self.by_id:
+            return self.by_id[person_id]
+
+        if email and (email.lower() in self.by_email):
+            return self.by_email[email.lower()]
+
+        if name and (name.lower() in self.by_name):
+            return self.by_name[name.lower()]
+
+        return None
+
+
+def build_person_index(session: Session) -> PersonIndex:
+    return PersonIndex(session.exec(select(Person)).all())
+
+
+def _normalize_person_identity(name: str, email: str | None = None) -> tuple[str, str | None]:
+    normalized_name = name.strip()
+    normalized_email = email.strip().lower() if email else None
+    return normalized_name, normalized_email
+
+
+def _resolve_existing_person(
+    session: Session,
+    *,
+    normalized_name: str,
+    normalized_email: str | None = None,
+    person_id: str | None = None,
+) -> "Person | None":
+    if person_id:
+        person = session.get(Person, person_id)
+        if person:
+            return person
+
+    person = get_person_by_email(session, normalized_email)
+    if person:
+        return person
+
+    return get_person_by_name(session, normalized_name)
+
+
 def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "Person":
-    normalized_name = payload.name.strip()
-    existing = get_person_by_name(session, normalized_name)
+    normalized_name, normalized_email = _normalize_person_identity(payload.name, payload.email)
+
+    existing = _resolve_existing_person(
+        session,
+        normalized_name=normalized_name,
+        normalized_email=normalized_email,
+        person_id=payload.id,
+    )
 
     if existing:
         existing.team = payload.team or existing.team
-        existing.email = payload.email
+        existing.email = normalized_email or existing.email
+        if normalized_name and existing.name.lower() != normalized_name.lower():
+            conflict = get_person_by_name(session, normalized_name)
+            if conflict is None or conflict.id == existing.id:
+                existing.name = normalized_name
         session.add(existing)
         session.commit()
         session.refresh(existing)
@@ -190,12 +273,24 @@ def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "P
         id=payload.id or generate_id("person"),
         name=normalized_name,
         team=payload.team,
-        email=payload.email,
+        email=normalized_email,
     )
     session.add(person)
     session.commit()
     session.refresh(person)
     return person
+
+
+def upsert_person_from_details(
+    session: Session,
+    *,
+    name: str,
+    team: str = "",
+    email: str | None = None,
+    person_id: str | None = None,
+) -> "Person":
+    payload = PersonPayload(id=person_id, name=name, team=team or "", email=email)
+    return upsert_person_from_payload(session, payload)
 
 
 class SubtaskBase(SQLModel):
@@ -267,7 +362,7 @@ class Project(ProjectBase, table=True):
 
 class PersonBase(SQLModel):
     name: str = Field(sa_column=Column(String, unique=True, index=True))
-    team: str
+    team: str = ""
     email: Optional[str] = None
 
 
@@ -295,6 +390,13 @@ class AuditLog(SQLModel, table=True):
     details: Optional[str] = Field(default=None, sa_column=Column(String))  # JSON string with additional details
     user_agent: Optional[str] = None  # Client user agent
     ip_address: Optional[str] = None  # Client IP address
+
+
+class MigrationState(SQLModel, table=True):
+    """Track lightweight migrations run in-application."""
+
+    key: str = Field(primary_key=True)
+    applied_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 def log_action(
@@ -332,6 +434,8 @@ class TaskPayload(TaskBase):
 
 class ActivityPayload(ActivityBase):
     id: Optional[str] = None
+    authorId: Optional[str] = None
+    authorEmail: Optional[str] = None
 
 
 class PersonPayload(PersonBase):
@@ -589,28 +693,51 @@ def serialize_task(task: Task) -> dict:
     }
 
 
-def serialize_activity(activity: Activity) -> dict:
+def serialize_activity(activity: Activity, person_index: PersonIndex | None = None) -> dict:
+    person = person_index.resolve(name=activity.author) if person_index else None
+
     return {
         "id": activity.id,
         "date": activity.date,
         "note": activity.note,
         "author": activity.author,
+        "authorId": person.id if person else None,
+        "authorEmail": person.email if person else None,
     }
+
+
+def serialize_stakeholder(raw_stakeholder: dict, person_index: PersonIndex | None = None) -> dict:
+    stakeholder = normalize_stakeholders([raw_stakeholder])[0]
+    person: Person | None = None
+    if person_index:
+        person = person_index.resolve(
+            name=stakeholder.get("name"),
+            email=stakeholder.get("email"),
+            person_id=stakeholder.get("id"),
+        )
+
+    if person:
+        stakeholder["id"] = person.id
+        stakeholder["name"] = person.name
+        stakeholder["team"] = stakeholder.get("team") or person.team or ""
+        stakeholder["email"] = person.email or stakeholder.get("email")
+
+    return stakeholder
 
 
 def normalize_project_activity(project: Project) -> Project:
     if project.recentActivity is None:
         project.recentActivity = []
 
-    project.recentActivity.sort(key=lambda a: a.date or "", reverse=True)
+    project.recentActivity.sort(key=lambda a: a.date or "")
 
     if project.recentActivity:
-        project.lastUpdate = project.recentActivity[0].note
+        project.lastUpdate = project.recentActivity[-1].note
 
     return project
 
 
-def serialize_project(project: Project) -> dict:
+def serialize_project(project: Project, person_index: PersonIndex | None = None) -> dict:
     normalize_project_activity(project)
 
     return {
@@ -624,10 +751,15 @@ def serialize_project(project: Project) -> dict:
         "executiveUpdate": project.executiveUpdate,
         "startDate": project.startDate,
         "targetDate": project.targetDate,
-        "stakeholders": normalize_stakeholders(project.stakeholders),
+        "stakeholders": [serialize_stakeholder(stakeholder, person_index) for stakeholder in normalize_stakeholders(project.stakeholders)],
         "plan": [serialize_task(task) for task in project.plan],
-        "recentActivity": [serialize_activity(activity) for activity in project.recentActivity],
+        "recentActivity": [serialize_activity(activity, person_index) for activity in project.recentActivity],
     }
+
+
+def serialize_project_with_people(session: Session, project: Project) -> dict:
+    person_index = build_person_index(session)
+    return serialize_project(project, person_index)
 
 
 def apply_task_payload(task: Task, payload: TaskPayload) -> Task:
@@ -651,6 +783,47 @@ def apply_task_payload(task: Task, payload: TaskPayload) -> Task:
     return task
 
 
+def normalize_project_stakeholders(session: Session, stakeholders: Optional[List[Stakeholder | dict]]) -> list[dict]:
+    normalized: list[dict] = []
+    for stakeholder in normalize_stakeholders(stakeholders):
+        if not stakeholder.get("name"):
+            continue
+
+        person = upsert_person_from_details(
+            session,
+            name=stakeholder.get("name", ""),
+            team=stakeholder.get("team", ""),
+            email=stakeholder.get("email"),
+            person_id=stakeholder.get("id"),
+        )
+
+        normalized.append(
+            {
+                "id": person.id,
+                "name": person.name,
+                "team": stakeholder.get("team") or person.team or "",
+                "email": person.email,
+            }
+        )
+
+    return normalized
+
+
+def resolve_activity_author(session: Session, activity_payload: "ActivityPayload") -> Person | None:
+    if not activity_payload.author:
+        return None
+
+    author_email = getattr(activity_payload, "authorEmail", None)
+    author_id = getattr(activity_payload, "authorId", None)
+
+    return upsert_person_from_details(
+        session,
+        name=activity_payload.author,
+        email=author_email,
+        person_id=author_id,
+    )
+
+
 def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     project = session.exec(select(Project).where(Project.id == payload.id)).first() if payload.id else None
     if project is None:
@@ -666,7 +839,7 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     project.executiveUpdate = payload.executiveUpdate
     project.startDate = payload.startDate
     project.targetDate = payload.targetDate
-    project.stakeholders = normalize_stakeholders(payload.stakeholders)
+    project.stakeholders = normalize_project_stakeholders(session, payload.stakeholders)
 
     if project.plan is None:
         project.plan = []
@@ -690,15 +863,15 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     activity_payloads = sorted(
         payload.recentActivity,
         key=lambda activity: activity.date or "",
-        reverse=True,
     )
 
     for activity_payload in activity_payloads:
+        author_person = resolve_activity_author(session, activity_payload)
         activity = Activity(
             id=activity_payload.id or generate_id("activity"),
             date=activity_payload.date,
             note=activity_payload.note,
-            author=activity_payload.author,
+            author=author_person.name if author_person else activity_payload.author,
         )
         project.recentActivity.append(activity)
 
@@ -710,86 +883,40 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     return load_project(session, project.id)
 
 
-def default_project_payloads() -> list[ProjectPayload]:
-    return [
-        ProjectPayload(
-            name="Website Redesign",
-            status="active",
-            priority="high",
-            progress=45,
-            lastUpdate="Completed homepage mockups and testing",
-            description="Overhaul of company site for better UX.",
-            executiveUpdate="Overhaul of company site for better UX.",
-            startDate="2025-10-15",
-            targetDate="2025-12-20",
-            stakeholders=[Stakeholder(name="Sarah Chen", team="Design"), Stakeholder(name="Marcus Rodriguez", team="Development")],
-            plan=[
-                TaskPayload(
-                    title="Discovery & Research",
-                    status="completed",
-                    dueDate="2025-11-01",
-                    completedDate="2025-11-01",
-                    subtasks=[
-                        SubtaskPayload(title="Competitive analysis", status="completed", completedDate="2025-10-22", dueDate="2025-10-22"),
-                        SubtaskPayload(title="User interviews", status="completed", completedDate="2025-10-28", dueDate="2025-10-28"),
-                    ],
-                ),
-                TaskPayload(
-                    title="Design Phase",
-                    status="in-progress",
-                    dueDate="2025-12-05",
-                    subtasks=[
-                        SubtaskPayload(title="Homepage mockups", status="completed", completedDate="2025-11-28", dueDate="2025-11-28"),
-                        SubtaskPayload(title="Product page designs", status="in-progress", dueDate="2025-12-03"),
-                    ],
-                ),
-            ],
-            recentActivity=[
-                ActivityPayload(date="2025-11-29T14:30:00", note="Positive feedback on homepage direction", author="You"),
-                ActivityPayload(date="2025-11-28T16:15:00", note="Completed homepage mockups", author="You"),
-            ],
-        ),
-        ProjectPayload(
-            name="Q4 Marketing Campaign",
-            status="active",
-            priority="medium",
-            progress=30,
-            lastUpdate="Draft content calendar completed",
-            description="Multi-channel campaign for Q4.",
-            executiveUpdate="Multi-channel campaign for Q4.",
-            startDate="2025-11-01",
-            targetDate="2025-12-31",
-            stakeholders=[Stakeholder(name="Jennifer Liu", team="Marketing"), Stakeholder(name="Alex Thompson", team="Creative")],
-            plan=[
-                TaskPayload(
-                    title="Campaign Strategy",
-                    status="completed",
-                    dueDate="2025-11-15",
-                    completedDate="2025-11-15",
-                    subtasks=[
-                        SubtaskPayload(title="Define target audience", status="completed", completedDate="2025-11-05", dueDate="2025-11-05"),
-                        SubtaskPayload(title="Set campaign goals", status="completed", completedDate="2025-11-10", dueDate="2025-11-10"),
-                    ],
-                ),
-            ],
-            recentActivity=[
-                ActivityPayload(date="2025-11-27T16:30:00", note="Met with marketing to discuss timeline", author="You"),
-            ],
-        ),
-    ]
+def run_people_backfill(session: Session) -> None:
+    migration_key = "people-backfill-v1"
+    if session.get(MigrationState, migration_key):
+        return
 
+    projects = session.exec(
+        select(Project)
+        .options(
+            selectinload(Project.plan).selectinload(Task.subtasks),
+            selectinload(Project.recentActivity),
+        )
+    ).all()
 
-def seed_default_projects(session: Session) -> bool:
-    existing = session.exec(select(Project)).first()
-    if existing:
-        logger.info("Database already contains projects; skipping demo seed")
-        return False
+    for project in projects:
+        updated = False
 
-    defaults = default_project_payloads()
-    for project_payload in defaults:
-        upsert_project(session, project_payload)
-    logger.info("Seeded %s demo projects", len(defaults))
-    return True
+        normalized_stakeholders = normalize_project_stakeholders(session, project.stakeholders)
+        if normalized_stakeholders != project.stakeholders:
+            project.stakeholders = normalized_stakeholders
+            updated = True
+
+        for activity in project.recentActivity or []:
+            if not activity.author:
+                continue
+            person = upsert_person_from_details(session, name=activity.author)
+            if person and activity.author != person.name:
+                activity.author = person.name
+                updated = True
+
+        if updated:
+            session.add(project)
+
+    session.add(MigrationState(key=migration_key))
+    session.commit()
 
 
 @app.on_event("startup")
@@ -799,7 +926,80 @@ def on_startup() -> None:
         return
 
     with Session(engine) as session:
-        seed_default_projects(session)
+        run_people_backfill(session)
+        existing = session.exec(select(Project)).first()
+        if existing:
+            return
+
+        default_projects = [
+            ProjectPayload(
+                name="Website Redesign",
+                status="active",
+                priority="high",
+                progress=45,
+                lastUpdate="Completed homepage mockups and testing",
+                description="Overhaul of company site for better UX.",
+                executiveUpdate="Overhaul of company site for better UX.",
+                startDate="2025-10-15",
+                targetDate="2025-12-20",
+                stakeholders=[Stakeholder(name="Sarah Chen", team="Design"), Stakeholder(name="Marcus Rodriguez", team="Development")],
+                plan=[
+                    TaskPayload(
+                        title="Discovery & Research",
+                        status="completed",
+                        dueDate="2025-11-01",
+                        completedDate="2025-11-01",
+                        subtasks=[
+                            SubtaskPayload(title="Competitive analysis", status="completed", completedDate="2025-10-22", dueDate="2025-10-22"),
+                            SubtaskPayload(title="User interviews", status="completed", completedDate="2025-10-28", dueDate="2025-10-28"),
+                        ],
+                    ),
+                    TaskPayload(
+                        title="Design Phase",
+                        status="in-progress",
+                        dueDate="2025-12-05",
+                        subtasks=[
+                            SubtaskPayload(title="Homepage mockups", status="completed", completedDate="2025-11-28", dueDate="2025-11-28"),
+                            SubtaskPayload(title="Product page designs", status="in-progress", dueDate="2025-12-03"),
+                        ],
+                    ),
+                ],
+                recentActivity=[
+                    ActivityPayload(date="2025-11-29T14:30:00", note="Positive feedback on homepage direction", author="You"),
+                    ActivityPayload(date="2025-11-28T16:15:00", note="Completed homepage mockups", author="You"),
+                ],
+            ),
+            ProjectPayload(
+                name="Q4 Marketing Campaign",
+                status="active",
+                priority="medium",
+                progress=30,
+                lastUpdate="Draft content calendar completed",
+                description="Multi-channel campaign for Q4.",
+                executiveUpdate="Multi-channel campaign for Q4.",
+                startDate="2025-11-01",
+                targetDate="2025-12-31",
+                stakeholders=[Stakeholder(name="Jennifer Liu", team="Marketing"), Stakeholder(name="Alex Thompson", team="Creative")],
+                plan=[
+                    TaskPayload(
+                        title="Campaign Strategy",
+                        status="completed",
+                        dueDate="2025-11-15",
+                        completedDate="2025-11-15",
+                        subtasks=[
+                            SubtaskPayload(title="Define target audience", status="completed", completedDate="2025-11-05", dueDate="2025-11-05"),
+                            SubtaskPayload(title="Set campaign goals", status="completed", completedDate="2025-11-10", dueDate="2025-11-10"),
+                        ],
+                    ),
+                ],
+                recentActivity=[
+                    ActivityPayload(date="2025-11-27T16:30:00", note="Met with marketing to discuss timeline", author="You"),
+                ],
+            ),
+        ]
+
+        for project_payload in default_projects:
+            upsert_project(session, project_payload)
 
 
 def load_project(session: Session, project_id: str) -> Project:
@@ -823,20 +1023,39 @@ def list_people(session: Session = Depends(get_session)):
     people = session.exec(statement).all()
 
     unique_people: dict[str, Person] = {}
+    seen_people: set[str] = set()
     for person in people:
-        key = person.name.lower()
-        if key not in unique_people:
-            unique_people[key] = person
+        email_key = person.email.lower() if person.email else None
+        name_key = person.name.lower() if person.name else None
+
+        existing = None
+        if email_key and email_key in unique_people:
+            existing = unique_people[email_key]
+        elif name_key and name_key in unique_people:
+            existing = unique_people[name_key]
+
+        if existing is None:
+            if name_key:
+                unique_people[name_key] = person
+            if email_key:
+                unique_people[email_key] = person
             continue
 
         # Collapse legacy duplicates by preferring the first encountered record
-        legacy = unique_people[key]
-        legacy.team = legacy.team or person.team
-        legacy.email = legacy.email or person.email
+        existing.team = existing.team or person.team
+        existing.email = existing.email or person.email
         session.delete(person)
 
+    # Ensure each person appears only once even though we index by multiple keys
+    deduped_people: list[Person] = []
+    for person in unique_people.values():
+        if person.id in seen_people:
+            continue
+        seen_people.add(person.id)
+        deduped_people.append(person)
+
     session.commit()
-    return [serialize_person(person) for person in unique_people.values()]
+    return [serialize_person(person) for person in deduped_people]
 
 
 @app.post("/people", status_code=status.HTTP_201_CREATED)
@@ -969,25 +1188,26 @@ def send_email_action(payload: EmailSendPayload, request: Request, session: Sess
 
 @app.get("/projects")
 def list_projects(session: Session = Depends(get_session)):
+    person_index = build_person_index(session)
     statement = select(Project).options(
         selectinload(Project.plan).selectinload(Task.subtasks),
         selectinload(Project.recentActivity),
     )
     projects = session.exec(statement).all()
-    return [serialize_project(project) for project in projects]
+    return [serialize_project(project, person_index) for project in projects]
 
 
 @app.post("/projects", status_code=status.HTTP_201_CREATED)
 def create_project(payload: ProjectPayload, request: Request, session: Session = Depends(get_session)):
     project = upsert_project(session, payload)
     log_action(session, "create_project", "project", project.id, {"name": project.name, "status": project.status}, request)
-    return serialize_project(project)
+    return serialize_project_with_people(session, project)
 
 
 @app.get("/projects/{project_id}")
 def get_project(project_id: str, session: Session = Depends(get_session)):
     project = load_project(session, project_id)
-    return serialize_project(project)
+    return serialize_project_with_people(session, project)
 
 
 @app.put("/projects/{project_id}")
@@ -997,7 +1217,7 @@ def update_project(project_id: str, payload: ProjectPayload, request: Request, s
     payload.id = project_id
     project = upsert_project(session, payload)
     log_action(session, "update_project", "project", project_id, {"name": project.name, "status": project.status}, request)
-    return serialize_project(project)
+    return serialize_project_with_people(session, project)
 
 
 @app.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1026,7 +1246,7 @@ def create_task(project_id: str, payload: TaskPayload, request: Request, session
     session.commit()
     session.refresh(task)
     log_action(session, "create_task", "task", task.id, {"project_id": project_id, "title": task.title}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/tasks/{task_id}")
@@ -1040,7 +1260,7 @@ def update_task(project_id: str, task_id: str, payload: TaskPayload, request: Re
     session.add(task)
     session.commit()
     log_action(session, "update_task", "task", task_id, {"project_id": project_id, "title": task.title, "old_status": old_status, "new_status": task.status}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1073,7 +1293,7 @@ def create_subtask(project_id: str, task_id: str, payload: SubtaskPayload, reque
     session.add(subtask)
     session.commit()
     log_action(session, "create_subtask", "subtask", subtask.id, {"project_id": project_id, "task_id": task_id, "title": subtask.title}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/tasks/{task_id}/subtasks/{subtask_id}")
@@ -1090,7 +1310,7 @@ def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: Subt
     session.add(subtask)
     session.commit()
     log_action(session, "update_subtask", "subtask", subtask_id, {"project_id": project_id, "task_id": task_id, "title": subtask.title, "old_status": old_status, "new_status": subtask.status}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/tasks/{task_id}/subtasks/{subtask_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1109,11 +1329,12 @@ def delete_subtask(project_id: str, task_id: str, subtask_id: str, request: Requ
 @app.post("/projects/{project_id}/activities")
 def create_activity(project_id: str, payload: ActivityPayload, request: Request, session: Session = Depends(get_session)):
     project = load_project(session, project_id)
+    author_person = resolve_activity_author(session, payload)
     activity = Activity(
         id=payload.id or generate_id("activity"),
         date=payload.date,
         note=payload.note,
-        author=payload.author,
+        author=author_person.name if author_person else payload.author,
         project_id=project.id,
     )
     session.add(activity)
@@ -1123,7 +1344,7 @@ def create_activity(project_id: str, payload: ActivityPayload, request: Request,
     session.add(project)
     session.commit()
     log_action(session, "create_activity", "activity", activity.id, {"project_id": project_id, "author": activity.author, "note_preview": activity.note[:100] if activity.note else None}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/activities/{activity_id}")
@@ -1132,9 +1353,10 @@ def update_activity(project_id: str, activity_id: str, payload: ActivityPayload,
     activity = session.exec(select(Activity).where(Activity.id == activity_id, Activity.project_id == project_id)).first()
     if not activity:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+    author_person = resolve_activity_author(session, payload)
     activity.note = payload.note
     activity.date = payload.date
-    activity.author = payload.author
+    activity.author = author_person.name if author_person else payload.author
     session.add(activity)
     session.commit()
     project = load_project(session, project_id)
@@ -1142,7 +1364,7 @@ def update_activity(project_id: str, activity_id: str, payload: ActivityPayload,
     session.add(project)
     session.commit()
     log_action(session, "update_activity", "activity", activity_id, {"project_id": project_id, "author": activity.author}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/activities/{activity_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1166,7 +1388,7 @@ def delete_activity(project_id: str, activity_id: str, request: Request, session
 def export_portfolio(project_id: Optional[str] = None, session: Session = Depends(get_session)):
     projects = []
     if project_id:
-        projects.append(serialize_project(load_project(session, project_id)))
+        projects.append(serialize_project_with_people(session, load_project(session, project_id)))
     else:
         projects = list_projects(session)
 
