@@ -21,6 +21,8 @@ export default function DataPage({
   const [subtaskDrafts, setSubtaskDrafts] = useState({});
   const [activityDrafts, setActivityDrafts] = useState({});
   const [personDrafts, setPersonDrafts] = useState({});
+  const [stakeholderDrafts, setStakeholderDrafts] = useState({});
+  const [newStakeholderRows, setNewStakeholderRows] = useState([]);
 
   useEffect(() => {
     setProjectDrafts({});
@@ -28,6 +30,8 @@ export default function DataPage({
     setSubtaskDrafts({});
     setActivityDrafts({});
     setPersonDrafts({});
+    setStakeholderDrafts({});
+    setNewStakeholderRows([]);
   }, [projects, people]);
 
   const taskRows = useMemo(() => {
@@ -63,6 +67,35 @@ export default function DataPage({
       }))
     );
   }, [projects]);
+
+  const stakeholderRows = useMemo(() => {
+    const existingRows = projects.flatMap(project =>
+      (project.stakeholders || []).map((stakeholder, stakeholderIndex) => ({
+        key: `${project.id}:${stakeholderIndex}`,
+        projectId: project.id,
+        projectName: project.name,
+        stakeholderIndex,
+        stakeholder,
+        isNew: false,
+        tempId: null
+      }))
+    );
+
+    const newRows = newStakeholderRows.map((row) => {
+      const project = projects.find(p => p.id === row.projectId);
+      return {
+        key: `new:${row.tempId}`,
+        tempId: row.tempId,
+        projectId: row.projectId,
+        projectName: project?.name || 'Select a project',
+        stakeholderIndex: project?.stakeholders?.length ?? 0,
+        stakeholder: { id: '', name: '', team: '' },
+        isNew: true
+      };
+    });
+
+    return [...existingRows, ...newRows];
+  }, [newStakeholderRows, projects]);
 
   const getDraft = (draftMap, id, fallback) => draftMap[id] ?? fallback;
 
@@ -135,6 +168,99 @@ export default function DataPage({
         [field]: value
       }
     }));
+  };
+
+  const findPersonById = (personId) => people.find(person => person.id === personId);
+
+  const handleStakeholderChange = (rowKey, field, value, fallback) => {
+    setStakeholderDrafts(prev => ({
+      ...prev,
+      [rowKey]: {
+        ...getDraft(prev, rowKey, fallback),
+        [field]: value
+      }
+    }));
+  };
+
+  const handleStakeholderPersonSelect = (rowKey, personId, fallback) => {
+    const matchedPerson = findPersonById(personId);
+    const draft = getDraft(stakeholderDrafts, rowKey, fallback);
+    setStakeholderDrafts(prev => ({
+      ...prev,
+      [rowKey]: {
+        ...draft,
+        id: personId || '',
+        name: matchedPerson?.name || draft.name,
+        team: matchedPerson?.team || draft.team
+      }
+    }));
+  };
+
+  const addStakeholderRow = () => {
+    if (projects.length === 0) return;
+    const defaultProjectId = projects[0].id;
+    setNewStakeholderRows(prev => [...prev, { tempId: Date.now().toString(), projectId: defaultProjectId }]);
+  };
+
+  const updateStakeholderProject = (tempId, projectId) => {
+    setNewStakeholderRows(prev => prev.map(row => row.tempId === tempId ? { ...row, projectId } : row));
+  };
+
+  const saveStakeholderRow = async (row) => {
+    const project = projects.find(p => p.id === row.projectId);
+    if (!project) return;
+    const draft = getDraft(stakeholderDrafts, row.key, row.stakeholder);
+    const updatedStakeholder = {
+      id: draft.id || row.stakeholder.id || '',
+      name: draft.name || row.stakeholder.name,
+      team: draft.team || row.stakeholder.team || ''
+    };
+    const nextStakeholders = [...(project.stakeholders || [])];
+    if (row.isNew) {
+      nextStakeholders.push(updatedStakeholder);
+    } else {
+      nextStakeholders[row.stakeholderIndex] = updatedStakeholder;
+    }
+    try {
+      await onUpdateProject(project.id, { stakeholders: nextStakeholders });
+      setStakeholderDrafts(prev => {
+        const next = { ...prev };
+        delete next[row.key];
+        return next;
+      });
+      if (row.isNew) {
+        setNewStakeholderRows(prev => prev.filter(r => `new:${r.tempId}` !== row.key));
+      }
+    } catch (error) {
+      console.error('Unable to update stakeholder link', error);
+      alert('Unable to update stakeholder link');
+    }
+  };
+
+  const deleteStakeholderRow = async (row) => {
+    if (row.isNew) {
+      setNewStakeholderRows(prev => prev.filter(r => `new:${r.tempId}` !== row.key));
+      setStakeholderDrafts(prev => {
+        const next = { ...prev };
+        delete next[row.key];
+        return next;
+      });
+      return;
+    }
+    const project = projects.find(p => p.id === row.projectId);
+    if (!project) return;
+    const nextStakeholders = (project.stakeholders || []).filter((_, idx) => idx !== row.stakeholderIndex);
+    try {
+      await onUpdateProject(project.id, { stakeholders: nextStakeholders });
+      setStakeholderDrafts(prev => {
+        const next = { ...prev };
+        delete next[row.key];
+        return next;
+      });
+    } catch (error) {
+      console.error('Unable to remove stakeholder link', error);
+      alert('Unable to remove stakeholder link');
+    }
   };
 
   const saveProject = async (project) => {
@@ -286,6 +412,17 @@ export default function DataPage({
     </div>
   );
 
+  const renderId = (id) => (
+    <code style={styles.idBadge}>{id || '—'}</code>
+  );
+
+  const renderStackedLabel = (title, id) => (
+    <div style={styles.stackedCell}>
+      <span style={styles.primaryText}>{title || '—'}</span>
+      <span style={styles.subtleText}>ID: {renderId(id)}</span>
+    </div>
+  );
+
   return (
     <div style={styles.wrapper}>
       <header style={styles.header}>
@@ -316,7 +453,8 @@ export default function DataPage({
         </div>
         <div style={styles.table}>
           <div style={styles.tableHeader}>
-            <div style={{ ...styles.cell, flex: 1.3 }}>Name</div>
+            <div style={{ ...styles.cell, flex: 0.9 }}>ID</div>
+            <div style={{ ...styles.cell, flex: 1.2 }}>Name</div>
             <div style={{ ...styles.cell, flex: 0.9 }}>Status</div>
             <div style={{ ...styles.cell, flex: 0.9 }}>Priority</div>
             <div style={{ ...styles.cell, flex: 0.8 }}>Target</div>
@@ -327,7 +465,10 @@ export default function DataPage({
             const draft = getDraft(projectDrafts, project.id, project);
             return (
               <div key={project.id} style={styles.tableRow}>
-                <div style={{ ...styles.cell, flex: 1.3 }}>
+                <div style={{ ...styles.cell, flex: 0.9 }}>
+                  {renderId(project.id)}
+                </div>
+                <div style={{ ...styles.cell, flex: 1.2 }}>
                   {renderInput(draft.name ?? project.name, (value) => handleProjectChange(project.id, 'name', value), 'Project name')}
                 </div>
                 <div style={{ ...styles.cell, flex: 0.9 }}>
@@ -361,16 +502,20 @@ export default function DataPage({
           </div>
           <div style={styles.table}>
             <div style={styles.tableHeader}>
+              <div style={{ ...styles.cell, flex: 0.8 }}>Task ID</div>
               <div style={{ ...styles.cell, flex: 1.2 }}>Title</div>
               <div style={{ ...styles.cell, flex: 0.9 }}>Status</div>
               <div style={{ ...styles.cell, flex: 0.8 }}>Due</div>
-              <div style={{ ...styles.cell, flex: 1 }}>Project</div>
+              <div style={{ ...styles.cell, flex: 1.1 }}>Project</div>
               <div style={{ ...styles.cell, width: 120 }}>Actions</div>
             </div>
             {taskRows.map(task => {
               const draft = getDraft(taskDrafts, task.id, task);
               return (
                 <div key={task.id} style={styles.tableRow}>
+                  <div style={{ ...styles.cell, flex: 0.8 }}>
+                    {renderId(task.id)}
+                  </div>
                   <div style={{ ...styles.cell, flex: 1.2 }}>
                     {renderInput(draft.title ?? task.title, (value) => handleTaskChange(task.id, 'title', value), 'Task title')}
                   </div>
@@ -380,8 +525,8 @@ export default function DataPage({
                   <div style={{ ...styles.cell, flex: 0.8 }}>
                     {renderInput(draft.dueDate ?? task.dueDate ?? '', (value) => handleTaskChange(task.id, 'dueDate', value), 'YYYY-MM-DD', 'date')}
                   </div>
-                  <div style={{ ...styles.cell, flex: 1 }}>
-                    <span style={styles.badge}>{task.projectName}</span>
+                  <div style={{ ...styles.cell, flex: 1.1 }}>
+                    {renderStackedLabel(task.projectName, task.projectId)}
                   </div>
                   <div style={{ ...styles.cell, width: 120 }}>
                     {renderActions(() => saveTask(task), () => onDeleteTask(task.projectId, task.id))}
@@ -401,16 +546,21 @@ export default function DataPage({
           </div>
           <div style={styles.table}>
             <div style={styles.tableHeader}>
+              <div style={{ ...styles.cell, flex: 0.8 }}>Subtask ID</div>
               <div style={{ ...styles.cell, flex: 1 }}>Title</div>
               <div style={{ ...styles.cell, flex: 0.9 }}>Status</div>
               <div style={{ ...styles.cell, flex: 0.8 }}>Due</div>
               <div style={{ ...styles.cell, flex: 1 }}>Task</div>
+              <div style={{ ...styles.cell, flex: 1 }}>Project</div>
               <div style={{ ...styles.cell, width: 120 }}>Actions</div>
             </div>
             {subtaskRows.map(subtask => {
               const draft = getDraft(subtaskDrafts, subtask.id, subtask);
               return (
                 <div key={subtask.id} style={styles.tableRow}>
+                  <div style={{ ...styles.cell, flex: 0.8 }}>
+                    {renderId(subtask.id)}
+                  </div>
                   <div style={{ ...styles.cell, flex: 1 }}>
                     {renderInput(draft.title ?? subtask.title, (value) => handleSubtaskChange(subtask.id, 'title', value), 'Subtask title')}
                   </div>
@@ -421,7 +571,10 @@ export default function DataPage({
                     {renderInput(draft.dueDate ?? subtask.dueDate ?? '', (value) => handleSubtaskChange(subtask.id, 'dueDate', value), 'YYYY-MM-DD', 'date')}
                   </div>
                   <div style={{ ...styles.cell, flex: 1 }}>
-                    <span style={styles.badge}>{subtask.taskTitle}</span>
+                    {renderStackedLabel(subtask.taskTitle, subtask.taskId)}
+                  </div>
+                  <div style={{ ...styles.cell, flex: 1 }}>
+                    {renderStackedLabel(subtask.projectName, subtask.projectId)}
                   </div>
                   <div style={{ ...styles.cell, width: 120 }}>
                     {renderActions(() => saveSubtask(subtask), () => onDeleteSubtask(subtask.projectId, subtask.taskId, subtask.id))}
@@ -430,6 +583,94 @@ export default function DataPage({
               );
             })}
           </div>
+        </div>
+      </div>
+
+      <div style={styles.section}>
+        <div style={styles.sectionHeader}>
+          <div style={styles.sectionTitleRow}>
+            <h3 style={styles.sectionTitle}>People ↔ Projects</h3>
+            <span style={styles.sectionHint}>Stakeholder connections</span>
+          </div>
+          <div style={styles.sectionActions}>
+            <button
+              onClick={addStakeholderRow}
+              style={styles.saveButton}
+              disabled={!isEditable || projects.length === 0}
+            >
+              Add connection
+            </button>
+          </div>
+        </div>
+        <div style={styles.table}>
+          <div style={styles.tableHeader}>
+            <div style={{ ...styles.cell, flex: 1.1 }}>Project</div>
+            <div style={{ ...styles.cell, flex: 1.3 }}>Person & Identifier</div>
+            <div style={{ ...styles.cell, flex: 0.9 }}>Team</div>
+            <div style={{ ...styles.cell, width: 140 }}>Actions</div>
+          </div>
+          {stakeholderRows.map(row => {
+            const draft = getDraft(stakeholderDrafts, row.key, row.stakeholder);
+            return (
+              <div key={row.key} style={styles.tableRow}>
+                <div style={{ ...styles.cell, flex: 1.1 }}>
+                  {row.isNew ? (
+                    <select
+                      value={row.projectId || ''}
+                      disabled={!isEditable}
+                      onChange={(e) => updateStakeholderProject(row.tempId, e.target.value)}
+                      style={{ ...styles.select, ...(isEditable ? {} : styles.inputDisabled) }}
+                    >
+                      {projects.map(project => (
+                        <option key={project.id} value={project.id}>
+                          {project.name} ({project.id})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    renderStackedLabel(row.projectName, row.projectId)
+                  )}
+                </div>
+                <div style={{ ...styles.cell, flex: 1.3, flexDirection: 'column', alignItems: 'stretch', gap: 6 }}>
+                  {renderInput(draft.name ?? row.stakeholder.name, (value) => handleStakeholderChange(row.key, 'name', value, row.stakeholder), 'Person name')}
+                  <select
+                    value={draft.id ?? row.stakeholder.id ?? ''}
+                    disabled={!isEditable}
+                    onChange={(e) => handleStakeholderPersonSelect(row.key, e.target.value, row.stakeholder)}
+                    style={{ ...styles.select, ...(isEditable ? {} : styles.inputDisabled) }}
+                  >
+                    <option value="">Not linked to People</option>
+                    {people.map(person => (
+                      <option key={person.id} value={person.id}>
+                        {person.name} ({person.id})
+                      </option>
+                    ))}
+                  </select>
+                  <span style={styles.subtleText}>
+                    Current ID: {renderId(draft.id ?? row.stakeholder.id)}
+                  </span>
+                </div>
+                <div style={{ ...styles.cell, flex: 0.9 }}>
+                  {renderInput(draft.team ?? row.stakeholder.team, (value) => handleStakeholderChange(row.key, 'team', value, row.stakeholder), 'Team')}
+                </div>
+                <div style={{ ...styles.cell, width: 140 }}>
+                  {renderActions(() => saveStakeholderRow(row), () => deleteStakeholderRow(row), false)}
+                </div>
+              </div>
+            );
+          })}
+          {stakeholderRows.length === 0 && (
+            <div style={{ ...styles.tableRow, justifyContent: 'space-between' }}>
+              <span style={styles.subtleText}>No stakeholder connections yet. Add one to link a person to a project.</span>
+              <button
+                onClick={addStakeholderRow}
+                style={styles.saveButton}
+                disabled={!isEditable || projects.length === 0}
+              >
+                Add connection
+              </button>
+            </div>
+          )}
         </div>
       </div>
 
@@ -443,6 +684,7 @@ export default function DataPage({
           </div>
           <div style={styles.table}>
             <div style={styles.tableHeader}>
+              <div style={{ ...styles.cell, flex: 0.8 }}>Activity ID</div>
               <div style={{ ...styles.cell, flex: 1.3 }}>Note</div>
               <div style={{ ...styles.cell, flex: 0.8 }}>Date</div>
               <div style={{ ...styles.cell, flex: 1 }}>Project</div>
@@ -452,6 +694,9 @@ export default function DataPage({
               const draft = getDraft(activityDrafts, activity.id, activity);
               return (
                 <div key={activity.id} style={styles.tableRow}>
+                  <div style={{ ...styles.cell, flex: 0.8 }}>
+                    {renderId(activity.id)}
+                  </div>
                   <div style={{ ...styles.cell, flex: 1.3 }}>
                     <textarea
                       value={draft.note ?? activity.note}
@@ -468,7 +713,7 @@ export default function DataPage({
                     {renderInput(draft.date ?? activity.date, (value) => handleActivityChange(activity.id, 'date', value), 'YYYY-MM-DD', 'datetime-local')}
                   </div>
                   <div style={{ ...styles.cell, flex: 1 }}>
-                    <span style={styles.badge}>{activity.projectName}</span>
+                    {renderStackedLabel(activity.projectName, activity.projectId)}
                   </div>
                   <div style={{ ...styles.cell, width: 120 }}>
                     {renderActions(() => saveActivity(activity), () => onDeleteActivity(activity.projectId, activity.id))}
@@ -488,6 +733,7 @@ export default function DataPage({
           </div>
           <div style={styles.table}>
             <div style={styles.tableHeader}>
+              <div style={{ ...styles.cell, flex: 0.8 }}>Person ID</div>
               <div style={{ ...styles.cell, flex: 1 }}>Name</div>
               <div style={{ ...styles.cell, flex: 0.8 }}>Team</div>
               <div style={{ ...styles.cell, flex: 1 }}>Email</div>
@@ -497,6 +743,9 @@ export default function DataPage({
               const draft = getDraft(personDrafts, person.id, person);
               return (
                 <div key={person.id} style={styles.tableRow}>
+                  <div style={{ ...styles.cell, flex: 0.8 }}>
+                    {renderId(person.id)}
+                  </div>
                   <div style={{ ...styles.cell, flex: 1 }}>
                     {renderInput(draft.name ?? person.name, (value) => handlePersonChange(person.id, 'name', value), 'Name')}
                   </div>
@@ -592,6 +841,11 @@ const styles = {
     alignItems: 'center',
     gap: 8,
   },
+  sectionActions: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: 8,
+  },
   sectionIcon: {
     color: 'var(--earth)',
   },
@@ -638,6 +892,12 @@ const styles = {
     gap: 8,
     fontSize: '13px',
     color: 'var(--charcoal)',
+  },
+  stackedCell: {
+    display: 'flex',
+    flexDirection: 'column',
+    alignItems: 'flex-start',
+    gap: 2,
   },
   input: {
     width: '100%',
@@ -718,5 +978,20 @@ const styles = {
     display: 'grid',
     gridTemplateColumns: 'repeat(auto-fit, minmax(480px, 1fr))',
     gap: 16,
+  },
+  subtleText: {
+    color: 'var(--stone)',
+    fontSize: '12px',
+  },
+  primaryText: {
+    fontWeight: 600,
+  },
+  idBadge: {
+    backgroundColor: 'var(--cream)',
+    border: '1px solid var(--cloud)',
+    padding: '4px 8px',
+    borderRadius: 6,
+    fontFamily: 'monospace',
+    fontSize: '12px',
   },
 };
