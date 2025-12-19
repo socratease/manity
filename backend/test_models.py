@@ -51,7 +51,7 @@ def test_stakeholders_are_mapped_to_people(tmp_path):
         priority="high",
         progress=10,
         stakeholders=[
-            main.PersonReference(name="Alice", team="Product"),
+            main.PersonReference(name="Alice", team="Product", email="alice@example.com"),
             main.PersonReference(name="Bob", team="Engineering"),
         ],
     )
@@ -65,6 +65,8 @@ def test_stakeholders_are_mapped_to_people(tmp_path):
         serialized = main.serialize_project(project)
         assert len(serialized["stakeholders"]) == 2
         assert {person["name"] for person in serialized["stakeholders"]} == {"Alice", "Bob"}
+        alice = next(person for person in serialized["stakeholders"] if person["name"] == "Alice")
+        assert alice["email"] == "alice@example.com"
 
         refreshed_project = session.get(main.Project, project.id)
         assert len(refreshed_project.stakeholders) == 2
