@@ -847,12 +847,9 @@ def configured_frontend_origins() -> tuple[list[str], str | None]:
     origin_regex = os.getenv(FRONTEND_ORIGIN_REGEX_ENV) or None
 
     if not origins and not origin_regex:
-        origins = [
-            "http://localhost:3000",
-            "http://localhost:5173",
-            "http://127.0.0.1:3000",
-            "http://127.0.0.1:5173",
-        ]
+        # Default: allow all localhost/127.0.0.1 origins for local development
+        # This covers common dev ports: 3000, 5173, 8113, 8114, etc.
+        origin_regex = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
 
     return origins, origin_regex
 
