@@ -940,6 +940,7 @@ def create_db_and_tables() -> None:
     ensure_column("task", 'assignee_id TEXT REFERENCES person(id) ON DELETE SET NULL')
     ensure_column("subtask", 'assignee_id TEXT REFERENCES person(id) ON DELETE SET NULL')
     ensure_column("activity", 'author_id TEXT REFERENCES person(id) ON DELETE SET NULL')
+    ensure_column("activity", "task_context TEXT")
     ensure_column("project", "stakeholders JSON")
     ensure_column("project", "executiveUpdate TEXT")
     ensure_column("project", "startDate TEXT")
@@ -1040,7 +1041,7 @@ def normalize_project_activity(project: Project) -> Project:
     project.recentActivity.sort(key=lambda a: a.date or "", reverse=True)
 
     if project.recentActivity:
-        project.lastUpdate = project.recentActivity[-1].note
+        project.lastUpdate = project.recentActivity[0].note
 
     return project
 
