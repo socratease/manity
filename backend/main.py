@@ -1339,9 +1339,26 @@ def run_people_backfill(session: Session) -> None:
     for project in projects:
         updated = False
 
-        normalized_stakeholders = normalize_project_stakeholders(session, project.stakeholders)
-        if normalized_stakeholders != project.stakeholders:
-            project.stakeholders = normalized_stakeholders
+        legacy_stakeholders = [
+            stakeholder for stakeholder in project.stakeholders_legacy or [] if not isinstance(stakeholder, Person)
+        ]
+        normalized_stakeholders = normalize_project_stakeholders(session, legacy_stakeholders)
+        if normalized_stakeholders:
+            existing_person_ids = {person.id for person in project.stakeholders if person.id}
+            for stakeholder in normalized_stakeholders:
+                person_id = stakeholder.get("id")
+                if not person_id or person_id in existing_person_ids:
+                    continue
+
+                person = session.get(Person, person_id)
+                if person is None:
+                    continue
+
+                project.stakeholders.append(person)
+                existing_person_ids.add(person_id)
+                updated = True
+
+            project.stakeholders_legacy = []
             updated = True
 
         for activity in project.recentActivity or []:
