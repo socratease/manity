@@ -2,6 +2,7 @@ import io
 import logging
 import os
 import uuid
+import argparse
 from datetime import datetime
 from enum import Enum
 from email.message import EmailMessage
@@ -25,6 +26,7 @@ logging.basicConfig(level=logging.INFO)
 
 DEV_DEMO_SEED_ENV = "MANITY_ENABLE_DEMO_SEED"
 ENVIRONMENT_ENV = "MANITY_ENV"
+ADMIN_TOKEN_ENV = "MANITY_ADMIN_TOKEN"
 PROTECTED_ENVIRONMENTS = {"prod", "production", "test", "testing"}
 
 # Configure database path with persistent storage
@@ -979,6 +981,38 @@ def get_session():
         yield session
 
 
+def extract_bearer_token(auth_header: str | None) -> str | None:
+    if not auth_header:
+        return None
+    if not auth_header.lower().startswith("bearer "):
+        return None
+    return auth_header.split(None, 1)[1].strip() or None
+
+
+def ensure_admin(request: Request) -> None:
+    expected_token = os.getenv(ADMIN_TOKEN_ENV)
+    if not expected_token:
+        if current_environment() in PROTECTED_ENVIRONMENTS:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Admin token not configured for this environment",
+            )
+        logger.warning(
+            "Admin token not configured; allowing admin endpoints in non-protected environment"
+        )
+        return
+
+    provided_token = (
+        request.headers.get("x-admin-token")
+        or extract_bearer_token(request.headers.get("authorization"))
+    )
+    if not provided_token or provided_token != expected_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid admin token",
+        )
+
+
 def serialize_subtask(subtask: Subtask) -> dict:
     return {
         "id": subtask.id,
@@ -1438,6 +1472,12 @@ def run_people_backfill(session: Session) -> None:
 
     session.add(MigrationState(key=migration_key))
     session.commit()
+
+
+@app.post("/admin/people-backfill", dependencies=[Depends(ensure_admin)])
+def trigger_people_backfill(session: Session = Depends(get_session)) -> dict:
+    run_people_backfill(session)
+    return {"status": "ok", "message": "People backfill completed or already applied."}
 
 
 @app.on_event("startup")
@@ -2674,3 +2714,51 @@ def export_slides_to_powerpoint(payload: SlidesExportPayload, request: Request, 
 @app.get("/")
 def root():
     return {"status": "ok"}
+
+
+def validate_admin_token_for_cli(admin_token: str | None) -> None:
+    expected_token = os.getenv(ADMIN_TOKEN_ENV)
+    if not expected_token:
+        if current_environment() in PROTECTED_ENVIRONMENTS:
+            raise RuntimeError("Admin token not configured for this environment")
+        logger.warning(
+            "Admin token not configured; allowing admin CLI command in non-protected environment"
+        )
+        return
+    if not admin_token:
+        raise RuntimeError("Admin token required for this operation")
+    if admin_token != expected_token:
+        raise RuntimeError("Invalid admin token")
+
+
+def run_people_backfill_cli(admin_token: str | None) -> None:
+    validate_admin_token_for_cli(admin_token)
+    create_db_and_tables()
+    with Session(engine) as session:
+        run_people_backfill(session)
+    logger.info("People backfill completed or already applied.")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Manity Portfolio API utilities")
+    subparsers = parser.add_subparsers(dest="command")
+    backfill_parser = subparsers.add_parser(
+        "run-people-backfill",
+        help="Run the people backfill migration before starting the API server",
+    )
+    backfill_parser.add_argument(
+        "--admin-token",
+        default=os.getenv(ADMIN_TOKEN_ENV),
+        help="Admin token for protected environments (defaults to MANITY_ADMIN_TOKEN)",
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "run-people-backfill":
+        run_people_backfill_cli(args.admin_token)
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
