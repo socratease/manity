@@ -29,6 +29,7 @@ const normalizeProjects = (projects = []) => projects.map(normalizeProjectActivi
 
 // Local storage key for email settings
 const EMAIL_SETTINGS_KEY = 'manity_email_settings';
+const LOGGED_IN_USER_KEY = 'manity_logged_in_user';
 
 // Clean up any stored credentials from localStorage (migration)
 const cleanupStoredCredentials = () => {
@@ -190,9 +191,17 @@ export const PortfolioProvider = ({ children }) => {
   }), [mapActivityForApi, mapTaskForApi, personRefForApi]);
 
   const apiRequest = useCallback(async (path, options = {}) => {
+    const loggedInUser = (() => {
+      if (typeof localStorage === 'undefined') return '';
+      return localStorage.getItem(LOGGED_IN_USER_KEY) || '';
+    })();
+    const userHeader = loggedInUser.trim()
+      ? { 'X-Logged-In-User': loggedInUser.trim() }
+      : {};
     const response = await fetch(resolveUrl(path), {
       headers: {
         'Content-Type': 'application/json',
+        ...userHeader,
         ...(options.headers || {})
       },
       ...options

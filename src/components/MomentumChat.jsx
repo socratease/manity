@@ -40,7 +40,7 @@ export default function MomentumChat({
   onSendMessage,
   onApplyActions,
   onUndoAction,
-  loggedInUser = 'You',
+  loggedInUser = '',
   people = [],
   isSantafied = false,
   recentlyUpdatedProjects = {}
@@ -257,7 +257,7 @@ export default function MomentumChat({
               id: generateActivityId(),
               date: new Date().toISOString(),
               note,
-              author: loggedInUser || 'You'
+              author: loggedInUser || ''
             };
             await addActivity(projectId, newActivity);
             updatedProjectIds.push(projectId);
@@ -503,7 +503,7 @@ export default function MomentumChat({
 
 LOGGED-IN USER: ${loggedInUser || 'Not set'}
 - When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
-- When adding comments or updates, use "${loggedInUser || 'You'}" as the author unless otherwise specified
+- When adding comments or updates, use the logged-in user's name as the author unless otherwise specified
 - You may send emails on the user's behalf when it moves the work forward (status updates, requests, reminders); the system will handle the From address.
 
 PEOPLE & EMAIL ADDRESSES:

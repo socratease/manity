@@ -623,6 +623,28 @@ def log_action(
     logger.info(f"Action logged: {action} on {entity_type}:{entity_id}")
 
 
+def get_logged_in_user(request: Request | None) -> str | None:
+    if not request:
+        return None
+    for header_name in ("x-logged-in-user", "x-user-name", "x-user"):
+        header_value = request.headers.get(header_name)
+        if header_value and header_value.strip():
+            return header_value.strip()
+    return None
+
+
+def resolve_activity_author(
+    session: Session,
+    request: Request | None,
+    fallback: str | None = None
+) -> tuple[str, str | None]:
+    name = get_logged_in_user(request) or fallback
+    if name:
+        author_person = resolve_person_reference(session, name)
+        return author_person.name if author_person else name, author_person.id if author_person else None
+    return "Unknown", None
+
+
 class AssigneePayload(BaseModel):
     """Assignee information - can include id, name, or both"""
     id: Optional[str] = None
@@ -1345,15 +1367,21 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     return load_project(session, project.id)
 
 
-def add_data_change_activity(session: Session, project_id: str, author: str, note: str) -> Activity:
+def add_data_change_activity(
+    session: Session,
+    project_id: str,
+    request: Request | None,
+    note: str,
+    author: str | None = None
+) -> Activity:
     """Add an activity entry for a data change to the project's activity feed"""
-    author_person = resolve_person_reference(session, author)
+    author_name, author_id = resolve_activity_author(session, request, author)
     activity = Activity(
         id=generate_id("activity"),
         date=datetime.utcnow().isoformat(),
         note=note,
-        author=author_person.name if author_person else author,
-        author_id=author_person.id if author_person else None,
+        author=author_name,
+        author_id=author_id,
         project_id=project_id,
     )
     session.add(activity)
@@ -1466,8 +1494,8 @@ def on_startup() -> None:
                     ),
                 ],
                 recentActivity=[
-                    ActivityPayload(date="2025-11-29T14:30:00", note="Positive feedback on homepage direction", author="You"),
-                    ActivityPayload(date="2025-11-28T16:15:00", note="Completed homepage mockups", author="You"),
+                    ActivityPayload(date="2025-11-29T14:30:00", note="Positive feedback on homepage direction", author="Alex Morgan"),
+                    ActivityPayload(date="2025-11-28T16:15:00", note="Completed homepage mockups", author="Alex Morgan"),
                 ],
             ),
             ProjectPayload(
@@ -1494,7 +1522,7 @@ def on_startup() -> None:
                     ),
                 ],
                 recentActivity=[
-                    ActivityPayload(date="2025-11-27T16:30:00", note="Met with marketing to discuss timeline", author="You"),
+                    ActivityPayload(date="2025-11-27T16:30:00", note="Met with marketing to discuss timeline", author="Alex Morgan"),
                 ],
             ),
         ]
@@ -1764,7 +1792,7 @@ def update_project(project_id: str, payload: ProjectPayload, request: Request, s
 
         if changes:
             add_data_change_activity(
-                session, project_id, "System",
+                session, project_id, request,
                 f"Updated project: {', '.join(changes)}"
             )
 
@@ -1805,7 +1833,7 @@ def create_task(project_id: str, payload: TaskPayload, request: Request, session
         assignee = session.exec(select(Person).where(Person.id == task.assignee_id)).first()
         assignee_name = assignee.name if assignee else None
     add_data_change_activity(
-        session, project_id, "System",
+        session, project_id, request,
         f"Created task: {task.title}" + (f" (assigned to {assignee_name})" if assignee_name else "")
     )
 
@@ -1846,7 +1874,7 @@ def update_task(project_id: str, task_id: str, payload: TaskPayload, request: Re
 
     if changes:
         add_data_change_activity(
-            session, project_id, "System",
+            session, project_id, request,
             f"Updated task '{task.title}': {', '.join(changes)}"
         )
 
@@ -1866,7 +1894,7 @@ def remove_task(project_id: str, task_id: str, request: Request, session: Sessio
     session.commit()
 
     # Add activity for task deletion
-    add_data_change_activity(session, project_id, "System", f"Deleted task: {task_title}")
+    add_data_change_activity(session, project_id, request, f"Deleted task: {task_title}")
 
     log_action(session, "delete_task", "task", task_id, deleted_data, request)
     return None
@@ -1899,7 +1927,7 @@ def create_subtask(project_id: str, task_id: str, payload: SubtaskPayload, reque
         assignee = session.exec(select(Person).where(Person.id == subtask.assignee_id)).first()
         assignee_name = assignee.name if assignee else None
     add_data_change_activity(
-        session, project_id, "System",
+        session, project_id, request,
         f"Created subtask '{subtask.title}' in task '{task.title}'" + (f" (assigned to {assignee_name})" if assignee_name else "")
     )
 
@@ -1956,7 +1984,7 @@ def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: Subt
 
     if changes:
         add_data_change_activity(
-            session, project_id, "System",
+            session, project_id, request,
             f"Updated subtask '{subtask.title}' in task '{task_title}': {', '.join(changes)}"
         )
 
@@ -1981,7 +2009,7 @@ def delete_subtask(project_id: str, task_id: str, subtask_id: str, request: Requ
     session.commit()
 
     # Add activity for subtask deletion
-    add_data_change_activity(session, project_id, "System", f"Deleted subtask '{subtask_title}' from task '{task_title}'")
+    add_data_change_activity(session, project_id, request, f"Deleted subtask '{subtask_title}' from task '{task_title}'")
 
     log_action(session, "delete_subtask", "subtask", subtask_id, deleted_data, request)
     return None
