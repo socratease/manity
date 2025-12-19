@@ -7,7 +7,6 @@ import PeopleGraph from './components/PeopleGraph';
 import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
 import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
-import RoamingAvatars from './components/RoamingAvatars';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 import { MOMENTUM_THRUST_SYSTEM_PROMPT } from './lib/momentumPrompts';
 import { verifyThrustActions } from './lib/momentumVerification';
@@ -25,11 +24,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const recentUpdatesRef = useRef(null);
   const recentlyCompletedRef = useRef(null);
   const nextUpRef = useRef(null);
-
-  // Refs for roaming avatars feature
-  const jugglerRef = useRef(null);
-  const projectCardRefs = useRef({});
-  const [avatarsReleased, setAvatarsReleased] = useState(false);
 
   const {
     projects,
@@ -162,12 +156,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const defaultOwnerStakeholder = resolvedLoggedInUser
     ? [{ name: resolvedLoggedInUser, team: 'Owner' }]
     : [];
-
-  // Handle mode changes from RoamingAvatars to control juggler avatar fade
-  const handleAvatarModeChange = useCallback((mode) => {
-    // When mode is 'march', avatars are released from the juggler
-    setAvatarsReleased(mode === 'march');
-  }, []);
 
   const [focusedField, setFocusedField] = useState(null);
   const [taskEditEnabled, setTaskEditEnabled] = useState(false);
@@ -3407,11 +3395,6 @@ PEOPLE & EMAIL ADDRESSES:
   const renderProjectCard = (project, index) => (
     <div
       key={project.id}
-      ref={(el) => {
-        if (el) {
-          projectCardRefs.current[project.id] = el;
-        }
-      }}
       data-project-id={project.id}
       onClick={() => updateHash('overview', project.id)}
       style={{
@@ -5897,23 +5880,11 @@ PEOPLE & EMAIL ADDRESSES:
           <>
             <div style={{ marginBottom: '24px' }}>
               <PeopleProjectsJuggle
-                ref={jugglerRef}
                 projects={visibleProjects}
                 people={people}
                 isSantafied={isSantafied}
-                avatarsReleased={avatarsReleased}
               />
             </div>
-            {/* Marching avatars that walk down from the juggler along roads */}
-            <RoamingAvatars
-              people={people}
-              projects={visibleProjects}
-              jugglerRef={jugglerRef}
-              projectCardRefs={projectCardRefs}
-              isSantafied={isSantafied}
-              enabled={true}
-              onModeChange={handleAvatarModeChange}
-            />
             <header style={styles.header}>
               <div>
                 <h2 style={styles.pageTitle}>Your Projects</h2>
