@@ -1265,21 +1265,6 @@ def normalize_project_stakeholders(session: Session, stakeholders: Optional[List
     return normalized
 
 
-def resolve_activity_author(session: Session, activity_payload: "ActivityPayload") -> Person | None:
-    if not activity_payload.author:
-        return None
-
-    author_email = getattr(activity_payload, "authorEmail", None)
-    author_id = activity_payload.author_id
-
-    return upsert_person_from_details(
-        session,
-        name=activity_payload.author,
-        email=author_email,
-        person_id=author_id,
-    )
-
-
 def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     statement = (
         select(Project)
