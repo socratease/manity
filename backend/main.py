@@ -196,7 +196,9 @@ def normalize_stakeholders(stakeholders: Optional[List[Stakeholder | dict]]) -> 
     return normalized
 
 
-def serialize_person(person: "Person") -> dict:
+def serialize_person(person: Optional["Person"]) -> Optional[dict]:
+    if person is None:
+        return None
     return {
         "id": person.id,
         "name": person.name,
@@ -311,6 +313,49 @@ def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "P
         id=payload.id or generate_id("person"),
         name=normalized_name,
         team=payload.team,
+        email=normalized_email,
+    )
+    session.add(person)
+    session.commit()
+    session.refresh(person)
+    return person
+
+
+def upsert_person_from_details(
+    session: Session,
+    name: str,
+    team: str | None = None,
+    email: str | None = None,
+    person_id: str | None = None,
+) -> "Person":
+    normalized_name, normalized_email = _normalize_person_identity(name, email)
+    normalized_team = team.strip() if team else ""
+
+    existing = _resolve_existing_person(
+        session,
+        normalized_name=normalized_name,
+        normalized_email=normalized_email,
+        person_id=person_id,
+    )
+
+    if existing:
+        if normalized_team:
+            existing.team = normalized_team
+        if email is not None:
+            existing.email = normalized_email
+        if normalized_name and existing.name.lower() != normalized_name.lower():
+            conflict = get_person_by_name(session, normalized_name)
+            if conflict is None or conflict.id == existing.id:
+                existing.name = normalized_name
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return existing
+
+    person = Person(
+        id=person_id or generate_id("person"),
+        name=normalized_name,
+        team=normalized_team,
         email=normalized_email,
     )
     session.add(person)
@@ -902,17 +947,6 @@ def get_session():
         yield session
 
 
-def serialize_person(person: Optional["Person"]) -> Optional[dict]:
-    """Serialize a person object for inclusion in task/subtask assignee"""
-    if person is None:
-        return None
-    return {
-        "id": person.id,
-        "name": person.name,
-        "team": person.team,
-    }
-
-
 def serialize_subtask(subtask: Subtask) -> dict:
     return {
         "id": subtask.id,
@@ -921,7 +955,7 @@ def serialize_subtask(subtask: Subtask) -> dict:
         "dueDate": subtask.dueDate,
         "completedDate": subtask.completedDate,
         "assigneeId": subtask.assignee_id,
-        "assignee": serialize_person(subtask.assignee) if subtask.assignee else None,
+        "assignee": serialize_person(subtask.assignee),
     }
 
 
@@ -933,7 +967,7 @@ def serialize_task(task: Task) -> dict:
         "dueDate": task.dueDate,
         "completedDate": task.completedDate,
         "assigneeId": task.assignee_id,
-        "assignee": serialize_person(task.assignee) if task.assignee else None,
+        "assignee": serialize_person(task.assignee),
         "subtasks": [serialize_subtask(st) for st in task.subtasks],
     }
 
@@ -963,7 +997,7 @@ def serialize_activity(activity: Activity, person_index: PersonIndex | None = No
         "taskContext": task_context,
         "author": (resolved_person.name if resolved_person else None) or activity.author,
         "authorId": resolved_person.id if resolved_person else activity.author_id,
-        "authorPerson": serialize_person(resolved_person) if resolved_person else None,
+        "authorPerson": serialize_person(resolved_person),
     }
 
 
@@ -1346,9 +1380,26 @@ def run_people_backfill(session: Session) -> None:
     for project in projects:
         updated = False
 
-        normalized_stakeholders = normalize_project_stakeholders(session, project.stakeholders)
-        if normalized_stakeholders != project.stakeholders:
-            project.stakeholders = normalized_stakeholders
+        legacy_stakeholders = [
+            stakeholder for stakeholder in project.stakeholders_legacy or [] if not isinstance(stakeholder, Person)
+        ]
+        normalized_stakeholders = normalize_project_stakeholders(session, legacy_stakeholders)
+        if normalized_stakeholders:
+            existing_person_ids = {person.id for person in project.stakeholders if person.id}
+            for stakeholder in normalized_stakeholders:
+                person_id = stakeholder.get("id")
+                if not person_id or person_id in existing_person_ids:
+                    continue
+
+                person = session.get(Person, person_id)
+                if person is None:
+                    continue
+
+                project.stakeholders.append(person)
+                existing_person_ids.add(person_id)
+                updated = True
+
+            project.stakeholders_legacy = []
             updated = True
 
         for activity in project.recentActivity or []:
