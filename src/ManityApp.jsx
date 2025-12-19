@@ -157,19 +157,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       localStorage.removeItem('manity_logged_in_user');
     }
   }, [loggedInUser]);
+  const resolvedLoggedInUser = loggedInUser?.trim() || '';
+  const activityAuthor = resolvedLoggedInUser || undefined;
+  const defaultOwnerStakeholder = resolvedLoggedInUser
+    ? [{ name: resolvedLoggedInUser, team: 'Owner' }]
+    : [];
 
-  // Track scroll position for roaming avatars release
-  useEffect(() => {
-    const handleScroll = () => {
-      if (!jugglerRef.current) return;
-      const rect = jugglerRef.current.getBoundingClientRect();
-      // Release avatars when juggler is mostly scrolled out of view
-      const shouldRelease = rect.bottom < 100;
-      setAvatarsReleased(shouldRelease);
-    };
-
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
+  // Handle mode changes from RoamingAvatars to control juggler avatar fade
+  const handleAvatarModeChange = useCallback((mode) => {
+    // When mode is 'march', avatars are released from the juggler
+    setAvatarsReleased(mode === 'march');
   }, []);
 
   const [focusedField, setFocusedField] = useState(null);
@@ -824,7 +821,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         await addActivity(projectId, {
           date: new Date().toISOString(),
           note: checkinNote,
-          author: loggedInUser || 'Anonymous'
+        author: activityAuthor
         });
       } catch (error) {
         console.error('Failed to add daily checkin:', error);
@@ -848,7 +845,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         await addActivity(viewingProjectId, {
           date: new Date().toISOString(),
           note: newUpdate,
-          author: loggedInUser || 'Anonymous'
+        author: activityAuthor
         });
       } catch (error) {
         console.error('Failed to add update:', error);
@@ -1011,7 +1008,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
     const finalStakeholders = stakeholdersArray.length > 0
       ? stakeholdersArray
-      : [{ name: loggedInUser || 'You', team: 'Owner' }];
+      : defaultOwnerStakeholder;
 
     // Sync stakeholders to People database
     await syncStakeholdersToPeople(finalStakeholders);
@@ -1031,7 +1028,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       await addActivity(viewingProjectId, {
         date: new Date().toISOString(),
         note: 'Updated project details',
-        author: loggedInUser || 'System'
+        author: activityAuthor
       });
     } catch (error) {
       console.error('Failed to save project edits:', error);
@@ -1171,7 +1168,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         await addActivity(viewingProjectId, {
           date: new Date().toISOString(),
           note: noteWithContext,
-          author: loggedInUser || 'Anonymous',
+          author: activityAuthor,
           // Include taskContext for persistent task/subtask association
           taskContext: {
             taskId,
@@ -1198,7 +1195,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         await addActivity(viewingProjectId, {
           date: new Date().toISOString(),
           note: noteWithContext,
-          author: loggedInUser || 'Anonymous',
+          author: activityAuthor,
           // Include taskContext for persistent task association
           taskContext: {
             taskId,
@@ -1917,6 +1914,8 @@ Write a professional executive summary that highlights the project's current sta
   const syncAllPeopleFromProjects = async (projectsData) => {
     const peopleToSync = new Map(); // Use Map to avoid duplicates
 
+    const ignoredAuthorNames = new Set(['you', 'system', 'unknown', 'anonymous']);
+
     projectsData.forEach(project => {
       // Add stakeholders
       if (project.stakeholders) {
@@ -1935,8 +1934,12 @@ Write a professional executive summary that highlights the project's current sta
             if (normalized) {
               peopleToSync.set((normalized.id || normalized.name).toString().toLowerCase(), normalized);
             }
-          } else if (activity.author && activity.author.trim() && activity.author !== 'You') {
-            const normalized = normalizeStakeholderEntry({ name: activity.author });
+          } else if (activity.author && activity.author.trim()) {
+            const authorName = activity.author.trim();
+            if (ignoredAuthorNames.has(authorName.toLowerCase())) {
+              return;
+            }
+            const normalized = normalizeStakeholderEntry({ name: authorName });
             if (normalized) {
               peopleToSync.set(normalized.name.toLowerCase(), normalized);
             }
@@ -1971,7 +1974,7 @@ Write a professional executive summary that highlights the project's current sta
       name: newProjectName.trim(),
       stakeholders: stakeholderEntries.length > 0
         ? stakeholderEntries
-        : normalizeStakeholderList([{ name: loggedInUser || 'You', team: 'Owner' }]),
+        : normalizeStakeholderList(defaultOwnerStakeholder),
       status: newProjectStatus,
       priority: newProjectPriority,
       progress: 0,
@@ -1992,7 +1995,7 @@ Write a professional executive summary that highlights the project's current sta
         await addActivity(createdProject.id, {
           date: createdAt,
           note: newProjectDescription,
-          author: loggedInUser || 'You'
+          author: activityAuthor
         });
       }
 
@@ -2370,7 +2373,7 @@ Write a professional executive summary that highlights the project's current sta
             id: activityId,
             date: new Date().toISOString(),
             note,
-            author: action.author || loggedInUser || 'You'
+            author: action.author || activityAuthor || ''
           };
           Object.assign(
             project,
@@ -2858,7 +2861,7 @@ Write a professional executive summary that highlights the project's current sta
           await addActivity(targetProjectId, {
             date: new Date().toISOString(),
             note: timelineUpdate,
-            author: loggedInUser || 'Anonymous'
+            author: activityAuthor
           });
         } catch (error) {
           console.error('Failed to add timeline update:', error);
@@ -2953,7 +2956,7 @@ Write a professional executive summary that highlights the project's current sta
     const userMessage = {
       id: generateActivityId(),
       role: 'user',
-      author: loggedInUser || 'You',
+      author: resolvedLoggedInUser || 'User',
       note: thrustDraft,
       date: new Date().toISOString(),
     };
@@ -2968,7 +2971,7 @@ Write a professional executive summary that highlights the project's current sta
 
 LOGGED-IN USER: ${loggedInUser || 'Not set'}
 - When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
-- When adding comments or updates, use "${loggedInUser || 'You'}" as the author unless otherwise specified
+- When adding comments or updates, use the logged-in user's name as the author unless otherwise specified
 - When sending emails on behalf of the user, the "from" address will be automatically set to the logged-in user's email
 
 PEOPLE & EMAIL ADDRESSES:
@@ -5901,7 +5904,7 @@ PEOPLE & EMAIL ADDRESSES:
                 avatarsReleased={avatarsReleased}
               />
             </div>
-            {/* Roaming avatars that escape the juggler and hop between projects */}
+            {/* Marching avatars that walk down from the juggler along roads */}
             <RoamingAvatars
               people={people}
               projects={visibleProjects}
@@ -5909,6 +5912,7 @@ PEOPLE & EMAIL ADDRESSES:
               projectCardRefs={projectCardRefs}
               isSantafied={isSantafied}
               enabled={true}
+              onModeChange={handleAvatarModeChange}
             />
             <header style={styles.header}>
               <div>

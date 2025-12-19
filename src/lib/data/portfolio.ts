@@ -126,12 +126,12 @@ export const defaultPortfolio: Project[] = [
       }
     ],
     recentActivity: addIdsToActivities([
-      { date: '2025-11-29T14:30:00', note: 'Received positive feedback from CEO on homepage design direction', author: 'You' },
-      { date: '2025-11-28T16:15:00', note: 'Completed homepage mockups and shared with stakeholder group', author: 'You' },
+      { date: '2025-11-29T14:30:00', note: 'Received positive feedback from CEO on homepage design direction', author: 'Alex Morgan' },
+      { date: '2025-11-28T16:15:00', note: 'Completed homepage mockups and shared with stakeholder group', author: 'Alex Morgan' },
       { date: '2025-11-28T09:00:00', note: 'Sarah suggested we explore darker color palette for contrast', author: 'Sarah Chen' },
-      { date: '2025-11-25T11:30:00', note: 'User testing session with 12 participants - 85% positive feedback on navigation', author: 'You' },
+      { date: '2025-11-25T11:30:00', note: 'User testing session with 12 participants - 85% positive feedback on navigation', author: 'Alex Morgan' },
       { date: '2025-11-22T15:45:00', note: 'Marcus raised concerns about mobile responsiveness in current mockups', author: 'Marcus Rodriguez' },
-      { date: '2025-11-20T10:00:00', note: 'Completed first round of wireframes for all main pages', author: 'You' }
+      { date: '2025-11-20T10:00:00', note: 'Completed first round of wireframes for all main pages', author: 'Alex Morgan' }
     ], 'p1')
   },
   {
@@ -186,10 +186,10 @@ export const defaultPortfolio: Project[] = [
       }
     ],
     recentActivity: addIdsToActivities([
-      { date: '2025-11-29T13:00:00', note: 'Submitted content calendar for review by Jennifer and Alex', author: 'You' },
-      { date: '2025-11-27T16:30:00', note: 'Met with marketing team to discuss strategy and timeline alignment', author: 'You' },
+      { date: '2025-11-29T13:00:00', note: 'Submitted content calendar for review by Jennifer and Alex', author: 'Alex Morgan' },
+      { date: '2025-11-27T16:30:00', note: 'Met with marketing team to discuss strategy and timeline alignment', author: 'Alex Morgan' },
       { date: '2025-11-26T10:15:00', note: 'Jennifer approved the social media creative concepts', author: 'Jennifer Liu' },
-      { date: '2025-11-24T14:00:00', note: 'Received initial budget estimates from finance team', author: 'You' }
+      { date: '2025-11-24T14:00:00', note: 'Received initial budget estimates from finance team', author: 'Alex Morgan' }
     ], 'p2')
   },
   {
@@ -233,9 +233,9 @@ export const defaultPortfolio: Project[] = [
       }
     ],
     recentActivity: addIdsToActivities([
-      { date: '2025-11-29T11:00:00', note: 'Interviewed 5 key customers about pain points with current portal', author: 'You' },
+      { date: '2025-11-29T11:00:00', note: 'Interviewed 5 key customers about pain points with current portal', author: 'Alex Morgan' },
       { date: '2025-11-27T15:00:00', note: 'Product Lead suggested prioritizing mobile experience in v2', author: 'Product Lead' },
-      { date: '2025-11-26T09:30:00', note: 'Initial wireframes shared with Customer Success team for feedback', author: 'You' }
+      { date: '2025-11-26T09:30:00', note: 'Initial wireframes shared with Customer Success team for feedback', author: 'Alex Morgan' }
     ], 'p3')
   }
 ];
