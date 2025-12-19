@@ -105,7 +105,7 @@ def test_backfill_populates_missing_people(tmp_path):
         project = main.Project(
             id="legacy-project",
             name="Legacy",
-            stakeholders=[{"name": "Legacy Owner", "team": "Ops"}],
+            stakeholders_legacy=[{"name": "Legacy Owner", "team": "Ops"}],
             recentActivity=[main.Activity(id="activity-1", date="2025-01-01", note="note", author="Legacy Owner")],
         )
         session.add(project)
@@ -117,7 +117,7 @@ def test_backfill_populates_missing_people(tmp_path):
         people = session.exec(select(main.Person)).all()
 
         assert len(people) == 1
-        assert refreshed_project.stakeholders[0]["id"] == people[0].id
+        assert refreshed_project.stakeholders[0].id == people[0].id
 
 
 def test_upsert_project_loads_relationships(tmp_path):
