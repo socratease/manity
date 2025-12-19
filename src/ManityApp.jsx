@@ -7,7 +7,6 @@ import PeopleGraph from './components/PeopleGraph';
 import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
 import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
-import RoamingAvatars from './components/RoamingAvatars';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 import { MOMENTUM_THRUST_SYSTEM_PROMPT } from './lib/momentumPrompts';
 import { verifyThrustActions } from './lib/momentumVerification';
@@ -25,11 +24,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const recentUpdatesRef = useRef(null);
   const recentlyCompletedRef = useRef(null);
   const nextUpRef = useRef(null);
-
-  // Refs for roaming avatars feature
-  const jugglerRef = useRef(null);
-  const projectCardRefs = useRef({});
-  const [avatarsReleased, setAvatarsReleased] = useState(false);
 
   const {
     projects,
@@ -5867,22 +5861,11 @@ PEOPLE & EMAIL ADDRESSES:
           <>
             <div style={{ marginBottom: '24px' }}>
               <PeopleProjectsJuggle
-                ref={jugglerRef}
                 projects={visibleProjects}
                 people={people}
                 isSantafied={isSantafied}
-                avatarsReleased={avatarsReleased}
               />
             </div>
-            {/* Roaming avatars that escape the juggler and hop between projects */}
-            <RoamingAvatars
-              people={people}
-              projects={visibleProjects}
-              jugglerRef={jugglerRef}
-              projectCardRefs={projectCardRefs}
-              isSantafied={isSantafied}
-              enabled={true}
-            />
             <header style={styles.header}>
               <div>
                 <h2 style={styles.pageTitle}>Your Projects</h2>
