@@ -195,7 +195,9 @@ def normalize_stakeholders(stakeholders: Optional[List[Stakeholder | dict]]) -> 
     return normalized
 
 
-def serialize_person(person: "Person") -> dict:
+def serialize_person(person: Optional["Person"]) -> Optional[dict]:
+    if person is None:
+        return None
     return {
         "id": person.id,
         "name": person.name,
@@ -895,17 +897,6 @@ def get_session():
         yield session
 
 
-def serialize_person(person: Optional["Person"]) -> Optional[dict]:
-    """Serialize a person object for inclusion in task/subtask assignee"""
-    if person is None:
-        return None
-    return {
-        "id": person.id,
-        "name": person.name,
-        "team": person.team,
-    }
-
-
 def serialize_subtask(subtask: Subtask) -> dict:
     return {
         "id": subtask.id,
@@ -914,7 +905,7 @@ def serialize_subtask(subtask: Subtask) -> dict:
         "dueDate": subtask.dueDate,
         "completedDate": subtask.completedDate,
         "assigneeId": subtask.assignee_id,
-        "assignee": serialize_person(subtask.assignee) if subtask.assignee else None,
+        "assignee": serialize_person(subtask.assignee),
     }
 
 
@@ -926,7 +917,7 @@ def serialize_task(task: Task) -> dict:
         "dueDate": task.dueDate,
         "completedDate": task.completedDate,
         "assigneeId": task.assignee_id,
-        "assignee": serialize_person(task.assignee) if task.assignee else None,
+        "assignee": serialize_person(task.assignee),
         "subtasks": [serialize_subtask(st) for st in task.subtasks],
     }
 
@@ -956,7 +947,7 @@ def serialize_activity(activity: Activity, person_index: PersonIndex | None = No
         "taskContext": task_context,
         "author": (resolved_person.name if resolved_person else None) or activity.author,
         "authorId": resolved_person.id if resolved_person else activity.author_id,
-        "authorPerson": serialize_person(resolved_person) if resolved_person else None,
+        "authorPerson": serialize_person(resolved_person),
     }
 
 
