@@ -158,18 +158,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }
   }, [loggedInUser]);
 
-  // Track scroll position for roaming avatars release
-  useEffect(() => {
-    const handleScroll = () => {
-      if (!jugglerRef.current) return;
-      const rect = jugglerRef.current.getBoundingClientRect();
-      // Release avatars when juggler is mostly scrolled out of view
-      const shouldRelease = rect.bottom < 100;
-      setAvatarsReleased(shouldRelease);
-    };
-
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
+  // Handle mode changes from RoamingAvatars to control juggler avatar fade
+  const handleAvatarModeChange = useCallback((mode) => {
+    // When mode is 'march', avatars are released from the juggler
+    setAvatarsReleased(mode === 'march');
   }, []);
 
   const [focusedField, setFocusedField] = useState(null);
@@ -5901,7 +5893,7 @@ PEOPLE & EMAIL ADDRESSES:
                 avatarsReleased={avatarsReleased}
               />
             </div>
-            {/* Roaming avatars that escape the juggler and hop between projects */}
+            {/* Marching avatars that walk down from the juggler along roads */}
             <RoamingAvatars
               people={people}
               projects={visibleProjects}
@@ -5909,6 +5901,7 @@ PEOPLE & EMAIL ADDRESSES:
               projectCardRefs={projectCardRefs}
               isSantafied={isSantafied}
               enabled={true}
+              onModeChange={handleAvatarModeChange}
             />
             <header style={styles.header}>
               <div>

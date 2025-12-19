@@ -1,16 +1,35 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { createPortal } from 'react-dom';
 import { getTheme } from '../lib/theme';
 
 const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
 
+// Animation modes
+const MODE = {
+  JUGGLING: 'juggling',
+  MARCH: 'march',
+};
+
+// Direction of travel
+const DIRECTION = {
+  DOWN: 'down',
+  UP: 'up',
+};
+
+// Movement speed in pixels per second
+const MARCH_SPEED = 180;
+// Pause duration at project cards in milliseconds
+const STOP_DURATION = 800;
+// Acceleration for direction changes (ease factor)
+const DIRECTION_EASE = 0.08;
+// How far from road to project card center
+const ROAD_TO_CARD_OFFSET = 60;
+
 /**
- * RoamingAvatars - Avatars that escape the juggler and hop between their assigned projects
+ * RoamingAvatars - Avatars that march down from the juggler along roads between components
  *
- * This component creates DOM-based avatars that:
- * 1. Start in sync with canvas avatars in PeopleProjectsJuggle
- * 2. "Escape" when user scrolls past the juggler
- * 3. Hop around between their assigned project cards
+ * JUGGLING mode: Avatars stay at the juggler (invisible, canvas handles rendering)
+ * MARCH mode: Avatars walk down vertical "roads" in the margins between page components
  */
 function RoamingAvatars({
   people = [],
@@ -18,28 +37,44 @@ function RoamingAvatars({
   jugglerRef,
   projectCardRefs,
   isSantafied = false,
-  enabled = true
+  enabled = true,
+  onModeChange = null, // Callback when mode changes (for coordinating with juggler)
 }) {
   const colors = getColors(isSantafied);
+
+  // Core state
+  const [mode, setMode] = useState(MODE.JUGGLING);
+  const [direction, setDirection] = useState(DIRECTION.DOWN);
   const [avatarStates, setAvatarStates] = useState([]);
-  const [isReleased, setIsReleased] = useState(false);
-  const [jugglerRect, setJugglerRect] = useState(null);
-  const [animationTick, setAnimationTick] = useState(0);
+  const [roadGeometry, setRoadGeometry] = useState(null);
+
+  // Refs for animation
   const animationRef = useRef(null);
   const lastTimeRef = useRef(0);
+  const sentinelRef = useRef(null);
+  const jugglerBottomYRef = useRef(0);
+  const prefersReducedMotion = useRef(false);
 
-  // Tick for idle animation (triggers re-render for bounce effect)
+  // Check for reduced motion preference
   useEffect(() => {
-    if (!isReleased || !enabled) return;
+    const mediaQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
+    prefersReducedMotion.current = mediaQuery.matches;
 
-    const tickInterval = setInterval(() => {
-      setAnimationTick(t => t + 1);
-    }, 50); // Update at ~20fps for smooth idle animation
+    const handler = (e) => {
+      prefersReducedMotion.current = e.matches;
+    };
+    mediaQuery.addEventListener('change', handler);
+    return () => mediaQuery.removeEventListener('change', handler);
+  }, []);
 
-    return () => clearInterval(tickInterval);
-  }, [isReleased, enabled]);
+  // Notify parent of mode changes
+  useEffect(() => {
+    if (onModeChange) {
+      onModeChange(mode);
+    }
+  }, [mode, onModeChange]);
 
-  // Build a map of person -> assigned projects
+  // Build map of person -> assigned projects (sorted by vertical position)
   const getPersonProjects = useCallback((personName) => {
     return projects.filter(project =>
       project.stakeholders?.some(s =>
@@ -47,6 +82,68 @@ function RoamingAvatars({
       )
     );
   }, [projects]);
+
+  // Get project card positions sorted by Y coordinate
+  const getProjectCardPositions = useCallback(() => {
+    const positions = [];
+    if (!projectCardRefs?.current) return positions;
+
+    Object.entries(projectCardRefs.current).forEach(([projectId, el]) => {
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      const scrollY = window.scrollY;
+      positions.push({
+        projectId,
+        // Document coordinates (not viewport)
+        x: rect.left + rect.width / 2,
+        y: rect.top + scrollY + rect.height / 2,
+        top: rect.top + scrollY,
+        bottom: rect.bottom + scrollY,
+        left: rect.left,
+        right: rect.right,
+        width: rect.width,
+        height: rect.height,
+      });
+    });
+
+    // Sort by Y position (top to bottom)
+    return positions.sort((a, b) => a.y - b.y);
+  }, [projectCardRefs]);
+
+  // Measure road geometry based on page layout
+  const measureRoadGeometry = useCallback(() => {
+    if (!jugglerRef?.current) return null;
+
+    const jugglerRect = jugglerRef.current.getBoundingClientRect();
+    const scrollY = window.scrollY;
+    const jugglerBottom = jugglerRect.bottom + scrollY;
+    jugglerBottomYRef.current = jugglerBottom;
+
+    // The "road" is a vertical lane - we use the left margin of the main content
+    // We calculate based on project card positions
+    const cardPositions = getProjectCardPositions();
+    if (cardPositions.length === 0) return null;
+
+    // Find the leftmost x position (with some offset for the road)
+    const contentLeft = Math.min(...cardPositions.map(p => p.left));
+    const roadX = contentLeft - 40; // Road runs 40px left of cards
+
+    // Build stops for each project card
+    const stops = cardPositions.map(pos => ({
+      projectId: pos.projectId,
+      roadY: pos.y, // Y position on the road
+      cardX: pos.x, // Card center X
+      cardY: pos.y, // Card center Y
+    }));
+
+    return {
+      roadX,
+      jugglerY: jugglerBottom - 50, // Start position just above juggler bottom
+      jugglerCenterX: jugglerRect.left + jugglerRect.width / 2,
+      stops,
+      bottomY: Math.max(...cardPositions.map(p => p.bottom)) + 100,
+    };
+  }, [jugglerRef, getProjectCardPositions]);
 
   // Initialize avatar states when people change
   useEffect(() => {
@@ -57,198 +154,307 @@ function RoamingAvatars({
       return {
         id: person.id || person.name,
         person,
-        // Current position (will be updated based on juggler position)
+        index,
+        // Current position (document coordinates)
         x: 0,
         y: 0,
-        // Target position for animation
-        targetX: 0,
-        targetY: 0,
-        // Animation state
-        isAnimating: false,
-        animationProgress: 0,
-        // Hop arc parameters
-        startX: 0,
-        startY: 0,
-        arcHeight: 0,
+        // Current velocity for smooth direction changes
+        velocityY: 0,
+        // Target velocity based on direction
+        targetVelocityY: 0,
         // Which projects this person is assigned to
-        assignedProjects: assignedProjects.map(p => p.id),
-        currentProjectIndex: 0,
-        // Timing for staying at each project
-        dwellTime: 2000 + Math.random() * 1000, // 2-3 seconds at each project
-        lastProjectChangeTime: Date.now() + index * 500, // Stagger initial movement
-        // Initial offset within juggler (matches canvas layout)
-        initialOffsetX: 0,
-        initialOffsetY: 0,
+        assignedProjectIds: assignedProjects.map(p => p.id),
+        // Current stop index (which project we're heading to or at)
+        currentStopIndex: 0,
+        // State within the march
+        marchState: 'walking', // 'walking', 'visiting', 'returning'
+        // Time spent at current stop
+        stopTimer: 0,
+        // Progress of visit animation (0 = on road, 1 = at card)
+        visitProgress: 0,
+        // Visit direction (1 = going to card, -1 = returning to road)
+        visitDirection: 0,
       };
     });
 
     setAvatarStates(newStates);
   }, [people, getPersonProjects]);
 
-  // Track scroll and update juggler position
+  // Set up IntersectionObserver for breakpoint detection
   useEffect(() => {
-    if (!jugglerRef?.current) return;
+    if (!jugglerRef?.current || !enabled) return;
 
-    const updatePositions = () => {
-      const rect = jugglerRef.current.getBoundingClientRect();
-      setJugglerRect(rect);
+    // Create sentinel element positioned just below the juggler
+    const sentinel = document.createElement('div');
+    sentinel.style.cssText = 'position: absolute; height: 1px; width: 100%; pointer-events: none;';
+    sentinelRef.current = sentinel;
 
-      // Calculate release threshold - when juggler is mostly scrolled out of view
-      const scrollThreshold = rect.bottom - 100;
-      const shouldRelease = scrollThreshold < 0;
-
-      if (shouldRelease !== isReleased) {
-        setIsReleased(shouldRelease);
+    // Position sentinel relative to juggler
+    const updateSentinelPosition = () => {
+      if (!jugglerRef.current) return;
+      const jugglerRect = jugglerRef.current.getBoundingClientRect();
+      const parent = jugglerRef.current.parentElement;
+      if (parent) {
+        sentinel.style.top = `${jugglerRect.height + 50}px`;
+        if (!sentinel.parentElement) {
+          parent.style.position = 'relative';
+          parent.appendChild(sentinel);
+        }
       }
     };
 
-    // Initial update
-    updatePositions();
+    updateSentinelPosition();
 
-    // Listen to scroll
-    window.addEventListener('scroll', updatePositions, { passive: true });
-    window.addEventListener('resize', updatePositions);
+    const observer = new IntersectionObserver(
+      (entries) => {
+        entries.forEach(entry => {
+          if (prefersReducedMotion.current) return;
+
+          // entry.isIntersecting tells us if sentinel is visible
+          // When scrolling down and sentinel leaves viewport (top), we enter MARCH mode
+          // When scrolling up and sentinel re-enters viewport, we switch to UP direction
+
+          if (!entry.isIntersecting) {
+            // Sentinel is above viewport - we've scrolled past it
+            if (entry.boundingClientRect.bottom < 0) {
+              setMode(MODE.MARCH);
+              setDirection(DIRECTION.DOWN);
+            }
+          } else {
+            // Sentinel is visible again - if we were marching, reverse direction
+            if (mode === MODE.MARCH) {
+              setDirection(DIRECTION.UP);
+            }
+          }
+        });
+      },
+      {
+        threshold: 0,
+        rootMargin: '0px',
+      }
+    );
+
+    observer.observe(sentinel);
+    window.addEventListener('resize', updateSentinelPosition);
 
     return () => {
-      window.removeEventListener('scroll', updatePositions);
-      window.removeEventListener('resize', updatePositions);
+      observer.disconnect();
+      if (sentinel.parentElement) {
+        sentinel.parentElement.removeChild(sentinel);
+      }
+      window.removeEventListener('resize', updateSentinelPosition);
     };
-  }, [jugglerRef, isReleased]);
+  }, [jugglerRef, enabled, mode]);
 
-  // Calculate initial positions based on juggler canvas layout
+  // Update road geometry on scroll/resize
   useEffect(() => {
-    if (!jugglerRect || !people.length) return;
+    if (!enabled) return;
+
+    const updateGeometry = () => {
+      const geometry = measureRoadGeometry();
+      if (geometry) {
+        setRoadGeometry(geometry);
+      }
+    };
+
+    updateGeometry();
+
+    window.addEventListener('resize', updateGeometry);
+    window.addEventListener('scroll', updateGeometry, { passive: true });
+
+    return () => {
+      window.removeEventListener('resize', updateGeometry);
+      window.removeEventListener('scroll', updateGeometry);
+    };
+  }, [enabled, measureRoadGeometry]);
+
+  // Initialize avatar positions when entering MARCH mode
+  useEffect(() => {
+    if (mode !== MODE.MARCH || !roadGeometry) return;
 
     setAvatarStates(prev => prev.map((state, index) => {
-      const spacing = jugglerRect.width / (people.length + 1);
-      const canvasBottomY = jugglerRect.height - 35;
+      // If just starting march, position at juggler
+      if (state.y === 0) {
+        const spacing = 40;
+        const totalWidth = (prev.length - 1) * spacing;
+        const offsetX = (index * spacing) - (totalWidth / 2);
 
-      return {
-        ...state,
-        initialOffsetX: spacing * (index + 1),
-        initialOffsetY: canvasBottomY,
-        x: jugglerRect.left + spacing * (index + 1),
-        y: jugglerRect.top + canvasBottomY,
-      };
+        return {
+          ...state,
+          x: roadGeometry.jugglerCenterX + offsetX,
+          y: roadGeometry.jugglerY,
+          velocityY: 0,
+          targetVelocityY: MARCH_SPEED,
+          currentStopIndex: 0,
+          marchState: 'walking',
+        };
+      }
+      return state;
     }));
-  }, [jugglerRect, people.length]);
-
-  // Get project card position by ID (returns viewport coordinates for fixed positioning)
-  const getProjectCardPosition = useCallback((projectId) => {
-    const ref = projectCardRefs?.current?.[projectId];
-    if (!ref) return null;
-
-    const rect = ref.getBoundingClientRect();
-    // Return position at bottom center of the card (viewport coordinates)
-    return {
-      x: rect.left + rect.width / 2,
-      y: rect.bottom - 24, // Just above the bottom edge of the card
-    };
-  }, [projectCardRefs]);
+  }, [mode, roadGeometry]);
 
   // Main animation loop
   useEffect(() => {
-    if (!enabled || !isReleased) return;
+    if (!enabled || mode !== MODE.MARCH || !roadGeometry) {
+      if (animationRef.current) {
+        cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
+      }
+      return;
+    }
 
     const animate = (timestamp) => {
-      const deltaTime = timestamp - lastTimeRef.current;
+      if (!lastTimeRef.current) {
+        lastTimeRef.current = timestamp;
+      }
+
+      const deltaTime = Math.min((timestamp - lastTimeRef.current) / 1000, 0.1); // Cap at 100ms
       lastTimeRef.current = timestamp;
 
       setAvatarStates(prev => {
-        const now = Date.now();
+        let allAtJuggler = true;
 
-        return prev.map(state => {
-          // If no assigned projects, avatar just floats around
-          if (state.assignedProjects.length === 0) {
+        const newStates = prev.map(state => {
+          // Get assigned stops for this avatar
+          const myStops = roadGeometry.stops.filter(stop =>
+            state.assignedProjectIds.includes(stop.projectId)
+          );
+
+          if (myStops.length === 0) {
+            // No assigned projects - stay at current position
             return state;
           }
 
-          // Get current project card position (updates with scroll)
-          const currentProjectId = state.assignedProjects[state.currentProjectIndex];
-          const currentCardPos = getProjectCardPosition(currentProjectId);
+          // Determine target velocity based on direction
+          const targetVel = direction === DIRECTION.DOWN ? MARCH_SPEED : -MARCH_SPEED;
 
-          // Check if it's time to move to next project
-          const timeSinceLastChange = now - state.lastProjectChangeTime;
+          // Smooth velocity changes (ease into new direction)
+          const velocityDiff = targetVel - state.velocityY;
+          const newVelocityY = state.velocityY + velocityDiff * DIRECTION_EASE;
 
-          if (!state.isAnimating && timeSinceLastChange >= state.dwellTime) {
-            // Time to move to next project
-            const nextIndex = (state.currentProjectIndex + 1) % state.assignedProjects.length;
-            const nextProjectId = state.assignedProjects[nextIndex];
-            const targetPos = getProjectCardPosition(nextProjectId);
+          let newY = state.y;
+          let newX = state.x;
+          let newMarchState = state.marchState;
+          let newStopTimer = state.stopTimer;
+          let newCurrentStopIndex = state.currentStopIndex;
+          let newVisitProgress = state.visitProgress;
+          let newVisitDirection = state.visitDirection;
 
-            if (targetPos) {
-              // Start animation to next project
-              return {
-                ...state,
-                isAnimating: true,
-                animationProgress: 0,
-                startX: state.x,
-                startY: state.y,
-                targetX: targetPos.x,
-                targetY: targetPos.y,
-                arcHeight: 80 + Math.random() * 60, // Random hop height
-                currentProjectIndex: nextIndex,
-              };
-            }
-          }
+          // Handle different march states
+          if (state.marchState === 'walking') {
+            // Move along the road
+            newY = state.y + newVelocityY * deltaTime;
 
-          // Continue animation if in progress
-          if (state.isAnimating) {
-            // Update target position in case page scrolled during animation
-            const nextProjectId = state.assignedProjects[state.currentProjectIndex];
-            const freshTargetPos = getProjectCardPosition(nextProjectId);
-            const targetX = freshTargetPos?.x ?? state.targetX;
-            const targetY = freshTargetPos?.y ?? state.targetY;
+            // Check for stops (project cards)
+            const currentStop = myStops[state.currentStopIndex];
 
-            const newProgress = Math.min(1, state.animationProgress + deltaTime / 600); // 600ms hop duration
+            if (currentStop) {
+              const distToStop = Math.abs(newY - currentStop.roadY);
 
-            // Parabolic arc interpolation
-            const t = newProgress;
-            const easeT = t < 0.5
-              ? 2 * t * t  // Ease in
-              : 1 - Math.pow(-2 * t + 2, 2) / 2; // Ease out
+              // If close to a stop and moving towards it
+              if (distToStop < 20) {
+                const movingTowardsStop =
+                  (direction === DIRECTION.DOWN && state.y < currentStop.roadY) ||
+                  (direction === DIRECTION.UP && state.y > currentStop.roadY);
 
-            const linearX = state.startX + (targetX - state.startX) * easeT;
-            const linearY = state.startY + (targetY - state.startY) * easeT;
-
-            // Add parabolic arc (highest at middle of animation)
-            const arcOffset = -state.arcHeight * 4 * t * (1 - t);
-
-            if (newProgress >= 1) {
-              // Animation complete
-              return {
-                ...state,
-                x: targetX,
-                y: targetY,
-                targetX,
-                targetY,
-                isAnimating: false,
-                animationProgress: 0,
-                lastProjectChangeTime: Date.now(),
-              };
+                if (movingTowardsStop || distToStop < 5) {
+                  // Arrived at stop - start visiting
+                  newY = currentStop.roadY;
+                  newMarchState = 'visiting';
+                  newVisitProgress = 0;
+                  newVisitDirection = 1;
+                  newStopTimer = 0;
+                }
+              }
             }
 
-            return {
-              ...state,
-              x: linearX,
-              y: linearY + arcOffset,
-              targetX,
-              targetY,
-              animationProgress: newProgress,
-            };
+            // Check if reached juggler (when going up)
+            if (direction === DIRECTION.UP && newY <= roadGeometry.jugglerY) {
+              newY = roadGeometry.jugglerY;
+              // Will be handled below to switch to JUGGLING
+            } else {
+              allAtJuggler = false;
+            }
+
+            // Update stop index based on direction
+            if (direction === DIRECTION.DOWN && currentStop && newY > currentStop.roadY + 50) {
+              // Passed this stop, move to next
+              if (state.currentStopIndex < myStops.length - 1) {
+                newCurrentStopIndex = state.currentStopIndex + 1;
+              }
+            } else if (direction === DIRECTION.UP && currentStop && newY < currentStop.roadY - 50) {
+              // Passed this stop going up, move to previous
+              if (state.currentStopIndex > 0) {
+                newCurrentStopIndex = state.currentStopIndex - 1;
+              }
+            }
+
+          } else if (state.marchState === 'visiting') {
+            // Animate to/from project card
+            const currentStop = myStops[state.currentStopIndex];
+
+            if (currentStop) {
+              // Update visit progress
+              newVisitProgress = state.visitProgress + state.visitDirection * deltaTime * 3;
+
+              if (newVisitProgress >= 1) {
+                // Reached the card - pause
+                newVisitProgress = 1;
+                newStopTimer = state.stopTimer + deltaTime * 1000;
+
+                if (newStopTimer >= STOP_DURATION) {
+                  // Done visiting, return to road
+                  newVisitDirection = -1;
+                }
+              } else if (newVisitProgress <= 0) {
+                // Back on the road - continue walking
+                newVisitProgress = 0;
+                newMarchState = 'walking';
+
+                // Move to next/prev stop index
+                if (direction === DIRECTION.DOWN) {
+                  if (state.currentStopIndex < myStops.length - 1) {
+                    newCurrentStopIndex = state.currentStopIndex + 1;
+                  }
+                } else {
+                  if (state.currentStopIndex > 0) {
+                    newCurrentStopIndex = state.currentStopIndex - 1;
+                  }
+                }
+              }
+
+              // Calculate position during visit (eased)
+              const easeProgress = newVisitProgress < 0.5
+                ? 2 * newVisitProgress * newVisitProgress
+                : 1 - Math.pow(-2 * newVisitProgress + 2, 2) / 2;
+
+              newX = roadGeometry.roadX + (currentStop.cardX - roadGeometry.roadX - ROAD_TO_CARD_OFFSET) * easeProgress;
+              newY = currentStop.roadY;
+            }
+
+            allAtJuggler = false;
+
           }
 
-          // When not animating, follow current project card position
-          if (currentCardPos) {
-            return {
-              ...state,
-              x: currentCardPos.x,
-              y: currentCardPos.y,
-            };
-          }
-
-          return state;
+          return {
+            ...state,
+            x: newX,
+            y: newY,
+            velocityY: newVelocityY,
+            marchState: newMarchState,
+            stopTimer: newStopTimer,
+            currentStopIndex: newCurrentStopIndex,
+            visitProgress: newVisitProgress,
+            visitDirection: newVisitDirection,
+          };
         });
+
+        // If all avatars have returned to juggler and direction is UP, switch to JUGGLING
+        if (allAtJuggler && direction === DIRECTION.UP) {
+          setTimeout(() => setMode(MODE.JUGGLING), 0);
+        }
+
+        return newStates;
       });
 
       animationRef.current = requestAnimationFrame(animate);
@@ -259,37 +465,11 @@ function RoamingAvatars({
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
+        animationRef.current = null;
       }
+      lastTimeRef.current = 0;
     };
-  }, [enabled, isReleased, getProjectCardPosition]);
-
-  // When released, snap avatars to their first assigned project
-  useEffect(() => {
-    if (!isReleased) return;
-
-    setAvatarStates(prev => prev.map(state => {
-      if (state.assignedProjects.length === 0) return state;
-
-      const firstProjectId = state.assignedProjects[0];
-      const targetPos = getProjectCardPosition(firstProjectId);
-
-      if (targetPos && !state.isAnimating) {
-        return {
-          ...state,
-          isAnimating: true,
-          animationProgress: 0,
-          startX: state.x,
-          startY: state.y,
-          targetX: targetPos.x,
-          targetY: targetPos.y,
-          arcHeight: 120 + Math.random() * 80, // Big initial hop
-          currentProjectIndex: 0,
-        };
-      }
-
-      return state;
-    }));
-  }, [isReleased, getProjectCardPosition]);
+  }, [enabled, mode, direction, roadGeometry]);
 
   // Get initials from name
   const getInitials = (name) => {
@@ -302,51 +482,29 @@ function RoamingAvatars({
       .substring(0, 2);
   };
 
-  // Don't render if not released or no avatars
-  if (!enabled || !isReleased || avatarStates.length === 0) {
+  // Don't render if in juggling mode, disabled, or reduced motion
+  if (!enabled || mode === MODE.JUGGLING || prefersReducedMotion.current || avatarStates.length === 0) {
     return null;
   }
 
-  // Calculate offset for avatars at the same project to prevent stacking
-  const getAvatarOffset = (state, allStates) => {
-    if (state.isAnimating) return 0;
+  // Convert document coords to viewport coords for fixed positioning
+  const scrollY = window.scrollY;
 
-    const currentProjectId = state.assignedProjects[state.currentProjectIndex];
-    const avatarsAtSameProject = allStates.filter(s =>
-      !s.isAnimating &&
-      s.assignedProjects.length > 0 &&
-      s.assignedProjects[s.currentProjectIndex] === currentProjectId
-    );
-
-    const myIndex = avatarsAtSameProject.findIndex(s => s.id === state.id);
-    const totalAtProject = avatarsAtSameProject.length;
-
-    if (totalAtProject <= 1) return 0;
-
-    // Spread avatars horizontally, centered
-    const spacing = 28;
-    const totalWidth = (totalAtProject - 1) * spacing;
-    return (myIndex * spacing) - (totalWidth / 2);
-  };
-
-  // Render avatars as fixed-position elements via portal
-  const avatarElements = avatarStates.map((state, index) => {
-    // Only show avatars that have assigned projects
-    if (state.assignedProjects.length === 0) return null;
+  // Render avatars
+  const avatarElements = avatarStates.map((state) => {
+    if (state.assignedProjectIds.length === 0) return null;
 
     const initials = getInitials(state.person.name);
+    const viewportY = state.y - scrollY;
 
-    // Calculate idle bounce offset based on time (only when not animating)
-    const idleBounce = !state.isAnimating
-      ? Math.sin(Date.now() / 300 + index * 1.5) * 3
+    // Walking animation - subtle bob
+    const walkingBob = state.marchState === 'walking'
+      ? Math.sin(Date.now() / 150 + state.index * 2) * 2
       : 0;
 
-    // Calculate horizontal offset if multiple avatars at same project
-    const stackOffset = getAvatarOffset(state, avatarStates);
-
-    // Scale effect during hop
-    const hopScale = state.isAnimating
-      ? 1 + Math.sin(state.animationProgress * Math.PI) * 0.2
+    // Scale during movement
+    const scale = state.marchState === 'visiting' && state.visitProgress > 0
+      ? 1 + Math.sin(state.visitProgress * Math.PI) * 0.15
       : 1;
 
     return (
@@ -354,34 +512,41 @@ function RoamingAvatars({
         key={state.id}
         style={{
           position: 'fixed',
-          left: state.x - 16 + stackOffset, // Center the 32px avatar + offset for stacking
-          top: state.y - 16 + idleBounce,
-          width: 32,
-          height: 32,
-          borderRadius: '50%',
-          background: `linear-gradient(135deg, ${colors.earth}, ${colors.amber})`,
-          border: '2px solid rgba(255, 255, 255, 0.6)',
-          boxShadow: state.isAnimating
-            ? '0 8px 20px rgba(0, 0, 0, 0.3)'
-            : '0 4px 12px rgba(0, 0, 0, 0.2)',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'center',
-          fontFamily: "'Inter', sans-serif",
-          fontSize: '10px',
-          fontWeight: 'bold',
-          color: '#FFFFFF',
           zIndex: 9999,
           pointerEvents: 'none',
-          transform: `scale(${hopScale})`,
-          willChange: 'transform, left, top',
+          transform: `translate3d(${state.x - 16}px, ${viewportY - 16 + walkingBob}px, 0) scale(${scale})`,
+          width: 32,
+          height: 32,
+          willChange: 'transform',
         }}
       >
-        {initials || '?'}
+        <div
+          style={{
+            width: '100%',
+            height: '100%',
+            borderRadius: '50%',
+            background: `linear-gradient(135deg, ${colors.earth}, ${colors.amber})`,
+            border: '2px solid rgba(255, 255, 255, 0.6)',
+            boxShadow: state.marchState === 'visiting'
+              ? '0 8px 20px rgba(0, 0, 0, 0.3)'
+              : '0 4px 12px rgba(0, 0, 0, 0.2)',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            fontFamily: "'Inter', sans-serif",
+            fontSize: '10px',
+            fontWeight: 'bold',
+            color: '#FFFFFF',
+            transition: 'box-shadow 0.2s ease',
+          }}
+        >
+          {initials || '?'}
+        </div>
+        {/* Santa hat */}
         {isSantafied && (
           <div style={{
             position: 'absolute',
-            top: -8,
+            top: -6,
             left: '50%',
             transform: 'translateX(-50%)',
             width: 0,
@@ -410,12 +575,40 @@ function RoamingAvatars({
             }} />
           </div>
         )}
+        {/* Walking legs animation */}
+        {state.marchState === 'walking' && (
+          <div style={{
+            position: 'absolute',
+            bottom: -4,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            display: 'flex',
+            gap: 4,
+          }}>
+            <div style={{
+              width: 4,
+              height: 6,
+              backgroundColor: colors.earth,
+              borderRadius: 2,
+              transform: `rotate(${Math.sin(Date.now() / 100 + state.index) * 20}deg)`,
+              transformOrigin: 'top center',
+            }} />
+            <div style={{
+              width: 4,
+              height: 6,
+              backgroundColor: colors.earth,
+              borderRadius: 2,
+              transform: `rotate(${Math.sin(Date.now() / 100 + state.index + Math.PI) * 20}deg)`,
+              transformOrigin: 'top center',
+            }} />
+          </div>
+        )}
       </div>
     );
   });
 
   return createPortal(
-    <div className="roaming-avatars-container">
+    <div className="roaming-avatars-container" style={{ position: 'fixed', top: 0, left: 0, pointerEvents: 'none' }}>
       {avatarElements}
     </div>,
     document.body
