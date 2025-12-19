@@ -21,6 +21,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, select
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 DEV_DEMO_SEED_ENV = "MANITY_ENABLE_DEMO_SEED"
 ENVIRONMENT_ENV = "MANITY_ENV"
@@ -849,7 +850,7 @@ def configured_frontend_origins() -> tuple[list[str], str | None]:
     if not origins and not origin_regex:
         # Default: allow all localhost/127.0.0.1 origins for local development
         # This covers common dev ports: 3000, 5173, 8113, 8114, etc.
-        origin_regex = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+        origin_regex = r"^https?://(localhost|127\.0\.0\.1|rn000224)(:\d+)?$"
 
     return origins, origin_regex
 
@@ -868,9 +869,15 @@ app = FastAPI(title="Manity Portfolio API")
 # allow_credentials disabled.
 allowed_origins, allowed_origin_regex = configured_frontend_origins()
 
+logger.info("CORS allowed_origins=%s", allowed_origins)
+logger.info("CORS allowed_origin_regex=%s", allowed_origin_regex)
+
 if "*" in allowed_origins and not allowed_origin_regex:
     allowed_origin_regex = ".*"
     allowed_origins = []
+
+logger.info("CORS allowed_origins=%s", allowed_origins)
+logger.info("CORS allowed_origin_regex=%s", allowed_origin_regex)
 
 app.add_middleware(
     CORSMiddleware,
