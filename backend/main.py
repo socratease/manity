@@ -318,6 +318,49 @@ def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "P
     return person
 
 
+def upsert_person_from_details(
+    session: Session,
+    name: str,
+    team: str | None = None,
+    email: str | None = None,
+    person_id: str | None = None,
+) -> "Person":
+    normalized_name, normalized_email = _normalize_person_identity(name, email)
+    normalized_team = team.strip() if team else ""
+
+    existing = _resolve_existing_person(
+        session,
+        normalized_name=normalized_name,
+        normalized_email=normalized_email,
+        person_id=person_id,
+    )
+
+    if existing:
+        if normalized_team:
+            existing.team = normalized_team
+        if email is not None:
+            existing.email = normalized_email
+        if normalized_name and existing.name.lower() != normalized_name.lower():
+            conflict = get_person_by_name(session, normalized_name)
+            if conflict is None or conflict.id == existing.id:
+                existing.name = normalized_name
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return existing
+
+    person = Person(
+        id=person_id or generate_id("person"),
+        name=normalized_name,
+        team=normalized_team,
+        email=normalized_email,
+    )
+    session.add(person)
+    session.commit()
+    session.refresh(person)
+    return person
+
+
 def resolve_person_reference(session: Session, reference) -> "Person | None":
     """
     Accepts a variety of person representations (id dict, PersonPayload, Stakeholder, or name string)
