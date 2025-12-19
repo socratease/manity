@@ -933,6 +933,15 @@ def create_db_and_tables() -> None:
     ensure_column("task", 'assignee_id TEXT REFERENCES person(id) ON DELETE SET NULL')
     ensure_column("subtask", 'assignee_id TEXT REFERENCES person(id) ON DELETE SET NULL')
     ensure_column("activity", 'author_id TEXT REFERENCES person(id) ON DELETE SET NULL')
+    ensure_column("project", "stakeholders JSON")
+    ensure_column("project", "executiveUpdate TEXT")
+    ensure_column("project", "startDate TEXT")
+    ensure_column("project", "targetDate TEXT")
+    ensure_column("project", "lastUpdate TEXT")
+    ensure_column("project", "priority TEXT")
+    ensure_column("project", "progress INTEGER")
+    ensure_column("project", "status TEXT")
+    ensure_column("project", "description TEXT")
 
 
 def get_session():
