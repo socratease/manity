@@ -57,7 +57,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [expandedTasks, setExpandedTasks] = useState({});
   const [editMode, setEditMode] = useState(false);
   const [editValues, setEditValues] = useState({});
-  const [projectNameError, setProjectNameError] = useState('');
   const [addingSubtaskTo, setAddingSubtaskTo] = useState(null);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState('');
   const [newSubtaskDueDate, setNewSubtaskDueDate] = useState('');
@@ -474,10 +473,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       }
 
       // Parse hash patterns:
-      // #/portfolio, #/overview, #/projects, #/people, #/thrust, #/slides
+      // #/portfolio, #/people, #/thrust, #/slides
       // #/portfolio/project-123
-      // #/overview/project-123
-      // #/projects/project-123
       // #/thrust/project-123
       const parts = hash.split('/').filter(Boolean);
 
@@ -486,20 +483,20 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         setViewingProjectId(null);
       } else if (parts.length === 1) {
         const view = parts[0];
-        if (['portfolio', 'overview', 'projects', 'people', 'thrust', 'slides', 'timeline', 'data'].includes(view)) {
+        if (['portfolio', 'overview', 'people', 'thrust', 'slides', 'timeline', 'data'].includes(view)) {
           if (view === 'data' && !showDataPage) {
             window.location.hash = '#/people';
             return;
           }
-          setActiveView(view === 'projects' ? 'overview' : view);
+          setActiveView(view);
           setViewingProjectId(null);
         }
       } else if (parts.length >= 2) {
         const view = parts[0];
         const projectId = parts[1];
 
-        if (view === 'portfolio' || view === 'overview' || view === 'projects') {
-          setActiveView(view === 'projects' ? 'overview' : view);
+        if (view === 'portfolio' || view === 'overview') {
+          setActiveView(view);
           setViewingProjectId(projectId);
         } else if (view === 'project') {
           setActiveView('overview');
@@ -985,7 +982,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     const project = projects.find(p => p.id === viewingProjectId);
     if (project) {
       setEditValues({
-        name: project.name,
         status: project.status,
         priority: project.priority,
         stakeholders: project.stakeholders, // Keep full objects for PersonPicker
@@ -993,28 +989,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         progressMode: project.progressMode || 'manual',
         progress: project.progress || 0
       });
-      setProjectNameError('');
       setEditMode(true);
     }
   };
 
   const saveEdits = async () => {
-    const trimmedName = (editValues.name || '').trim();
-    if (!trimmedName) {
-      setProjectNameError('Project name cannot be empty.');
-      return;
-    }
-
-    const duplicateProject = projects.find(project =>
-      project.id !== viewingProjectId &&
-      project.name.trim().toLowerCase() === trimmedName.toLowerCase()
-    );
-
-    if (duplicateProject) {
-      setProjectNameError(`Project name "${trimmedName}" is already in use.`);
-      return;
-    }
-
     // editValues.stakeholders is now an array of {name, team} objects from PersonPicker
     const stakeholdersArray = (editValues.stakeholders || []).filter(Boolean);
 
@@ -1028,7 +1007,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     // Use updateProject API to persist all edited values
     try {
       await updateProject(viewingProjectId, {
-        name: trimmedName,
         status: editValues.status,
         priority: editValues.priority,
         progress: editValues.progress || 0,
@@ -1047,14 +1025,12 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       console.error('Failed to save project edits:', error);
     }
 
-    setProjectNameError('');
     setEditMode(false);
   };
 
   const cancelEdit = () => {
     setEditMode(false);
     setEditValues({});
-    setProjectNameError('');
   };
 
   const handleAddSubtask = async (taskId) => {
@@ -2405,7 +2381,6 @@ Write a professional executive summary that highlights the project's current sta
         }
         case 'add_task': {
           const taskId = action.taskId || `ai-task-${Math.random().toString(36).slice(2, 7)}`;
-          const trimmedTitle = (action.title || '').trim();
           // Resolve assignee if provided
           let taskAssignee = null;
           if (action.assignee) {
@@ -2417,14 +2392,14 @@ Write a professional executive summary that highlights the project's current sta
           }
           const newTask = {
             id: taskId,
-            title: trimmedTitle || 'New task',
+            title: action.title || 'New task',
             status: action.status || 'todo',
             dueDate: action.dueDate,
             completedDate: action.completedDate,
             assignee: taskAssignee,
             subtasks: (action.subtasks || []).map(subtask => ({
               id: subtask.id || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`,
-              title: (subtask.title || '').trim() || 'New subtask',
+              title: subtask.title || 'New subtask',
               status: subtask.status || 'todo',
               dueDate: subtask.dueDate
             }))
@@ -2500,7 +2475,6 @@ Write a professional executive summary that highlights the project's current sta
           }
 
           const subtaskId = action.subtaskId || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`;
-          const trimmedTitle = (action.subtaskTitle || action.title || '').trim();
           // Resolve assignee if provided
           let subtaskAssignee = null;
           if (action.assignee) {
@@ -2512,7 +2486,7 @@ Write a professional executive summary that highlights the project's current sta
           }
           const newSubtask = {
             id: subtaskId,
-            title: trimmedTitle || 'New subtask',
+            title: action.subtaskTitle || action.title || 'New subtask',
             status: action.status || 'todo',
             dueDate: action.dueDate,
             assignee: subtaskAssignee
@@ -3164,7 +3138,7 @@ PEOPLE & EMAIL ADDRESSES:
   }, [projects, loggedInUser]);
 
   useEffect(() => {
-    if (visibleProjects.length > 0 && viewingProjectId && !visibleProjects.some(p => p.id === viewingProjectId)) {
+    if (viewingProjectId && !visibleProjects.some(p => p.id === viewingProjectId)) {
       setViewingProjectId(null);
     }
   }, [loggedInUser, viewingProjectId, visibleProjects]);
@@ -4404,27 +4378,7 @@ PEOPLE & EMAIL ADDRESSES:
 
             <div style={styles.detailsHeader}>
               <div>
-                {editMode ? (
-                  <div style={styles.titleEditWrapper}>
-                    <input
-                      value={editValues.name || ''}
-                      onChange={(e) => {
-                        setEditValues({ ...editValues, name: e.target.value });
-                        if (projectNameError) setProjectNameError('');
-                      }}
-                      onFocus={() => setFocusedField('project-name')}
-                      onBlur={() => setFocusedField(null)}
-                      style={styles.detailsTitleInput}
-                      placeholder="Project name"
-                    />
-                    {renderEditingHint('project-name')}
-                    {projectNameError && (
-                      <div style={styles.nameErrorText}>{projectNameError}</div>
-                    )}
-                  </div>
-                ) : (
-                  <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
-                )}
+                <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
                 <div style={styles.descriptionSection}>
                   <label style={styles.descriptionLabel}>Project Description</label>
                   {editMode ? (
@@ -7503,32 +7457,6 @@ const styles = {
     color: 'var(--charcoal)',
     margin: '0 0 8px 0',
     letterSpacing: '-0.8px',
-  },
-
-  titleEditWrapper: {
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '6px',
-    marginBottom: '8px',
-  },
-
-  detailsTitleInput: {
-    fontSize: '32px',
-    fontWeight: '600',
-    color: 'var(--charcoal)',
-    border: '2px solid var(--cloud)',
-    borderRadius: '10px',
-    padding: '10px 14px',
-    fontFamily: "'Inter', sans-serif",
-    backgroundColor: '#FFFFFF',
-    letterSpacing: '-0.8px',
-    minWidth: '280px',
-  },
-
-  nameErrorText: {
-    fontSize: '12px',
-    color: 'var(--coral)',
-    fontFamily: "'Inter', sans-serif",
   },
 
   detailsDescription: {
