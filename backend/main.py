@@ -1,6 +1,7 @@
 import io
 import logging
 import os
+import re
 import uuid
 import argparse
 from datetime import datetime
@@ -2396,6 +2397,12 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
     EARTH = RGBColor(139, 111, 71)       # --earth: #8b6f47
     WHITE = RGBColor(255, 255, 255)
 
+    def sanitize_text(value: str) -> str:
+        """Remove control characters that can corrupt the PPTX XML."""
+        if not value:
+            return ""
+        return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", value)
+
     def get_priority_color(priority: str) -> RGBColor:
         colors = {
             'high': CORAL,
@@ -2432,7 +2439,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         tf.word_wrap = True
         tf.auto_size = None
         p = tf.paragraphs[0]
-        p.text = text
+        p.text = sanitize_text(text)
         p.font.size = Pt(font_size)
         p.font.color.rgb = font_color
         p.font.bold = bold
@@ -2473,14 +2480,14 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         # Project name
         title_box = add_text_box(
             slide, MARGIN, MARGIN, prs.slide_width - MARGIN * 2, Inches(0.5),
-            slide_data.name, font_size=24, font_color=CHARCOAL, bold=True
+            sanitize_text(slide_data.name), font_size=24, font_color=CHARCOAL, bold=True
         )
 
         # Project description (subtitle)
         if slide_data.description:
             add_text_box(
                 slide, MARGIN, MARGIN + Inches(0.45), prs.slide_width - MARGIN * 2, Inches(0.3),
-                slide_data.description, font_size=12, font_color=CHARCOAL
+                sanitize_text(slide_data.description), font_size=12, font_color=CHARCOAL
             )
 
         # Metadata row
@@ -2488,7 +2495,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         meta_x = MARGIN
 
         # Target date
-        target_text = f"Target: {slide_data.targetDate if slide_data.targetDate else 'TBD'}"
+        target_text = sanitize_text(f"Target: {slide_data.targetDate if slide_data.targetDate else 'TBD'}")
         target_box = add_text_box(slide, meta_x, meta_y, Inches(1.5), Inches(0.25), target_text, font_size=10, font_color=STONE)
         meta_x += Inches(1.6)
 
@@ -2496,7 +2503,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         priority_color = get_priority_color(slide_data.priority)
         priority_shape = add_rounded_rectangle(slide, meta_x, meta_y, Inches(1.1), Inches(0.25), fill_color=CREAM, line_color=priority_color)
         priority_tf = priority_shape.text_frame
-        priority_tf.paragraphs[0].text = f"{slide_data.priority} priority"
+        priority_tf.paragraphs[0].text = sanitize_text(f"{slide_data.priority} priority")
         priority_tf.paragraphs[0].font.size = Pt(9)
         priority_tf.paragraphs[0].font.color.rgb = priority_color
         priority_tf.paragraphs[0].font.bold = True
@@ -2507,7 +2514,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         # Status badge
         status_shape = add_rounded_rectangle(slide, meta_x, meta_y, Inches(0.9), Inches(0.25), fill_color=CLOUD)
         status_tf = status_shape.text_frame
-        status_tf.paragraphs[0].text = slide_data.status
+        status_tf.paragraphs[0].text = sanitize_text(slide_data.status)
         status_tf.paragraphs[0].font.size = Pt(9)
         status_tf.paragraphs[0].font.color.rgb = CHARCOAL
         status_tf.paragraphs[0].font.bold = True
@@ -2518,10 +2525,10 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         # Stakeholders
         if slide_data.stakeholders:
             stakeholder_names = [s.name for s in slide_data.stakeholders[:5]]
-            stakeholder_text = ", ".join(stakeholder_names)
+            stakeholder_text = sanitize_text(", ".join(stakeholder_names))
             if len(slide_data.stakeholders) > 5:
-                stakeholder_text += f" +{len(slide_data.stakeholders) - 5}"
-            add_text_box(slide, meta_x, meta_y, Inches(4), Inches(0.25), f"Team: {stakeholder_text}", font_size=10, font_color=STONE)
+                stakeholder_text += sanitize_text(f" +{len(slide_data.stakeholders) - 5}")
+            add_text_box(slide, meta_x, meta_y, Inches(4), Inches(0.25), sanitize_text(f"Team: {stakeholder_text}"), font_size=10, font_color=STONE)
 
         # Header divider line
         line = slide.shapes.add_shape(
@@ -2546,7 +2553,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
                     "EXECUTIVE UPDATE", font_size=9, font_color=STONE, bold=True)
 
         # Executive Update content
-        exec_content = slide_data.executiveUpdate or slide_data.description or "No executive update yet."
+        exec_content = sanitize_text(slide_data.executiveUpdate or slide_data.description or "No executive update yet.")
         exec_text_box = slide.shapes.add_textbox(
             left_x + Inches(0.15), CONTENT_TOP + Inches(0.35),
             panel_width - Inches(0.3), exec_height - Inches(0.5)
@@ -2573,15 +2580,15 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
                 break
             # Author and date
             add_text_box(slide, left_x + Inches(0.15), updates_y, Inches(1.5), Inches(0.2),
-                        update.author, font_size=10, font_color=CHARCOAL, bold=True)
+                        sanitize_text(update.author), font_size=10, font_color=CHARCOAL, bold=True)
             add_text_box(slide, left_x + panel_width - Inches(1.5), updates_y, Inches(1.35), Inches(0.2),
-                        format_datetime_simple(update.date), font_size=9, font_color=STONE, alignment=PP_ALIGN.RIGHT)
+                        sanitize_text(format_datetime_simple(update.date)), font_size=9, font_color=STONE, alignment=PP_ALIGN.RIGHT)
             updates_y += Inches(0.2)
             # Note text
             note_box = slide.shapes.add_textbox(left_x + Inches(0.15), updates_y, panel_width - Inches(0.3), Inches(0.4))
             note_tf = note_box.text_frame
             note_tf.word_wrap = True
-            note_tf.paragraphs[0].text = update.note[:150]
+            note_tf.paragraphs[0].text = sanitize_text(update.note)[:150]
             note_tf.paragraphs[0].font.size = Pt(9)
             note_tf.paragraphs[0].font.color.rgb = STONE
             note_tf.paragraphs[0].font.name = "Arial"
@@ -2611,14 +2618,14 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
             task_box = slide.shapes.add_textbox(right_x + Inches(0.15), completed_y, panel_width - Inches(1.2), Inches(0.25))
             task_tf = task_box.text_frame
             task_tf.word_wrap = True
-            task_tf.paragraphs[0].text = task.title[:60]
+            task_tf.paragraphs[0].text = sanitize_text(task.title)[:60]
             task_tf.paragraphs[0].font.size = Pt(10)
             task_tf.paragraphs[0].font.color.rgb = CHARCOAL
             task_tf.paragraphs[0].font.bold = True
             task_tf.paragraphs[0].font.name = "Arial"
             # Date
             add_text_box(slide, right_x + panel_width - Inches(1), completed_y, Inches(0.85), Inches(0.2),
-                        task.date, font_size=9, font_color=SAGE, alignment=PP_ALIGN.RIGHT)
+                        sanitize_text(task.date), font_size=9, font_color=SAGE, alignment=PP_ALIGN.RIGHT)
             completed_y += Inches(0.35)
 
         if not slide_data.recentlyCompleted:
@@ -2642,15 +2649,16 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
             task_box = slide.shapes.add_textbox(right_x + Inches(0.15), nextup_y, panel_width - Inches(1.2), Inches(0.25))
             task_tf = task_box.text_frame
             task_tf.word_wrap = True
-            task_tf.paragraphs[0].text = task.title[:60]
+            task_tf.paragraphs[0].text = sanitize_text(task.title)[:60]
             task_tf.paragraphs[0].font.size = Pt(10)
             task_tf.paragraphs[0].font.color.rgb = CHARCOAL
             task_tf.paragraphs[0].font.bold = True
             task_tf.paragraphs[0].font.name = "Arial"
             # Date - color based on content (overdue = coral, otherwise stone)
-            date_color = CORAL if 'overdue' in task.date.lower() else (AMBER if 'today' in task.date.lower() or 'tomorrow' in task.date.lower() else STONE)
+            date_text = sanitize_text(task.date)
+            date_color = CORAL if 'overdue' in date_text.lower() else (AMBER if 'today' in date_text.lower() or 'tomorrow' in date_text.lower() else STONE)
             add_text_box(slide, right_x + panel_width - Inches(1), nextup_y, Inches(0.85), Inches(0.2),
-                        task.date, font_size=9, font_color=date_color, alignment=PP_ALIGN.RIGHT)
+                        date_text, font_size=9, font_color=date_color, alignment=PP_ALIGN.RIGHT)
             nextup_y += Inches(0.35)
 
         if not slide_data.nextUp:
