@@ -90,20 +90,6 @@ export const createProjectTool: ToolDefinition = {
       };
     }
 
-    const existingProject = workingProjects.find(
-      project => project.name.toLowerCase() === projectName.toLowerCase()
-    );
-    if (existingProject) {
-      return {
-        label: 'Skipped action: duplicate project name',
-        detail: `Skipped create_project because "${projectName}" already exists.`,
-        deltas: [],
-        updatedEntityIds: [],
-        observations: { duplicateProjectName: true },
-        status: 'skipped',
-      };
-    }
-
     // Parse stakeholders
     const stakeholderEntries = input.stakeholders
       ? input.stakeholders

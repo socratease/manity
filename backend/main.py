@@ -1394,29 +1394,6 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     return load_project(session, project.id)
 
 
-def ensure_unique_project_name(
-    session: Session,
-    project_name: str,
-    project_id: str | None = None,
-) -> None:
-    normalized_name = project_name.strip()
-    if not normalized_name:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Project name cannot be empty",
-        )
-
-    statement = select(Project).where(func.lower(Project.name) == normalized_name.lower())
-    if project_id:
-        statement = statement.where(Project.id != project_id)
-    existing = session.exec(statement).first()
-    if existing:
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail="Project name already exists",
-        )
-
-
 def add_data_change_activity(
     session: Session,
     project_id: str,
@@ -1445,8 +1422,6 @@ def add_data_change_activity(
         session.commit()
 
     return activity
-
-
 def run_people_backfill(session: Session) -> None:
     migration_key = "people-backfill-v1"
     if session.get(MigrationState, migration_key):
@@ -1794,8 +1769,6 @@ def list_projects(session: Session = Depends(get_session)):
 
 @app.post("/projects", status_code=status.HTTP_201_CREATED)
 def create_project(payload: ProjectPayload, request: Request, session: Session = Depends(get_session)):
-    payload.name = payload.name.strip()
-    ensure_unique_project_name(session, payload.name)
     project = upsert_project(session, payload)
     log_action(session, "create_project", "project", project.id, {"name": project.name, "status": project.status}, request)
     return serialize_project_with_people(session, project)
@@ -1811,9 +1784,6 @@ def get_project(project_id: str, session: Session = Depends(get_session)):
 def update_project(project_id: str, payload: ProjectPayload, request: Request, session: Session = Depends(get_session)):
     if payload.id and payload.id != project_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Project ID mismatch")
-
-    payload.name = payload.name.strip()
-    ensure_unique_project_name(session, payload.name, project_id)
 
     # Get existing project to track changes
     existing = session.exec(select(Project).where(Project.id == project_id)).first()

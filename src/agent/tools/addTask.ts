@@ -117,17 +117,16 @@ export const addTaskTool: ToolDefinition = {
     }
 
     // Create the new task
-    const trimmedTitle = (input.title || '').trim();
     const newTask: Task = {
       id: taskId,
-      title: trimmedTitle || 'New task',
+      title: input.title || 'New task',
       status: input.status || 'todo',
       dueDate: input.dueDate,
       completedDate: input.completedDate,
       assignee: taskAssignee,
       subtasks: (input.subtasks || []).map(subtask => ({
         id: subtask.id || generateSubtaskId(),
-        title: (subtask.title || '').trim() || 'New subtask',
+        title: subtask.title || 'New subtask',
         status: (subtask.status as Task['status']) || 'todo',
         dueDate: subtask.dueDate,
       })),
