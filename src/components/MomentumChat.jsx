@@ -276,9 +276,10 @@ export default function MomentumChat({
         } else if (action.type === 'add_task') {
           const project = projects.find(p => p.id === projectId);
           if (project) {
+            const trimmedTitle = `${action.title || action.name || ''}`.trim();
             const newTask = {
               id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              title: action.title || action.name || '',
+              title: trimmedTitle || 'New task',
               dueDate: action.dueDate || '',
               completed: false,
               assignedTo: action.assignedTo || '',
@@ -343,9 +344,10 @@ export default function MomentumChat({
         } else if (action.type === 'add_subtask') {
           const project = projects.find(p => p.id === projectId);
           if (project) {
+            const trimmedTitle = `${action.title || action.name || ''}`.trim();
             const newSubtask = {
               id: `subtask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              title: action.title || action.name || '',
+              title: trimmedTitle || 'New subtask',
               dueDate: action.dueDate || '',
               completed: false,
               assignedTo: action.assignedTo || ''

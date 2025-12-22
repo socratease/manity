@@ -134,9 +134,10 @@ export const addSubtaskTool: ToolDefinition = {
     }
 
     // Create the new subtask
+    const trimmedTitle = (input.subtaskTitle || input.title || '').trim();
     const newSubtask: Subtask = {
       id: subtaskId,
-      title: input.subtaskTitle || input.title || 'New subtask',
+      title: trimmedTitle || 'New subtask',
       status: input.status || 'todo',
       dueDate: input.dueDate,
       assignee: subtaskAssignee,
