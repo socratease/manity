@@ -123,9 +123,39 @@ export const updateProjectTool: ToolDefinition = {
     const changes: string[] = [];
 
     // Apply updates
-    if (input.name && input.name !== workingProject.name) {
-      changes.push(`renamed "${workingProject.name}" → "${input.name}"`);
-      workingProject.name = input.name;
+    if (input.name) {
+      const trimmedName = input.name.trim();
+      if (!trimmedName) {
+        return {
+          label: 'Skipped action: missing project name',
+          detail: 'Skipped update_project because the new name was blank.',
+          deltas: [],
+          updatedEntityIds: [],
+          observations: { missingName: true },
+          status: 'skipped',
+        };
+      }
+
+      const duplicateProject = workingProjects.find(
+        candidate =>
+          candidate.id !== workingProject.id &&
+          candidate.name.toLowerCase() === trimmedName.toLowerCase()
+      );
+      if (duplicateProject) {
+        return {
+          label: 'Skipped action: duplicate project name',
+          detail: `Skipped update_project because "${trimmedName}" already exists.`,
+          deltas: [],
+          updatedEntityIds: [],
+          observations: { duplicateProjectName: true },
+          status: 'skipped',
+        };
+      }
+
+      if (trimmedName !== workingProject.name) {
+        changes.push(`renamed "${workingProject.name}" → "${trimmedName}"`);
+        workingProject.name = trimmedName;
+      }
     }
 
     if (input.description && input.description !== workingProject.description) {

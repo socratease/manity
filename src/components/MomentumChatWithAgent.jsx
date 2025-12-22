@@ -26,6 +26,70 @@ import {
 // Default to base theme, can be overridden by props
 const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
 
+const normalizeThrustActions = (actions = []) => {
+  const normalizedActions = actions.map(action => ({ ...action }));
+  const taskIdByProjectTitle = new Map();
+
+  normalizedActions.forEach(action => {
+    if (action.type !== 'add_task') return;
+    const taskTitle = `${action.title || action.taskTitle || ''}`.trim();
+    const taskId = action.taskId || action.id || `ai-task-${Math.random().toString(36).slice(2, 7)}`;
+    action.taskId = taskId;
+
+    const projectKey = `${action.projectId || action.projectName || ''}`.toLowerCase();
+    if (projectKey && taskTitle) {
+      taskIdByProjectTitle.set(`${projectKey}::${taskTitle.toLowerCase()}`, taskId);
+    }
+  });
+
+  normalizedActions.forEach(action => {
+    if (action.type !== 'add_subtask' || action.taskId || !action.taskTitle) return;
+    const projectKey = `${action.projectId || action.projectName || ''}`.toLowerCase();
+    const mappedTaskId = taskIdByProjectTitle.get(`${projectKey}::${action.taskTitle.toLowerCase()}`);
+    if (mappedTaskId) {
+      action.taskId = mappedTaskId;
+    }
+  });
+
+  const addTaskIndex = new Map();
+  normalizedActions.forEach((action, index) => {
+    if (action.type === 'add_task' && action.taskId) {
+      addTaskIndex.set(action.taskId, index);
+    }
+  });
+
+  const queuedSubtasks = new Map();
+  const ordered = [];
+
+  normalizedActions.forEach((action, index) => {
+    if (
+      action.type === 'add_subtask' &&
+      action.taskId &&
+      addTaskIndex.has(action.taskId) &&
+      addTaskIndex.get(action.taskId) > index
+    ) {
+      if (!queuedSubtasks.has(action.taskId)) {
+        queuedSubtasks.set(action.taskId, []);
+      }
+      queuedSubtasks.get(action.taskId).push(action);
+      return;
+    }
+
+    ordered.push(action);
+
+    if (action.type === 'add_task' && action.taskId && queuedSubtasks.has(action.taskId)) {
+      ordered.push(...queuedSubtasks.get(action.taskId));
+      queuedSubtasks.delete(action.taskId);
+    }
+  });
+
+  queuedSubtasks.forEach(actionsToAppend => {
+    ordered.push(...actionsToAppend);
+  });
+
+  return ordered;
+};
+
 export default function MomentumChatWithAgent({
   messages = [],
   onSendMessage,
@@ -299,7 +363,8 @@ export default function MomentumChatWithAgent({
 
       const { parsed, content } = await requestMomentumActions(conversationMessages);
       const { validActions } = validateThrustActions(parsed.actions || []);
-      const { actionResults, updatedProjectIds } = await applyThrustActions(validActions);
+      const normalizedActions = normalizeThrustActions(validActions);
+      const { actionResults, updatedProjectIds } = await applyThrustActions(normalizedActions);
 
       const assistantMessage = {
         id: `msg-${Date.now() + 1}`,
