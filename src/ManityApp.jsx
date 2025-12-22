@@ -498,6 +498,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         if (view === 'portfolio' || view === 'overview') {
           setActiveView(view);
           setViewingProjectId(projectId);
+        } else if (view === 'project') {
+          setActiveView('overview');
+          setViewingProjectId(projectId);
         } else if (view === 'thrust') {
           setActiveView('thrust');
           setActiveProjectInChat(projectId);
