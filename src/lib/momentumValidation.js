@@ -48,6 +48,8 @@ export function validateThrustActions(actions = [], projects = []) {
   const validActions = [];
   // Track projects being created in this batch so subsequent actions can reference them
   const pendingProjects = new Map(); // projectName -> temporary project object
+  // Track tasks being created in this batch so subtasks can reference them
+  const pendingTasks = new Map(); // projectId -> Map(taskId/taskTitle -> temporary task object)
 
   actions.forEach((action, idx) => {
     if (!action || typeof action !== 'object') {
@@ -192,10 +194,53 @@ export function validateThrustActions(actions = [], projects = []) {
       return;
     }
 
+    // Track add_task actions for subtask references
+    if (action.type === 'add_task') {
+      const taskId = action.taskId || action.title;
+      const taskTitle = action.title;
+      const projectId = resolvedProject?.id || action.projectId || action.projectName;
+
+      if (taskId || taskTitle) {
+        if (!pendingTasks.has(projectId)) {
+          pendingTasks.set(projectId, new Map());
+        }
+        const projectTasks = pendingTasks.get(projectId);
+        if (taskId) projectTasks.set(taskId.toLowerCase(), { id: taskId, title: taskTitle });
+        if (taskTitle) projectTasks.set(taskTitle.toLowerCase(), { id: taskId, title: taskTitle });
+      }
+    }
+
+    // For add_subtask, validate that the task reference exists
+    if (action.type === 'add_subtask') {
+      const taskRef = action.taskId || action.taskTitle;
+      if (!taskRef) {
+        errors.push(`Action ${idx + 1} (add_subtask) is missing a taskId or taskTitle.`);
+        return;
+      }
+
+      const projectId = resolvedProject?.id || action.projectId || action.projectName;
+      const lowerTaskRef = taskRef.toLowerCase();
+
+      // Check if task exists in current projects
+      const taskExistsInProject = resolvedProject?.plan?.some(task =>
+        `${task.id}` === `${taskRef}` || task.title.toLowerCase() === lowerTaskRef
+      );
+
+      // Check if task is being created in this batch
+      const pendingProjectTasks = pendingTasks.get(projectId);
+      const taskExistsInPending = pendingProjectTasks?.has(lowerTaskRef);
+
+      if (!taskExistsInProject && !taskExistsInPending) {
+        // Allow subtask creation anyway - it will be skipped at execution if task doesn't exist
+        // This allows the LLM to create tasks and subtasks in the same batch
+        // The execution logic will handle the actual task lookup
+      }
+    }
+
     validActions.push({
       ...action,
-      projectId: resolvedProject.id,
-      projectName: resolvedProject.name
+      projectId: resolvedProject?.id,
+      projectName: resolvedProject?.name
     });
   });
 

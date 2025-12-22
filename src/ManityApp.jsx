@@ -246,6 +246,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       schema: {
         type: "object",
         properties: {
+          thinking: {
+            type: "string",
+            description: "Your internal reasoning and planning process. Explain your understanding of the request, what you're considering, and why you're taking specific actions."
+          },
           response: {
             type: "string",
             description: "The assistant's message to the user"
@@ -994,6 +998,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     const project = projects.find(p => p.id === viewingProjectId);
     if (project) {
       setEditValues({
+        name: project.name,
         status: project.status,
         priority: project.priority,
         stakeholders: project.stakeholders, // Keep full objects for PersonPicker
@@ -1013,12 +1018,27 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       ? stakeholdersArray
       : [{ name: loggedInUser || 'You', team: 'Owner' }];
 
+    // Validate unique project name
+    const trimmedName = (editValues.name || '').trim();
+    const currentProject = projects.find(p => p.id === viewingProjectId);
+    if (trimmedName && trimmedName !== currentProject?.name) {
+      const nameExists = projects.some(p =>
+        p.id !== viewingProjectId &&
+        p.name.toLowerCase() === trimmedName.toLowerCase()
+      );
+      if (nameExists) {
+        alert(`A project with the name "${trimmedName}" already exists. Please choose a different name.`);
+        return;
+      }
+    }
+
     // Sync stakeholders to People database
     await syncStakeholdersToPeople(finalStakeholders);
 
     // Use updateProject API to persist all edited values
     try {
       await updateProject(viewingProjectId, {
+        name: trimmedName || currentProject?.name,
         status: editValues.status,
         priority: editValues.priority,
         progress: editValues.progress || 0,
@@ -2069,13 +2089,14 @@ Write a professional executive summary that highlights the project's current sta
       const parsed = JSON.parse(maybeJson);
       return {
         display: parsed.response || parsed.message || parsed.summary || content,
+        thinking: parsed.thinking || null,
         actions: Array.isArray(parsed.actions) ? parsed.actions : []
       };
     } catch (error) {
       console.error('Failed to parse LLM response as JSON:', error, 'Content:', content);
       // Return content as display message with empty actions
       // The validation will catch any issues with missing actions
-      return { display: content, actions: [] };
+      return { display: content, thinking: null, actions: [] };
     }
   };
 
@@ -2187,10 +2208,29 @@ Write a professional executive summary that highlights the project's current sta
       return workingProjects.find(p => `${p.id}` === `${lookupTarget}` || p.name.toLowerCase() === lowerTarget);
     };
 
+    // Track tasks created in this batch for subtask references
+    // Maps: projectId -> Map(requestedTaskId/taskTitle -> actualTaskId)
+    const taskIdMapping = new Map();
+
     const resolveTask = (project, target) => {
       if (!project || !target) return null;
       const lowerTarget = `${target}`.toLowerCase();
-      return project.plan.find(task => `${task.id}` === `${target}` || task.title.toLowerCase() === lowerTarget);
+
+      // First try to find by the target directly
+      let task = project.plan.find(t => `${t.id}` === `${target}` || t.title.toLowerCase() === lowerTarget);
+
+      // If not found, check if this target was mapped from a task created in this batch
+      if (!task && project.id) {
+        const projectTaskMap = taskIdMapping.get(project.id);
+        if (projectTaskMap) {
+          const mappedTaskId = projectTaskMap.get(lowerTarget);
+          if (mappedTaskId) {
+            task = project.plan.find(t => t.id === mappedTaskId);
+          }
+        }
+      }
+
+      return task;
     };
 
     const describeDueDate = (date) => date ? `due ${new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'no due date set';
@@ -2369,21 +2409,44 @@ Write a professional executive summary that highlights the project's current sta
               taskAssignee = person ? { name: person.name, team: person.team } : { name: assigneeName };
             }
           }
+          const taskTitle = action.title || action.name || '';
+          if (!taskTitle.trim()) {
+            label = `Skipped action: missing task title`;
+            detail = `Skipped add_task because no title was provided.`;
+            appendActionResult(label, detail, actionDeltas);
+            break;
+          }
           const newTask = {
             id: taskId,
-            title: action.title || 'New task',
+            title: taskTitle,
             status: action.status || 'todo',
             dueDate: action.dueDate,
             completedDate: action.completedDate,
             assignee: taskAssignee,
             subtasks: (action.subtasks || []).map(subtask => ({
               id: subtask.id || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`,
-              title: subtask.title || 'New subtask',
+              title: subtask.title || subtask.name || 'New subtask',
               status: subtask.status || 'todo',
               dueDate: subtask.dueDate
             }))
           };
           project.plan = [...project.plan, newTask];
+
+          // Track task for subtask references in same batch
+          if (!taskIdMapping.has(project.id)) {
+            taskIdMapping.set(project.id, new Map());
+          }
+          const projectTaskMap = taskIdMapping.get(project.id);
+          // Map the requested taskId (if provided) and title to the actual taskId
+          if (action.taskId && action.taskId !== taskId) {
+            projectTaskMap.set(action.taskId.toLowerCase(), taskId);
+          }
+          if (newTask.title) {
+            projectTaskMap.set(newTask.title.toLowerCase(), taskId);
+          }
+          // Also map the actual ID to itself for consistency
+          projectTaskMap.set(taskId.toLowerCase(), taskId);
+
           actionDeltas.push({ type: 'remove_task', projectId: project.id, taskId });
           label = `Added task "${newTask.title}" to ${project.name}`;
           detail = `Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)})${taskAssignee ? ` assigned to ${taskAssignee.name}` : ''} to ${project.name}`;
@@ -2463,9 +2526,16 @@ Write a professional executive summary that highlights the project's current sta
               subtaskAssignee = person ? { name: person.name, team: person.team } : { name: assigneeName };
             }
           }
+          const subtaskTitle = action.subtaskTitle || action.title || action.name || '';
+          if (!subtaskTitle.trim()) {
+            label = `Skipped action: missing subtask title`;
+            detail = `Skipped add_subtask because no title was provided.`;
+            appendActionResult(label, detail, actionDeltas);
+            break;
+          }
           const newSubtask = {
             id: subtaskId,
-            title: action.subtaskTitle || action.title || 'New subtask',
+            title: subtaskTitle,
             status: action.status || 'todo',
             dueDate: action.dueDate,
             assignee: subtaskAssignee
@@ -2994,6 +3064,7 @@ PEOPLE & EMAIL ADDRESSES:
         role: 'assistant',
         author: 'Momentum',
         note: parsed.display || content,
+        thinking: parsed.thinking || null,
         date: new Date().toISOString(),
         actionResults,
         deltas,
@@ -4362,7 +4433,26 @@ PEOPLE & EMAIL ADDRESSES:
 
             <div style={styles.detailsHeader}>
               <div>
-                <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
+                {editMode ? (
+                  <input
+                    type="text"
+                    value={editValues.name || ''}
+                    onChange={(e) => setEditValues({...editValues, name: e.target.value})}
+                    style={{
+                      ...styles.detailsTitle,
+                      border: '2px solid var(--earth)',
+                      borderRadius: '8px',
+                      padding: '8px 12px',
+                      backgroundColor: '#FFFFFF',
+                      outline: 'none',
+                      width: '100%',
+                      boxSizing: 'border-box'
+                    }}
+                    placeholder="Project name"
+                  />
+                ) : (
+                  <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
+                )}
                 <div style={styles.descriptionSection}>
                   <label style={styles.descriptionLabel}>Project Description</label>
                   {editMode ? (

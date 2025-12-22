@@ -61,6 +61,7 @@ export default function MomentumChat({
   const [linkedMessageId, setLinkedMessageId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
   const [projectPositions, setProjectPositions] = useState({});
+  const [expandedThinking, setExpandedThinking] = useState({}); // Track which messages have thinking expanded
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
@@ -620,9 +621,18 @@ ${JSON.stringify(peopleContext, null, 2)}
     );
   };
 
+  const toggleThinking = (messageId) => {
+    setExpandedThinking(prev => ({
+      ...prev,
+      [messageId]: !prev[messageId]
+    }));
+  };
+
   const renderMessage = (message) => {
     const isUser = message.role === 'user';
     const isLinked = (message.linkedProjectIds?.length > 0) || (message.updatedProjectIds?.length > 0);
+    const hasThinking = !isUser && message.thinking;
+    const isThinkingExpanded = expandedThinking[message.id];
 
     return (
       <div
@@ -639,6 +649,23 @@ ${JSON.stringify(peopleContext, null, 2)}
         }}>
           {!isUser && <div style={styles.aiAvatar}>M</div>}
           <div style={styles.messageContent}>
+            {/* Collapsible thinking/planning section */}
+            {hasThinking && (
+              <div style={styles.thinkingContainer}>
+                <button
+                  onClick={() => toggleThinking(message.id)}
+                  style={styles.thinkingToggle}
+                >
+                  <span style={styles.thinkingIcon}>{isThinkingExpanded ? '▼' : '▶'}</span>
+                  <span style={styles.thinkingLabel}>Thinking Process</span>
+                </button>
+                {isThinkingExpanded && (
+                  <div style={styles.thinkingContent}>
+                    {message.thinking}
+                  </div>
+                )}
+              </div>
+            )}
             <div style={{
               ...styles.messageText,
               ...(isUser ? styles.userText : styles.assistantText),
@@ -968,6 +995,44 @@ const getStyles = (colors) => ({
     display: 'flex',
     flexDirection: 'column',
     gap: '6px',
+  },
+  thinkingContainer: {
+    marginBottom: '4px',
+  },
+  thinkingToggle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
+    padding: '6px 10px',
+    background: 'linear-gradient(135deg, #E8E3D8, #F0EDE6)',
+    border: '1px solid #D1C9BA',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    fontSize: '12px',
+    color: '#6B6560',
+    transition: 'all 0.15s ease',
+    width: 'fit-content',
+  },
+  thinkingIcon: {
+    fontSize: '8px',
+    color: '#8B857D',
+  },
+  thinkingLabel: {
+    fontWeight: '500',
+    letterSpacing: '0.3px',
+  },
+  thinkingContent: {
+    marginTop: '8px',
+    padding: '12px 14px',
+    background: 'linear-gradient(145deg, #FDFCFA, #F7F5F0)',
+    border: '1px solid #E8E3D8',
+    borderLeft: '3px solid #B8A98F',
+    borderRadius: '6px',
+    fontSize: '13px',
+    lineHeight: '1.6',
+    color: '#5A5550',
+    fontStyle: 'italic',
+    whiteSpace: 'pre-wrap',
   },
   messageText: {
     padding: '12px 16px',
