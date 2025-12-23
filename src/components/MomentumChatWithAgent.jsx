@@ -11,6 +11,7 @@ import { usePortfolioData } from '../hooks/usePortfolioData';
 import { callOpenAIChat } from '../lib/llmClient';
 import { validateThrustActions as validateThrustActionsUtil } from '../lib/momentumValidation';
 import { getTheme } from '../lib/theme';
+import ThinkingProcess from './ThinkingProcess';
 
 // Import the agent layer
 import {
@@ -201,7 +202,7 @@ export default function MomentumChatWithAgent({
   // Apply actions using the agent runtime
   const applyThrustActions = useCallback(async (actions = []) => {
     if (!actions.length) {
-      return { deltas: [], actionResults: [], updatedProjectIds: [] };
+      return { deltas: [], actionResults: [], updatedProjectIds: [], plan: null, executionLog: null };
     }
 
     const services = buildServices();
@@ -236,6 +237,8 @@ export default function MomentumChatWithAgent({
         deltas: result.deltas,
         actionResults,
         updatedProjectIds: result.updatedEntityIds,
+        plan: result.plan,
+        executionLog: result.executionLog,
       };
     } catch (error) {
       console.error('Agent execution failed:', error);
@@ -248,6 +251,8 @@ export default function MomentumChatWithAgent({
           error: error.message,
         }],
         updatedProjectIds: [],
+        plan: null,
+        executionLog: null,
       };
     }
   }, [agentRuntime, buildServices, projects, people, loggedInUser]);
@@ -299,7 +304,7 @@ export default function MomentumChatWithAgent({
 
       const { parsed, content } = await requestMomentumActions(conversationMessages);
       const { validActions } = validateThrustActions(parsed.actions || []);
-      const { actionResults, updatedProjectIds } = await applyThrustActions(validActions);
+      const { actionResults, updatedProjectIds, plan, executionLog } = await applyThrustActions(validActions);
 
       const assistantMessage = {
         id: `msg-${Date.now() + 1}`,
@@ -312,6 +317,8 @@ export default function MomentumChatWithAgent({
         updatedProjectIds,
         linkedProjectIds: updatedProjectIds,
         deltas: actionResults.flatMap(ar => ar.deltas || []),
+        plan,
+        executionLog,
       };
 
       if (onSendMessage) {
@@ -413,6 +420,13 @@ export default function MomentumChatWithAgent({
             }}>
               {message.note || message.content}
             </div>
+            {!isUser && (message.plan || message.executionLog) && (
+              <ThinkingProcess
+                plan={message.plan}
+                executionLog={message.executionLog}
+                colors={colors}
+              />
+            )}
             {message.actionResults?.length > 0 && (
               <div style={styles.actionsContainer}>
                 {message.actionResults.map((a, i) => renderAction(a, i, message.id))}
