@@ -77,15 +77,22 @@ export const createProjectTool: ToolDefinition = {
   async execute(ctx: ToolContext, input: CreateProjectInput): Promise<ToolResult> {
     const { helpers, loggedInUser, workingProjects, projectLookup } = ctx;
 
-    // Get project name
-    const projectName = (input.name || input.projectName || '').trim();
+    // Get project name with defensive coercion
+    const rawName = input.name ?? input.projectName ?? '';
+    const projectName = (typeof rawName === 'string' ? rawName : String(rawName)).trim();
     if (!projectName) {
+      // Log for debugging
+      console.warn('[Agent createProject] create_project action has empty name:', {
+        inputName: input.name,
+        inputProjectName: input.projectName,
+        rawName
+      });
       return {
         label: 'Skipped action: missing project name',
         detail: 'Skipped create_project because no name was provided.',
         deltas: [],
         updatedEntityIds: [],
-        observations: { missingName: true },
+        observations: { missingName: true, inputReceived: input },
         status: 'skipped',
       };
     }

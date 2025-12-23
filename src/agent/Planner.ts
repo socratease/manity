@@ -79,6 +79,7 @@ export const planningResponseSchema = {
 /**
  * Legacy response schema for backwards compatibility.
  * This matches the existing momentum response format.
+ * Includes all action-specific fields to ensure LLM includes them in output.
  */
 export const legacyResponseSchema = {
   type: 'json_schema',
@@ -94,8 +95,44 @@ export const legacyResponseSchema = {
             type: 'object',
             properties: {
               type: { type: 'string' },
+              // Project identification
               projectId: { type: 'string' },
               projectName: { type: 'string' },
+              // create_project fields
+              name: { type: 'string' },
+              status: { type: 'string' },
+              priority: { type: 'string' },
+              progress: { type: 'number' },
+              description: { type: 'string' },
+              targetDate: { type: 'string' },
+              startDate: { type: 'string' },
+              stakeholders: { type: 'string' },
+              executiveUpdate: { type: 'string' },
+              // Task/subtask fields
+              taskId: { type: 'string' },
+              taskTitle: { type: 'string' },
+              subtaskId: { type: 'string' },
+              subtaskTitle: { type: 'string' },
+              title: { type: 'string' },
+              dueDate: { type: 'string' },
+              completedDate: { type: 'string' },
+              assignee: { type: 'string' },
+              // Comment fields
+              note: { type: 'string' },
+              content: { type: 'string' },
+              author: { type: 'string' },
+              // Email fields
+              recipients: { type: 'string' },
+              subject: { type: 'string' },
+              body: { type: 'string' },
+              // Person fields
+              personName: { type: 'string' },
+              team: { type: 'string' },
+              email: { type: 'string' },
+              // Query fields
+              scope: { type: 'string' },
+              detailLevel: { type: 'string' },
+              includePeople: { type: 'boolean' },
             },
           },
         },
