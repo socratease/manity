@@ -898,6 +898,8 @@ const getStyles = (colors) => ({
     borderRight: '1px solid #E8E3D8',
     backgroundColor: '#FFFFFF',
     minWidth: 0,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   chatHeader: {
     display: 'flex',
@@ -1115,6 +1117,8 @@ const getStyles = (colors) => ({
     flexDirection: 'column',
     backgroundColor: '#FAF8F3',
     flexShrink: 0,
+    minHeight: 0,
+    overflow: 'hidden',
   },
   canvasHeader: {
     display: 'flex',
