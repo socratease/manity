@@ -2303,8 +2303,17 @@ Write a professional executive summary that highlights the project's current sta
       }
 
       if (action.type === 'create_project') {
-        const projectName = (action.name || action.projectName || '').trim();
+        // Check both name and projectName with defensive coercion
+        const rawName = action.name ?? action.projectName ?? '';
+        const projectName = (typeof rawName === 'string' ? rawName : String(rawName)).trim();
         if (!projectName) {
+          // Log for debugging
+          console.warn('[ManityApp] create_project action has empty name:', {
+            action,
+            actionName: action.name,
+            actionProjectName: action.projectName,
+            rawName
+          });
           label = 'Skipped action: missing project name';
           detail = 'Skipped create_project because no name was provided.';
           appendActionResult(label, detail, actionDeltas);

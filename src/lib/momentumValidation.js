@@ -131,14 +131,20 @@ export function validateThrustActions(actions = [], projects = []) {
     // create_project doesn't need a projectId - it creates a new project
     if (action.type === 'create_project') {
       const projectId = action.projectId ?? action.id;
-      const projectName = normalizeProjectName(action.name || action.projectName);
+      // Coerce name to string to handle edge cases (undefined, null, numbers)
+      const rawName = action.name ?? action.projectName ?? '';
+      const projectName = normalizeProjectName(typeof rawName === 'string' ? rawName : String(rawName));
       if (!projectName) {
+        // Log the raw action for debugging when name is missing
+        console.warn('[Momentum] create_project action missing name:', JSON.stringify(action, null, 2));
         errors.push(`Action ${idx + 1} (create_project) is missing a name or projectName.`);
         return;
       }
-      // Track this project so subsequent actions can reference it
-      pendingProjects.set(projectName.toLowerCase(), { name: projectName });
-      validActions.push({ ...action, name: projectName, projectName });
+      // Track this project so subsequent actions can reference it by name OR id
+      registerPendingProject(projectName, projectId);
+      // Explicitly set both name and projectName to ensure they're always present
+      const validatedAction = { ...action, name: projectName, projectName: projectName };
+      validActions.push(validatedAction);
       processDeferredActions(projectName);
       return;
     }

@@ -9,6 +9,7 @@ import { getTheme, getPriorityColor as getThemePriorityColor, getStatusColor as 
 const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
 
 // JSON Schema for structured output - ensures LLM returns properly formatted actions
+// Includes all action-specific fields to ensure LLM includes them in output
 const momentumResponseSchema = {
   type: "json_schema",
   json_schema: {
@@ -23,9 +24,44 @@ const momentumResponseSchema = {
             type: "object",
             properties: {
               type: { type: "string" },
+              // Project identification (use either projectId OR projectName)
               projectId: { type: "string" },
               projectName: { type: "string" },
-              // Other action-specific fields will be validated by validateThrustActions
+              // create_project fields - use "name" as the primary field
+              name: { type: "string" },
+              status: { type: "string" },
+              priority: { type: "string" },
+              progress: { type: "number" },
+              description: { type: "string" },
+              targetDate: { type: "string" },
+              startDate: { type: "string" },
+              stakeholders: { type: "string" },
+              executiveUpdate: { type: "string" },
+              // Task/subtask fields
+              taskId: { type: "string" },
+              taskTitle: { type: "string" },
+              subtaskId: { type: "string" },
+              subtaskTitle: { type: "string" },
+              title: { type: "string" },
+              dueDate: { type: "string" },
+              completedDate: { type: "string" },
+              assignee: { type: "string" },
+              // Comment fields
+              note: { type: "string" },
+              content: { type: "string" },
+              author: { type: "string" },
+              // Email fields
+              recipients: { type: "string" },
+              subject: { type: "string" },
+              body: { type: "string" },
+              // Person fields
+              personName: { type: "string" },
+              team: { type: "string" },
+              email: { type: "string" },
+              // Query fields
+              scope: { type: "string" },
+              detailLevel: { type: "string" },
+              includePeople: { type: "boolean" },
             }
           }
         }
@@ -173,9 +209,17 @@ export default function MomentumChat({
         const actionDeltas = [];
 
         if (action.type === 'create_project') {
-          // Validate that project name is provided
-          const projectName = (action.name || action.projectName || '').trim();
+          // Validate that project name is provided - check both name and projectName
+          const rawName = action.name ?? action.projectName ?? '';
+          const projectName = (typeof rawName === 'string' ? rawName : String(rawName)).trim();
           if (!projectName) {
+            // Log the action for debugging
+            console.warn('[MomentumChat] create_project action has empty name:', {
+              action,
+              actionName: action.name,
+              actionProjectName: action.projectName,
+              rawName
+            });
             actionResults.push({
               type: 'create_project',
               label: 'Failed to create project',
