@@ -885,13 +885,11 @@ ${JSON.stringify(peopleContext, null, 2)}
 const getStyles = (colors) => ({
   container: {
     display: 'flex',
-    flex: 1,
     height: '100%',
     minHeight: 0,
     width: '100%',
     backgroundColor: '#FAF8F3',
     fontFamily: "system-ui, -apple-system, sans-serif",
-    overflow: 'hidden',
   },
   chatColumn: {
     flex: 1,
@@ -899,7 +897,6 @@ const getStyles = (colors) => ({
     flexDirection: 'column',
     borderRight: '1px solid #E8E3D8',
     backgroundColor: '#FFFFFF',
-    minHeight: 0,
     minWidth: 0,
   },
   chatHeader: {
@@ -1118,7 +1115,6 @@ const getStyles = (colors) => ({
     flexDirection: 'column',
     backgroundColor: '#FAF8F3',
     flexShrink: 0,
-    minHeight: 0,
   },
   canvasHeader: {
     display: 'flex',
