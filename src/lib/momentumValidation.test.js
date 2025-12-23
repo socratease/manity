@@ -195,6 +195,26 @@ describe('validateThrustActions', () => {
       expect(result.validActions).toHaveLength(4);
       expect(result.errors).toHaveLength(0);
     });
+
+    it('should allow referencing a pending project by provided projectId', () => {
+      const actions = [
+        { type: 'create_project', name: 'Project X', projectId: 'temp-123' },
+        { type: 'add_task', projectId: 'temp-123', title: 'Task on pending project' }
+      ];
+      const result = validateThrustActions(actions, mockProjects);
+      expect(result.validActions).toHaveLength(2);
+      expect(result.errors).toHaveLength(0);
+    });
+
+    it('should allow referencing a pending project by provided id field', () => {
+      const actions = [
+        { type: 'create_project', name: 'Project Y', id: 'temp-999' },
+        { type: 'add_task', projectId: 'temp-999', title: 'Follow-up task' }
+      ];
+      const result = validateThrustActions(actions, mockProjects);
+      expect(result.validActions).toHaveLength(2);
+      expect(result.errors).toHaveLength(0);
+    });
   });
 
   describe('comment validation', () => {

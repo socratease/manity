@@ -47,7 +47,33 @@ export function validateThrustActions(actions = [], projects = []) {
 
   const validActions = [];
   // Track projects being created in this batch so subsequent actions can reference them
-  const pendingProjects = new Map(); // projectName -> temporary project object
+  // Pending projects are indexed by both name (case-insensitive) and any supplied ID
+  const pendingProjects = new Map(); // key -> temporary project object
+
+  const registerPendingProject = (name, id) => {
+    if (name) {
+      pendingProjects.set(`name:${name.toLowerCase()}`, { name, id });
+    }
+    if (id !== undefined && id !== null) {
+      pendingProjects.set(`id:${id}`, { name: name || `${id}`, id });
+    }
+  };
+
+  const getPendingProject = (ref) => {
+    const idKey = `id:${ref}`;
+    if (pendingProjects.has(idKey)) {
+      return pendingProjects.get(idKey);
+    }
+
+    if (typeof ref === 'string') {
+      const nameKey = `name:${ref.toLowerCase()}`;
+      if (pendingProjects.has(nameKey)) {
+        return pendingProjects.get(nameKey);
+      }
+    }
+
+    return null;
+  };
 
   actions.forEach((action, idx) => {
     if (!action || typeof action !== 'object') {
@@ -68,12 +94,13 @@ export function validateThrustActions(actions = [], projects = []) {
     // create_project doesn't need a projectId - it creates a new project
     if (action.type === 'create_project') {
       const projectName = action.name || action.projectName;
+      const projectId = action.projectId ?? action.id;
       if (!projectName) {
         errors.push(`Action ${idx + 1} (create_project) is missing a name or projectName.`);
         return;
       }
       // Track this project so subsequent actions can reference it
-      pendingProjects.set(projectName.toLowerCase(), { name: projectName });
+      registerPendingProject(projectName, projectId);
       validActions.push(action);
       return;
     }
@@ -161,8 +188,8 @@ export function validateThrustActions(actions = [], projects = []) {
     let resolvedProject = resolveMomentumProjectRef(projectRef, projects);
 
     // If not found in existing projects, check if it's being created in this batch
-    if (!resolvedProject && typeof projectRef === 'string') {
-      const pendingProject = pendingProjects.get(projectRef.toLowerCase());
+    if (!resolvedProject) {
+      const pendingProject = getPendingProject(projectRef);
       if (pendingProject) {
         // Allow reference to project being created in same batch
         // The action will be executed after the create_project action
