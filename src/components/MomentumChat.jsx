@@ -898,7 +898,6 @@ const getStyles = (colors) => ({
     borderRight: '1px solid #E8E3D8',
     backgroundColor: '#FFFFFF',
     minWidth: 0,
-    minHeight: 0,
   },
   chatHeader: {
     display: 'flex',
@@ -940,7 +939,6 @@ const getStyles = (colors) => ({
     display: 'flex',
     flexDirection: 'column',
     gap: '14px',
-    minHeight: 0,
   },
   messageWrapper: {
     display: 'flex',
@@ -1117,7 +1115,6 @@ const getStyles = (colors) => ({
     flexDirection: 'column',
     backgroundColor: '#FAF8F3',
     flexShrink: 0,
-    minHeight: 0,
   },
   canvasHeader: {
     display: 'flex',
@@ -1144,7 +1141,6 @@ const getStyles = (colors) => ({
     flexDirection: 'column',
     gap: '10px',
     overflowY: 'auto',
-    minHeight: 0,
   },
   projectCard: {
     position: 'relative',
