@@ -283,6 +283,7 @@ LOGGED-IN USER: ${context.loggedInUser || 'Not set'}
 3. Reference projects by their exact name or ID
 4. For send_email, ensure recipients, subject, and body are provided
 5. If you cannot complete a request, explain why in your response
+6. For create_project actions, always include a non-empty "name" and specify status, priority, and progress (use status:"active", priority:"medium", progress:0 if the user does not specify). Provide fields directly on the action object, e.g., {"type":"create_project","name":"New Project","status":"active","priority":"medium","progress":0,"description":"..."}.
 
 ## Current Portfolio
 ${JSON.stringify(
