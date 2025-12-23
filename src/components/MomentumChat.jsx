@@ -173,8 +173,20 @@ export default function MomentumChat({
         const actionDeltas = [];
 
         if (action.type === 'create_project') {
+          // Validate that project name is provided
+          const projectName = (action.name || action.projectName || '').trim();
+          if (!projectName) {
+            actionResults.push({
+              type: 'create_project',
+              label: 'Failed to create project',
+              deltas: [],
+              error: 'Project name is required but was not provided'
+            });
+            continue;
+          }
+
           const newProject = {
-            name: action.name || action.projectName,
+            name: projectName,
             priority: action.priority || 'medium',
             status: action.status || 'planning',
             progress: action.progress || 0,

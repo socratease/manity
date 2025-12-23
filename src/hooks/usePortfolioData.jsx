@@ -232,10 +232,11 @@ export const PortfolioProvider = ({ children }) => {
     setProjectsState(prevProjects => {
       const nextProjects = typeof updater === 'function' ? updater(prevProjects) : updater;
       const normalized = normalizeProjects(nextProjects);
-      persistPortfolio(normalized);
+      // Note: Do NOT call persistPortfolio here to avoid destructive replace operations
+      // Individual CRUD operations (createProject, updateProject, etc.) handle persistence
       return normalized;
     });
-  }, [persistPortfolio]);
+  }, []);
 
   const handleExport = useCallback((projectId) => {
     const url = new URL(resolveUrl('/export'));
