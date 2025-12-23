@@ -88,7 +88,31 @@ export function validateThrustActions(actions = [], projects = []) {
     return null;
   };
 
-  actions.forEach((action, idx) => {
+  // Track projects that will be created later in the batch so we can reorder dependent actions
+  const futureCreatedProjects = new Set();
+  actions.forEach(action => {
+    if (action?.type === 'create_project') {
+      const projectName = normalizeProjectName(action.name || action.projectName);
+      if (projectName) {
+        futureCreatedProjects.add(projectName.toLowerCase());
+      }
+    }
+  });
+
+  const deferredActions = new Map(); // projectName -> [{ action, idx, projectRef }]
+
+  const processDeferredActions = projectName => {
+    const normalized = projectName.toLowerCase();
+    const queued = deferredActions.get(normalized) || [];
+    deferredActions.delete(normalized);
+    queued.forEach(({ action, idx, projectRef }) => {
+      handleAction(action, idx, { allowDefer: false, projectRef });
+    });
+  };
+
+  const handleAction = (action, idx, options = {}) => {
+    const { allowDefer = true, projectRef: providedProjectRef } = options;
+
     if (!action || typeof action !== 'object') {
       errors.push(`Action ${idx + 1} was not an object.`);
       return;
@@ -115,6 +139,7 @@ export function validateThrustActions(actions = [], projects = []) {
       // Track this project so subsequent actions can reference it
       pendingProjects.set(projectName.toLowerCase(), { name: projectName });
       validActions.push({ ...action, name: projectName, projectName });
+      processDeferredActions(projectName);
       return;
     }
 
@@ -191,7 +216,7 @@ export function validateThrustActions(actions = [], projects = []) {
       return;
     }
 
-    const projectRef = normalizeProjectRef(action.projectId ?? action.projectName);
+    const projectRef = providedProjectRef ?? normalizeProjectRef(action.projectId ?? action.projectName);
     if (!projectRef) {
       errors.push(`Action ${idx + 1} (${action.type}) is missing a projectId or projectName.`);
       return;
@@ -206,9 +231,15 @@ export function validateThrustActions(actions = [], projects = []) {
       if (pendingProject) {
         // Allow reference to project being created in same batch
         // The action will be executed after the create_project action
-        validActions.push({ ...action, projectName: pendingProject.name });
-        return;
+        resolvedProject = pendingProject;
       }
+    }
+
+    if (!resolvedProject && allowDefer && typeof projectRef === 'string' && futureCreatedProjects.has(projectRef.toLowerCase())) {
+      const queue = deferredActions.get(projectRef.toLowerCase()) || [];
+      queue.push({ action, idx, projectRef });
+      deferredActions.set(projectRef.toLowerCase(), queue);
+      return;
     }
 
     if (!resolvedProject) {
@@ -236,6 +267,15 @@ export function validateThrustActions(actions = [], projects = []) {
       ...action,
       projectId: resolvedProject.id,
       projectName: resolvedProject.name
+    });
+  };
+
+  actions.forEach((action, idx) => handleAction(action, idx));
+
+  deferredActions.forEach(queue => {
+    queue.forEach(({ action, idx, projectRef }) => {
+      const ref = projectRef ?? action.projectName ?? action.projectId ?? 'unknown project';
+      errors.push(`Action ${idx + 1} (${action.type}) references project "${ref}" that was scheduled to be created later in the batch, but no valid create_project action was found before validation completed.`);
     });
   });
 

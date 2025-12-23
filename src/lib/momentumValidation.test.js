@@ -245,6 +245,39 @@ describe('validateThrustActions', () => {
     });
   });
 
+  describe('out-of-order create/reference handling', () => {
+    it('should reorder actions so create_project runs before dependent actions', () => {
+      const actions = [
+        { type: 'add_task', projectName: 'New Project', title: 'Task 1' },
+        { type: 'create_project', name: 'New Project' },
+        { type: 'comment', projectName: 'New Project', note: 'Excited to start!' }
+      ];
+
+      const result = validateThrustActions(actions, mockProjects);
+
+      expect(result.errors).toHaveLength(0);
+      expect(result.validActions).toHaveLength(3);
+      expect(result.validActions[0].type).toBe('create_project');
+      expect(result.validActions[1].type).toBe('add_task');
+      expect(result.validActions[1].projectName).toBe('New Project');
+      expect(result.validActions[2].type).toBe('comment');
+    });
+
+    it('should report errors when dependent actions cannot be reordered due to invalid create_project', () => {
+      const actions = [
+        { type: 'add_task', projectName: 'Future Project', title: 'Task 1' },
+        { type: 'create_project' }
+      ];
+
+      const result = validateThrustActions(actions, mockProjects);
+
+      expect(result.validActions).toHaveLength(0);
+      expect(result.errors).toHaveLength(2);
+      expect(result.errors.some(err => err.includes('unknown project'))).toBe(true);
+      expect(result.errors.some(err => err.includes('missing a name'))).toBe(true);
+    });
+  });
+
   describe('comment validation', () => {
     it('should reject comments without a body', () => {
       const actions = [
