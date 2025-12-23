@@ -26,6 +26,7 @@ import type {
 import { ToolRegistry } from './ToolRegistry';
 import { ToolSelector } from './ToolSelector';
 import { Planner } from './Planner';
+import { createToolRegistry } from './tools';
 import {
   buildProjectLookup,
   cloneProjectDeep,
@@ -384,6 +385,5 @@ export function createAgentRuntime(registry: ToolRegistry): AgentRuntime {
  * Create an AgentRuntime with all default tools registered.
  */
 export function createDefaultAgentRuntime(): AgentRuntime {
-  const { createToolRegistry } = require('./tools');
   return new AgentRuntime(createToolRegistry());
 }
