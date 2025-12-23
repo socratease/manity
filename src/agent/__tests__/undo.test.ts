@@ -187,7 +187,7 @@ describe('UndoManager', () => {
         },
       ];
 
-      const { projects: updatedProjects, actionResults: updatedResults } =
+      const { projects: updatedProjects, updatedActionResults: updatedResults } =
         undoManager.undoActionByIndex(projects, actionResults, 0);
 
       expect(updatedProjects[0].progress).toBe(50);

@@ -90,6 +90,23 @@ describe('validateThrustActions', () => {
       expect(result.errors).toHaveLength(0);
     });
 
+    it('should trim whitespace-only project names and surface an error', () => {
+      const actions = [{ type: 'create_project', name: '   ' }];
+      const result = validateThrustActions(actions, mockProjects);
+      expect(result.validActions).toEqual([]);
+      expect(result.errors).toHaveLength(1);
+      expect(result.errors[0]).toContain('missing a name');
+    });
+
+    it('should trim whitespace around project names', () => {
+      const actions = [{ type: 'create_project', name: '  New Project  ' }];
+      const result = validateThrustActions(actions, mockProjects);
+      expect(result.validActions).toHaveLength(1);
+      expect(result.errors).toHaveLength(0);
+      expect(result.validActions[0].name).toBe('New Project');
+      expect(result.validActions[0].projectName).toBe('New Project');
+    });
+
     it('should return error for create_project without name', () => {
       const actions = [{ type: 'create_project' }];
       const result = validateThrustActions(actions, mockProjects);
@@ -182,6 +199,17 @@ describe('validateThrustActions', () => {
       const result = validateThrustActions(actions, mockProjects);
       expect(result.validActions).toHaveLength(4);
       expect(result.errors).toHaveLength(0);
+    });
+
+    it('should allow referencing a trimmed project name created in the same batch', () => {
+      const actions = [
+        { type: 'create_project', name: '  New Project  ' },
+        { type: 'add_task', projectName: 'New Project', title: 'Task 1' }
+      ];
+      const result = validateThrustActions(actions, mockProjects);
+      expect(result.validActions).toHaveLength(2);
+      expect(result.errors).toHaveLength(0);
+      expect(result.validActions[1].projectName).toBe('New Project');
     });
 
     it('should handle creating multiple projects and referencing each', () => {
