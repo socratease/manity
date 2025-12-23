@@ -276,9 +276,22 @@ export default function MomentumChat({
         } else if (action.type === 'add_task') {
           const project = projects.find(p => p.id === projectId);
           if (project) {
+            const title = (action.title || action.name || '').trim();
+            // Don't create tasks with empty titles
+            if (!title) {
+              console.warn('Skipping task creation - no title provided');
+              actionResults.push({
+                type: 'add_task',
+                label: `Skipped empty task in "${project.name}"`,
+                deltas: [],
+                detail: 'Task must have a title'
+              });
+              continue;
+            }
+
             const newTask = {
-              id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              title: action.title || action.name || '',
+              id: action.id || `task-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+              title: title,
               dueDate: action.dueDate || '',
               completed: false,
               assignedTo: action.assignedTo || '',
@@ -301,7 +314,24 @@ export default function MomentumChat({
         } else if (action.type === 'update_task') {
           const project = projects.find(p => p.id === projectId);
           if (project) {
-            const taskId = action.taskId;
+            // Resolve taskId from taskTitle if needed
+            let taskId = action.taskId;
+            if (!taskId && action.taskTitle) {
+              const task = project.plan?.find(t => t.title.toLowerCase() === action.taskTitle.toLowerCase());
+              if (task) {
+                taskId = task.id;
+              } else {
+                console.warn(`Task "${action.taskTitle}" not found in project "${project.name}"`);
+                actionResults.push({
+                  type: 'update_task',
+                  label: `Failed to update task - "${action.taskTitle}" not found in "${project.name}"`,
+                  deltas: [],
+                  detail: 'Referenced task does not exist'
+                });
+                continue;
+              }
+            }
+
             const task = project.plan?.find(t => t.id === taskId);
             const updates = {};
             const previous = {};
@@ -343,22 +373,63 @@ export default function MomentumChat({
         } else if (action.type === 'add_subtask') {
           const project = projects.find(p => p.id === projectId);
           if (project) {
+            // Resolve taskId from taskTitle if needed
+            let taskId = action.taskId;
+            if (!taskId && action.taskTitle) {
+              const task = project.plan?.find(t => t.title.toLowerCase() === action.taskTitle.toLowerCase());
+              if (task) {
+                taskId = task.id;
+              } else {
+                console.warn(`Task "${action.taskTitle}" not found in project "${project.name}"`);
+                actionResults.push({
+                  type: 'add_subtask',
+                  label: `Failed to add subtask - task "${action.taskTitle}" not found in "${project.name}"`,
+                  deltas: [],
+                  detail: 'Referenced task does not exist'
+                });
+                continue;
+              }
+            }
+
+            if (!taskId) {
+              console.warn('Skipping subtask creation - no taskId or taskTitle provided');
+              actionResults.push({
+                type: 'add_subtask',
+                label: `Skipped subtask in "${project.name}"`,
+                deltas: [],
+                detail: 'Subtask must reference a task'
+              });
+              continue;
+            }
+
+            const title = (action.title || action.subtaskTitle || action.name || '').trim();
+            if (!title) {
+              console.warn('Skipping subtask creation - no title provided');
+              actionResults.push({
+                type: 'add_subtask',
+                label: `Skipped empty subtask in "${project.name}"`,
+                deltas: [],
+                detail: 'Subtask must have a title'
+              });
+              continue;
+            }
+
             const newSubtask = {
               id: `subtask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              title: action.title || action.name || '',
+              title: title,
               dueDate: action.dueDate || '',
               completed: false,
               assignedTo: action.assignedTo || ''
             };
-            await addSubtask(projectId, action.taskId, newSubtask);
+            await addSubtask(projectId, taskId, newSubtask);
             updatedProjectIds.push(projectId);
-            label = `Added subtask to "${project.name}"`;
+            label = `Added subtask "${newSubtask.title}" to "${project.name}"`;
 
             // Track delta for undo
             actionDeltas.push({
               type: 'remove_subtask',
               projectId: projectId,
-              taskId: action.taskId,
+              taskId: taskId,
               subtaskId: newSubtask.id
             });
 

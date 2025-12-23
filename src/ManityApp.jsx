@@ -994,6 +994,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     const project = projects.find(p => p.id === viewingProjectId);
     if (project) {
       setEditValues({
+        name: project.name,
         status: project.status,
         priority: project.priority,
         stakeholders: project.stakeholders, // Keep full objects for PersonPicker
@@ -1006,6 +1007,22 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   };
 
   const saveEdits = async () => {
+    // Validate project name
+    const newName = (editValues.name || '').trim();
+    if (!newName) {
+      alert('Project name cannot be empty');
+      return;
+    }
+
+    // Check for duplicate project names (case-insensitive)
+    const duplicateProject = projects.find(
+      p => p.id !== viewingProjectId && p.name.toLowerCase() === newName.toLowerCase()
+    );
+    if (duplicateProject) {
+      alert(`A project named "${newName}" already exists. Please choose a different name.`);
+      return;
+    }
+
     // editValues.stakeholders is now an array of {name, team} objects from PersonPicker
     const stakeholdersArray = (editValues.stakeholders || []).filter(Boolean);
 
@@ -1019,6 +1036,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     // Use updateProject API to persist all edited values
     try {
       await updateProject(viewingProjectId, {
+        name: newName,
         status: editValues.status,
         priority: editValues.priority,
         progress: editValues.progress || 0,
@@ -3117,10 +3135,14 @@ PEOPLE & EMAIL ADDRESSES:
   }, [projects, loggedInUser]);
 
   useEffect(() => {
-    if (viewingProjectId && !visibleProjects.some(p => p.id === viewingProjectId)) {
+    // Only clear viewingProjectId if projects have loaded and the project isn't found
+    // This prevents clearing the ID on initial page load when projects haven't loaded yet
+    if (viewingProjectId && projects.length > 0 && !visibleProjects.some(p => p.id === viewingProjectId)) {
       setViewingProjectId(null);
+      // Clear the hash too to keep URL in sync
+      updateHash('overview');
     }
-  }, [loggedInUser, viewingProjectId, visibleProjects]);
+  }, [loggedInUser, viewingProjectId, visibleProjects, projects.length]);
 
   // Daily Update should only show projects the logged-in user is a contributor on
   useEffect(() => {
@@ -4362,7 +4384,32 @@ PEOPLE & EMAIL ADDRESSES:
 
             <div style={styles.detailsHeader}>
               <div>
-                <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
+                {editMode ? (
+                  <>
+                    <input
+                      type="text"
+                      value={editValues.name}
+                      onChange={(e) => setEditValues({...editValues, name: e.target.value})}
+                      onFocus={() => setFocusedField('project-name')}
+                      onBlur={() => setFocusedField(null)}
+                      style={{
+                        ...styles.detailsTitle,
+                        border: '2px solid var(--cloud)',
+                        borderRadius: '8px',
+                        padding: '8px 12px',
+                        marginBottom: '12px',
+                        width: '100%',
+                        boxSizing: 'border-box',
+                        fontSize: '28px',
+                        fontWeight: '600'
+                      }}
+                      placeholder="Project Name"
+                    />
+                    {renderEditingHint('project-name')}
+                  </>
+                ) : (
+                  <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
+                )}
                 <div style={styles.descriptionSection}>
                   <label style={styles.descriptionLabel}>Project Description</label>
                   {editMode ? (
@@ -5850,8 +5897,7 @@ PEOPLE & EMAIL ADDRESSES:
                 onUpdatePerson={updatePerson}
                 onDeletePerson={deletePerson}
                 onViewProject={(projectId) => {
-                  setActiveView('overview');
-                  setViewingProjectId(projectId);
+                  updateHash('overview', projectId);
                 }}
                 onLoginAs={(personName) => {
                   setLoggedInUser(personName);

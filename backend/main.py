@@ -12,7 +12,7 @@ from typing import List, Optional, Sequence
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response, JSONResponse
-from pydantic import BaseModel, Field as PydanticField
+from pydantic import BaseModel, Field as PydanticField, field_validator
 import httpx
 from sqlalchemy import Column, String, delete, event, func
 from sqlalchemy.dialects.sqlite import JSON
@@ -176,6 +176,13 @@ class SubtaskBase(SQLModel):
     dueDate: Optional[str] = None
     completedDate: Optional[str] = None
 
+    @field_validator('title')
+    @classmethod
+    def validate_title(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Subtask title cannot be empty or whitespace')
+        return v.strip()
+
 
 class Subtask(SubtaskBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
@@ -188,6 +195,13 @@ class TaskBase(SQLModel):
     status: str = "todo"
     dueDate: Optional[str] = None
     completedDate: Optional[str] = None
+
+    @field_validator('title')
+    @classmethod
+    def validate_title(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Task title cannot be empty or whitespace')
+        return v.strip()
 
 
 class Task(TaskBase, table=True):
@@ -223,6 +237,13 @@ class ProjectBase(SQLModel):
     startDate: Optional[str] = None
     targetDate: Optional[str] = None
     stakeholders: List[Stakeholder] = Field(default_factory=list, sa_column=Column(JSON))
+
+    @field_validator('name')
+    @classmethod
+    def validate_name(cls, v):
+        if not v or not v.strip():
+            raise ValueError('Project name cannot be empty or whitespace')
+        return v.strip()
 
 
 class Project(ProjectBase, table=True):
