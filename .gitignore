@@ -33,3 +33,6 @@ wheels/
 # Environment variables
 .env
 .env.local
+.venv/
+venv/
+env/
