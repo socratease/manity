@@ -362,10 +362,19 @@ export default function Slides({
       }
 
       const blob = await response.blob();
-      const contentType = response.headers.get('Content-Type');
-      const isPptx = contentType === 'application/vnd.openxmlformats-officedocument.presentationml.presentation';
+      const contentType = response.headers.get('Content-Type')?.toLowerCase() ?? '';
+      const isPptx = contentType.startsWith('application/vnd.openxmlformats-officedocument.presentationml.presentation');
+      let hasZipSignature = false;
 
-      if (!isPptx || blob.size === 0) {
+      if (!isPptx && blob.size >= 4) {
+        const signatureBytes = new Uint8Array(await blob.slice(0, 4).arrayBuffer());
+        hasZipSignature = signatureBytes[0] === 0x50
+          && signatureBytes[1] === 0x4b
+          && signatureBytes[2] === 0x03
+          && signatureBytes[3] === 0x04;
+      }
+
+      if (blob.size === 0 || (!isPptx && !hasZipSignature)) {
         throw new Error('Invalid PowerPoint file received');
       }
 
