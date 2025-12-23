@@ -5801,37 +5801,39 @@ PEOPLE & EMAIL ADDRESSES:
             onDeletePerson={deletePerson}
           />
         ) : activeView === 'thrust' ? (
-          <MomentumChat
-            messages={getThrustConversation()}
-            onSendMessage={(message) => {
-              setThrustMessages(prev => [...prev, message]);
-            }}
-            onApplyActions={(actionResults, updatedProjectIds) => {
-              // Track recently updated projects for highlighting with timestamps
-              if (updatedProjectIds && updatedProjectIds.length > 0) {
-                const now = Date.now();
-                setRecentlyUpdatedProjects(prev => {
-                  const updated = { ...prev };
-                  updatedProjectIds.forEach(id => {
-                    updated[id] = now;
+          <div style={styles.momentumViewWrapper}>
+            <MomentumChat
+              messages={getThrustConversation()}
+              onSendMessage={(message) => {
+                setThrustMessages(prev => [...prev, message]);
+              }}
+              onApplyActions={(actionResults, updatedProjectIds) => {
+                // Track recently updated projects for highlighting with timestamps
+                if (updatedProjectIds && updatedProjectIds.length > 0) {
+                  const now = Date.now();
+                  setRecentlyUpdatedProjects(prev => {
+                    const updated = { ...prev };
+                    updatedProjectIds.forEach(id => {
+                      updated[id] = now;
+                    });
+                    return updated;
                   });
-                  return updated;
-                });
-                setExpandedMomentumProjects(prev => {
-                  const newExpanded = { ...prev };
-                  updatedProjectIds.forEach(id => {
-                    newExpanded[String(id)] = true;
+                  setExpandedMomentumProjects(prev => {
+                    const newExpanded = { ...prev };
+                    updatedProjectIds.forEach(id => {
+                      newExpanded[String(id)] = true;
+                    });
+                    return newExpanded;
                   });
-                  return newExpanded;
-                });
-              }
-            }}
-            onUndoAction={undoThrustAction}
-            loggedInUser={loggedInUser}
-            people={people}
-            isSantafied={isSantafied}
-            recentlyUpdatedProjects={recentlyUpdatedProjects}
-          />
+                }
+              }}
+              onUndoAction={undoThrustAction}
+              loggedInUser={loggedInUser}
+              people={people}
+              isSantafied={isSantafied}
+              recentlyUpdatedProjects={recentlyUpdatedProjects}
+            />
+          </div>
         ) : activeView === 'slides' ? (
           <Slides
             projects={projects}
@@ -6653,6 +6655,9 @@ const styles = {
     overflowY: 'auto',
     minWidth: 0,
     transition: 'padding 0.2s ease',
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
   },
 
   header: {
@@ -6695,6 +6700,12 @@ const styles = {
     fontSize: '12px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumViewWrapper: {
+    flex: 1,
+    minHeight: 0,
+    display: 'flex',
   },
 
   newProjectPanel: {

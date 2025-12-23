@@ -885,7 +885,8 @@ ${JSON.stringify(peopleContext, null, 2)}
 const getStyles = (colors) => ({
   container: {
     display: 'flex',
-    height: '100vh',
+    height: '100%',
+    minHeight: 0,
     width: '100%',
     backgroundColor: '#FAF8F3',
     fontFamily: "system-ui, -apple-system, sans-serif",
