@@ -23,12 +23,25 @@ export const supportedMomentumActions = [
  * @param {Array} projects - Array of project objects to search
  * @returns {Object|null} - Resolved project or null if not found
  */
+const normalizeProjectName = name =>
+  typeof name === 'string'
+    ? name.trim()
+    : '';
+
+const normalizeProjectRef = ref => {
+  if (typeof ref === 'string') {
+    return ref.trim();
+  }
+  return ref;
+};
+
 export function resolveMomentumProjectRef(target, projects) {
   if (!target) return null;
-  const lowerTarget = `${target}`.toLowerCase();
+  const normalizedTarget = normalizeProjectRef(target);
+  const lowerTarget = `${normalizedTarget}`.toLowerCase();
   return projects.find(project =>
-    `${project.id}` === `${target}` ||
-    project.name.toLowerCase() === lowerTarget
+    `${project.id}` === `${normalizedTarget}` ||
+    normalizeProjectName(project.name).toLowerCase() === lowerTarget
   ) || null;
 }
 
@@ -67,14 +80,14 @@ export function validateThrustActions(actions = [], projects = []) {
 
     // create_project doesn't need a projectId - it creates a new project
     if (action.type === 'create_project') {
-      const projectName = action.name || action.projectName;
+      const projectName = normalizeProjectName(action.name || action.projectName);
       if (!projectName) {
         errors.push(`Action ${idx + 1} (create_project) is missing a name or projectName.`);
         return;
       }
       // Track this project so subsequent actions can reference it
       pendingProjects.set(projectName.toLowerCase(), { name: projectName });
-      validActions.push(action);
+      validActions.push({ ...action, name: projectName, projectName });
       return;
     }
 
@@ -151,7 +164,7 @@ export function validateThrustActions(actions = [], projects = []) {
       return;
     }
 
-    const projectRef = action.projectId ?? action.projectName;
+    const projectRef = normalizeProjectRef(action.projectId ?? action.projectName);
     if (!projectRef) {
       errors.push(`Action ${idx + 1} (${action.type}) is missing a projectId or projectName.`);
       return;
@@ -166,7 +179,7 @@ export function validateThrustActions(actions = [], projects = []) {
       if (pendingProject) {
         // Allow reference to project being created in same batch
         // The action will be executed after the create_project action
-        validActions.push(action);
+        validActions.push({ ...action, projectName: pendingProject.name });
         return;
       }
     }
