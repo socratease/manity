@@ -982,6 +982,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     const project = projects.find(p => p.id === viewingProjectId);
     if (project) {
       setEditValues({
+        name: project.name,
         status: project.status,
         priority: project.priority,
         stakeholders: project.stakeholders, // Keep full objects for PersonPicker
@@ -1007,6 +1008,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     // Use updateProject API to persist all edited values
     try {
       await updateProject(viewingProjectId, {
+        name: editValues.name,
         status: editValues.status,
         priority: editValues.priority,
         progress: editValues.progress || 0,
@@ -1023,6 +1025,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       });
     } catch (error) {
       console.error('Failed to save project edits:', error);
+      // Show error to user if it's a duplicate name error
+      if (error.message && error.message.includes('already exists')) {
+        alert(error.message);
+      }
     }
 
     setEditMode(false);
@@ -3138,7 +3144,9 @@ PEOPLE & EMAIL ADDRESSES:
   }, [projects, loggedInUser]);
 
   useEffect(() => {
-    if (viewingProjectId && !visibleProjects.some(p => p.id === viewingProjectId)) {
+    // Only clear viewingProjectId if projects have loaded and the project doesn't exist
+    // This prevents clearing the ID on page refresh before projects are loaded
+    if (viewingProjectId && visibleProjects.length > 0 && !visibleProjects.some(p => p.id === viewingProjectId)) {
       setViewingProjectId(null);
     }
   }, [loggedInUser, viewingProjectId, visibleProjects]);
@@ -4378,7 +4386,27 @@ PEOPLE & EMAIL ADDRESSES:
 
             <div style={styles.detailsHeader}>
               <div>
-                <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
+                {editMode ? (
+                  <input
+                    type="text"
+                    value={editValues.name}
+                    onChange={(e) => setEditValues({...editValues, name: e.target.value})}
+                    onFocus={() => setFocusedField('project-name')}
+                    onBlur={() => setFocusedField(null)}
+                    style={{
+                      ...styles.detailsTitle,
+                      border: '2px solid var(--earth)',
+                      borderRadius: '6px',
+                      padding: '8px 12px',
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      backgroundColor: '#FFFFFF'
+                    }}
+                    placeholder="Project Name"
+                  />
+                ) : (
+                  <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
+                )}
                 <div style={styles.descriptionSection}>
                   <label style={styles.descriptionLabel}>Project Description</label>
                   {editMode ? (

@@ -529,7 +529,7 @@ class ProjectPersonLink(SQLModel, table=True):
 
 
 class ProjectBase(SQLModel):
-    name: str
+    name: str = Field(sa_column=Column(String, unique=True, index=True))
     status: str = "planning"
     priority: str = "medium"
     progress: int = 0
@@ -1315,6 +1315,19 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     if project is None:
         project = Project(id=payload.id or generate_id("project"))
         session.add(project)
+
+    # Check for duplicate project name (case-insensitive)
+    existing_project = session.exec(
+        select(Project).where(
+            func.lower(Project.name) == func.lower(payload.name),
+            Project.id != (project.id if project else "")
+        )
+    ).first()
+    if existing_project:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A project with the name '{payload.name}' already exists. Please choose a different name."
+        )
 
     project.name = payload.name
     project.status = payload.status
