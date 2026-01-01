@@ -2,8 +2,11 @@
  * MomentumChat with OpenAI Agents SDK
  *
  * This component uses the OpenAI Agents SDK for agent orchestration.
- * It provides a chat interface for project management with tool execution
- * and undo capabilities.
+ * It provides a chat interface for project management with:
+ * - Sequential tool execution (fixes task/subtask race conditions)
+ * - Thinking process visualization
+ * - Human-in-the-loop support (clarification, permission requests)
+ * - Undo capabilities
  */
 
 import React, { useState, useEffect, useRef, useCallback } from 'react';
@@ -12,6 +15,10 @@ import { getTheme } from '../lib/theme';
 
 // Import the new agent SDK
 import { useAgentRuntime } from '../agent-sdk';
+
+// Import UI components
+import ThinkingProcess from './ThinkingProcess';
+import UserQuestionPrompt from './UserQuestionPrompt';
 
 // Default to base theme, can be overridden by props
 const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
@@ -64,13 +71,23 @@ export default function MomentumChatWithAgent({
   const messageRefs = useRef({});
 
   // Initialize agent runtime using the new SDK hook
-  const { executeMessage, undoManager, undoDeltas } = useAgentRuntime({
+  const {
+    executeMessage,
+    continueWithUserResponse,
+    undoManager,
+    undoDeltas,
+    isAwaitingUser,
+    pendingQuestion,
+  } = useAgentRuntime({
     projects,
     people,
     loggedInUser,
     createPerson,
     sendEmail,
   });
+
+  // State for streaming thinking steps during execution
+  const [streamingThinkingSteps, setStreamingThinkingSteps] = useState([]);
 
   // Update project positions for link visualization
   const updateProjectPositions = useCallback(() => {
@@ -113,7 +130,23 @@ export default function MomentumChatWithAgent({
     prevMessagesLengthRef.current = messages.length;
   }, [messages]);
 
-  // Handle send message - now uses OpenAI Agents SDK
+  // Callbacks for streaming thinking updates
+  const thinkingCallbacks = {
+    onThinkingStep: (step) => {
+      setStreamingThinkingSteps(prev => {
+        // Update existing step or add new one
+        const existing = prev.findIndex(s => s.id === step.id);
+        if (existing >= 0) {
+          const updated = [...prev];
+          updated[existing] = step;
+          return updated;
+        }
+        return [...prev, step];
+      });
+    },
+  };
+
+  // Handle send message - now uses OpenAI Agents SDK with sequential execution
   const handleSend = async () => {
     if (!inputValue.trim() || isTyping) return;
 
@@ -131,10 +164,11 @@ export default function MomentumChatWithAgent({
 
     setInputValue('');
     setIsTyping(true);
+    setStreamingThinkingSteps([]); // Reset thinking steps
 
     try {
-      // Execute message through the SDK agent
-      const result = await executeMessage(inputValue);
+      // Execute message through the SDK agent with callbacks
+      const result = await executeMessage(inputValue, thinkingCallbacks);
 
       const assistantMessage = {
         id: `msg-${Date.now() + 1}`,
@@ -147,6 +181,8 @@ export default function MomentumChatWithAgent({
         updatedProjectIds: result.updatedEntityIds,
         linkedProjectIds: result.updatedEntityIds,
         deltas: result.deltas,
+        thinkingSteps: result.thinkingSteps, // Include thinking steps
+        pendingQuestion: result.pendingQuestion, // Include pending question if any
       };
 
       if (onSendMessage) {
@@ -156,6 +192,9 @@ export default function MomentumChatWithAgent({
       if (onApplyActions && result.actionResults.length > 0) {
         onApplyActions(result.actionResults, result.updatedEntityIds);
       }
+
+      // Clear streaming steps after message is complete
+      setStreamingThinkingSteps([]);
 
     } catch (error) {
       console.error('Failed to send Momentum request:', error);
@@ -175,6 +214,76 @@ export default function MomentumChatWithAgent({
       }
     } finally {
       setIsTyping(false);
+    }
+  };
+
+  // Handle user response to agent question
+  const handleUserQuestionResponse = async (response) => {
+    setIsTyping(true);
+
+    try {
+      const result = await continueWithUserResponse(response);
+
+      // Update the last message with continued results
+      const assistantMessage = {
+        id: `msg-${Date.now()}`,
+        role: 'assistant',
+        author: 'Momentum',
+        content: result.response,
+        note: result.response,
+        date: new Date().toISOString(),
+        actionResults: result.actionResults,
+        updatedProjectIds: result.updatedEntityIds,
+        linkedProjectIds: result.updatedEntityIds,
+        deltas: result.deltas,
+        thinkingSteps: result.thinkingSteps,
+        pendingQuestion: result.pendingQuestion,
+      };
+
+      if (onSendMessage) {
+        onSendMessage(assistantMessage);
+      }
+
+      if (onApplyActions && result.actionResults.length > 0) {
+        onApplyActions(result.actionResults, result.updatedEntityIds);
+      }
+
+    } catch (error) {
+      console.error('Failed to continue with user response:', error);
+
+      const errorMessage = {
+        id: `msg-${Date.now()}`,
+        role: 'assistant',
+        author: 'Momentum',
+        content: `Sorry, I encountered an error: ${error.message}`,
+        note: `Sorry, I encountered an error: ${error.message}`,
+        date: new Date().toISOString(),
+        actionResults: [],
+      };
+
+      if (onSendMessage) {
+        onSendMessage(errorMessage);
+      }
+    } finally {
+      setIsTyping(false);
+    }
+  };
+
+  // Handle cancellation of user question
+  const handleUserQuestionCancel = () => {
+    // Just add a message indicating the action was cancelled
+    const cancelMessage = {
+      id: `msg-${Date.now()}`,
+      role: 'assistant',
+      author: 'Momentum',
+      content: 'Action cancelled.',
+      note: 'Action cancelled.',
+      date: new Date().toISOString(),
+      actionResults: [],
+    };
+
+    if (onSendMessage) {
+      onSendMessage(cancelMessage);
     }
   };
 
@@ -248,7 +357,40 @@ export default function MomentumChatWithAgent({
             }}>
               {message.note || message.content}
             </div>
-            {/* ThinkingProcess removed - SDK handles execution internally */}
+            {/* Thinking Process - shows agent's reasoning */}
+            {message.thinkingSteps?.length > 0 && (
+              <ThinkingProcess
+                plan={{
+                  goal: message.content,
+                  steps: message.thinkingSteps.map(step => ({
+                    rationale: step.content,
+                    toolCandidates: step.toolName ? [{
+                      toolName: step.toolName,
+                      input: step.toolInput || {},
+                    }] : [],
+                  })),
+                  status: message.pendingQuestion ? 'in_progress' : 'completed',
+                }}
+                executionLog={{
+                  id: message.id,
+                  events: message.thinkingSteps.map(step => ({
+                    status: step.status,
+                    label: step.toolResult || step.content,
+                  })),
+                }}
+                colors={colors}
+              />
+            )}
+            {/* User Question Prompt - when agent needs clarification */}
+            {message.pendingQuestion && (
+              <UserQuestionPrompt
+                question={message.pendingQuestion}
+                onRespond={handleUserQuestionResponse}
+                onCancel={handleUserQuestionCancel}
+                colors={colors}
+                isLoading={isTyping}
+              />
+            )}
             {message.actionResults?.length > 0 && (
               <div style={styles.actionsContainer}>
                 {message.actionResults.map((a, i) => renderAction(a, i, message.id))}
@@ -405,10 +547,51 @@ export default function MomentumChatWithAgent({
           {isTyping && (
             <div style={styles.typingWrapper}>
               <div style={styles.aiAvatar}>M</div>
-              <div style={styles.typingIndicator}>
-                <div style={styles.typingDot} />
-                <div style={{ ...styles.typingDot, animationDelay: '0.2s' }} />
-                <div style={{ ...styles.typingDot, animationDelay: '0.4s' }} />
+              <div style={styles.messageContent}>
+                <div style={styles.typingIndicator}>
+                  <div style={styles.typingDot} />
+                  <div style={{ ...styles.typingDot, animationDelay: '0.2s' }} />
+                  <div style={{ ...styles.typingDot, animationDelay: '0.4s' }} />
+                </div>
+                {/* Show streaming thinking steps while typing */}
+                {streamingThinkingSteps.length > 0 && (
+                  <ThinkingProcess
+                    plan={{
+                      goal: 'Processing your request...',
+                      steps: streamingThinkingSteps.map(step => ({
+                        rationale: step.content,
+                        toolCandidates: step.toolName ? [{
+                          toolName: step.toolName,
+                          input: step.toolInput || {},
+                        }] : [],
+                      })),
+                      status: 'in_progress',
+                    }}
+                    executionLog={{
+                      id: 'streaming',
+                      events: streamingThinkingSteps.map(step => ({
+                        status: step.status,
+                        label: step.toolResult || step.content,
+                      })),
+                    }}
+                    colors={colors}
+                  />
+                )}
+              </div>
+            </div>
+          )}
+          {/* Show question prompt when awaiting user input */}
+          {isAwaitingUser && pendingQuestion && !isTyping && (
+            <div style={styles.typingWrapper}>
+              <div style={styles.aiAvatar}>M</div>
+              <div style={styles.messageContent}>
+                <UserQuestionPrompt
+                  question={pendingQuestion}
+                  onRespond={handleUserQuestionResponse}
+                  onCancel={handleUserQuestionCancel}
+                  colors={colors}
+                  isLoading={isTyping}
+                />
               </div>
             </div>
           )}
