@@ -172,9 +172,102 @@ Add a test for the scenario where both task and subtask are created in the same 
 
 ---
 
+## Additional Issue: "Cannot read properties of undefined (reading '0')" Error
+
+### Symptoms
+When using the MomentumChat component, the app displays: "I encountered an error: cannot read properties of undefined (reading '0')."
+
+### Potential Causes (Needs Further Debugging)
+
+1. **Accessing undefined array index** - Somewhere in the code, `someArray[0]` is called where `someArray` is undefined (not empty, but undefined).
+
+2. **Possible locations to investigate**:
+   - `src/lib/momentumVerification.js:123` - `actionResults[idx]` where `actionResults` might be undefined
+   - However, MomentumChat doesn't use `verifyThrustActions`, so this is likely in ManityApp's embedded handling
+   - Initial render when `projects` or `people` from `usePortfolioData()` haven't loaded yet
+
+3. **The error may be related to duplicate implementations** - There are TWO separate chat/thrust implementations:
+   - **ManityApp.jsx** has embedded thrust handling (lines 2923-3018: `handleSendThrustMessage`, `applyThrustActions`, etc.)
+   - **MomentumChat.jsx** is a self-contained component with its OWN `handleSend` and `applyThrustActions`
+
+   When MomentumChat is rendered, both implementations might conflict or have mismatched expectations.
+
+### Recommended Debug Steps
+1. Add error boundary or try/catch around MomentumChat render
+2. Check browser console for full stack trace to identify exact line
+3. Verify that `usePortfolioData()` is returning arrays (not undefined) before first render
+
+---
+
+## Code Cleanup: Remove Duplicate Thrust Implementation
+
+### Problem
+ManityApp.jsx contains ~500+ lines of thrust/chat handling code that duplicates what MomentumChat.jsx provides. This creates:
+- Confusion about which code path is active
+- Maintenance burden
+- Potential for bugs when one is updated but not the other
+
+### Files with Duplicate Code
+
+**ManityApp.jsx contains unused thrust logic:**
+- Lines 93-112: Thrust state variables (`thrustMessages`, `thrustDraft`, `thrustError`, etc.)
+- Lines 2027-2090: `buildThrustContext()`
+- Lines 2087-2157: `validateThrustActions()`, `requestMomentumActions()`
+- Lines 2158-2681: `applyThrustActions()` (massive function)
+- Lines 2923-3018: `handleSendThrustMessage()`
+- Lines 3020-3100: `getThrustConversation()`, `undoThrustAction()`
+
+**MomentumChat.jsx has its own complete implementation:**
+- Uses `usePortfolioData()` for data operations
+- Has its own `handleSend`, `applyThrustActions`, `validateThrustActions`
+- Self-contained, doesn't rely on ManityApp state
+
+### Cleanup Steps
+
+#### Step 7: Determine Which Implementation to Keep
+Decision: Keep MomentumChat.jsx (it's cleaner, self-contained)
+
+#### Step 8: Remove Unused ManityApp Thrust Code
+**File**: `src/ManityApp.jsx`
+
+Remove or comment out:
+1. State variables (lines 93-112):
+   - `showThrustTagSuggestions`, `thrustTagSearchTerm`, `thrustCursorPosition`, `selectedThrustTagIndex`
+   - `thrustMessages`, `thrustDraft`, `thrustError`, `thrustPendingActions`
+   - `thrustIsRequesting`, `thrustRequestStart`, `thrustElapsedMs`
+
+2. Functions (can be fully removed):
+   - `buildThrustContext()`
+   - `validateThrustActions()` (ManityApp version - keep the import)
+   - `applyThrustActions()` (ManityApp version)
+   - `handleSendThrustMessage()`
+   - `handleThrustDraftChange()`
+   - `insertThrustTag()`
+
+3. Keep only:
+   - `getThrustConversation()` if still needed for message persistence
+   - `undoThrustAction()` if MomentumChat doesn't handle it internally
+
+4. Verify MomentumChat props are correctly wired after cleanup
+
+---
+
+## Updated Files to Modify
+
+| File | Changes |
+|------|---------|
+| `src/lib/momentumValidation.js` | Add pendingTasks map, add task validation for subtask actions |
+| `src/components/MomentumChat.jsx` | Add taskTitle lookup in add_subtask handler, track created tasks during batch |
+| `src/ManityApp.jsx` | Remove duplicate thrust handling code (~500 lines) |
+| `backend/main.py` | Improve error messages (optional) |
+| Test file (TBD) | Add test for batch task+subtask creation |
+
+---
+
 ## Risk Assessment
 
 - **Low Risk**: Changes are localized to validation and action handling
 - **Backward Compatible**: Existing `taskId` usage continues to work
 - **No Database Changes**: Schema remains unchanged
 - **Frontend Only**: Primary fix is in frontend JavaScript (validation and action handler)
+- **Code Cleanup Risk**: Medium - removing ~500 lines of ManityApp code requires testing to ensure MomentumChat handles all cases
