@@ -75,6 +75,9 @@ export const addTaskTool = tool({
     // Add to project plan
     workingProject.plan.push(newTask);
 
+    // Register as pending task for same-run subtask creation
+    ctx.registerPendingTask(workingProject.id, newTask);
+
     // Create delta for undo
     const delta: RemoveTaskDelta = {
       type: 'remove_task',

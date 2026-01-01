@@ -43,9 +43,12 @@ export const addSubtaskTool = tool({
     }
 
     // Resolve task
-    const task = ctx.resolveTask(workingProject, input.taskId || input.taskTitle);
+    const taskRef = input.taskId || input.taskTitle;
+    const task = ctx.resolveTask(workingProject, taskRef);
     if (!task) {
-      return `Skipped: Task not found in ${workingProject.name}. Please specify a valid task ID or title.`;
+      const availableTasks = workingProject.plan.map(t => `"${t.title}"`).join(', ');
+      const taskList = availableTasks || 'none';
+      return `Skipped: Task "${taskRef}" not found in ${workingProject.name}. Available tasks: ${taskList}. Please specify a valid task ID or title.`;
     }
 
     // Get subtask title

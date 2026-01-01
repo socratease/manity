@@ -46,6 +46,9 @@ export interface ToolExecutionContext {
   normalizeStakeholderList: (stakeholders: StakeholderEntry[]) => Stakeholder[];
   describeDueDate: (date: string | undefined) => string;
 
+  // Pending task tracking (for same-run task+subtask creation)
+  registerPendingTask: (projectId: string | number, task: Task) => void;
+
   // Delta tracking
   trackDelta: (delta: Delta) => void;
   trackDeltas: (deltas: Delta[]) => void;
@@ -133,6 +136,24 @@ export function createToolExecutionContext(
   const deltas: Delta[] = [];
   const updatedEntityIds = new Set<string | number>();
 
+  // Track pending tasks created during this run (for same-run task+subtask creation)
+  // Key format: "projectId:taskTitle" (lowercase) or "projectId:taskId"
+  const pendingTasks = new Map<string, Task>();
+
+  // Register a pending task for lookup by subsequent add_subtask calls
+  const registerPendingTask = (projectId: string | number, task: Task): void => {
+    const projectKey = String(projectId);
+    // Register by title (case-insensitive)
+    if (task.title) {
+      pendingTasks.set(`${projectKey}:${task.title.toLowerCase()}`, task);
+    }
+    // Register by ID
+    if (task.id) {
+      pendingTasks.set(`${projectKey}:${task.id}`, task);
+      pendingTasks.set(`${projectKey}:${task.id.toLowerCase()}`, task);
+    }
+  };
+
   // Resolve project by ID or name
   const resolveProject = (target: string | number | undefined): Project | null => {
     if (target === undefined || target === null) return null;
@@ -146,12 +167,25 @@ export function createToolExecutionContext(
   const resolveTask = (project: Project | null, target: string | undefined): Task | null => {
     if (!project || !target) return null;
     const normalizedTarget = target.toLowerCase();
-    return project.plan.find(
+
+    // First check the project's plan array
+    const foundInPlan = project.plan.find(
       t => t.id === target ||
            t.id?.toLowerCase() === normalizedTarget ||
            t.title.toLowerCase() === normalizedTarget ||
            t.title.toLowerCase().includes(normalizedTarget)
-    ) || null;
+    );
+    if (foundInPlan) return foundInPlan;
+
+    // Also check pending tasks (for same-run task+subtask creation)
+    const projectKey = String(project.id);
+    const pendingByTitle = pendingTasks.get(`${projectKey}:${normalizedTarget}`);
+    if (pendingByTitle) return pendingByTitle;
+
+    const pendingById = pendingTasks.get(`${projectKey}:${target}`);
+    if (pendingById) return pendingById;
+
+    return null;
   };
 
   // Resolve subtask within a task
@@ -183,8 +217,12 @@ export function createToolExecutionContext(
     if (activities) {
       project.recentActivity = activities;
     }
+    // Ensure recentActivity exists before sorting
+    if (!project.recentActivity) {
+      project.recentActivity = [];
+    }
     project.recentActivity.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    if (project.recentActivity.length > 0) {
+    if (project.recentActivity.length > 0 && project.recentActivity[0]?.note) {
       project.lastUpdate = project.recentActivity[0].note;
     }
     return project;
@@ -231,6 +269,9 @@ export function createToolExecutionContext(
     syncProjectActivity,
     normalizeStakeholderList,
     describeDueDate,
+
+    // Pending task tracking
+    registerPendingTask,
 
     // Delta tracking
     trackDelta: (delta) => deltas.push(delta),

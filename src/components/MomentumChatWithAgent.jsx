@@ -543,7 +543,7 @@ export default function MomentumChatWithAgent({
         {(isHovered || isRecentlyUpdated) && (
           <div style={styles.projectExpanded}>
             <p style={styles.projectDescription}>{project.description}</p>
-            {isRecentlyUpdated && project.recentActivity && project.recentActivity.length > 0 && (
+            {isRecentlyUpdated && project.recentActivity?.length > 0 && project.recentActivity[0]?.note && (
               <div style={styles.recentActivityPreview}>
                 <span style={styles.recentActivityLabel}>Latest update:</span>
                 <span style={styles.recentActivityText}>{project.recentActivity[0].note}</span>
