@@ -97,9 +97,17 @@ export default function MomentumChat({
   const [linkedMessageId, setLinkedMessageId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
   const [projectPositions, setProjectPositions] = useState({});
+  const [expandedThinking, setExpandedThinking] = useState({});
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
+
+  const toggleThinking = (messageId) => {
+    setExpandedThinking(prev => ({
+      ...prev,
+      [messageId]: !prev[messageId]
+    }));
+  };
 
   const updateProjectPositions = useCallback(() => {
     const newPositions = {};
@@ -170,7 +178,7 @@ export default function MomentumChat({
 
   const requestMomentumActions = async (messages, attempt = 1) => {
     const maxAttempts = 3;
-    const { content } = await callOpenAIChat({
+    const { content, thinking } = await callOpenAIChat({
       messages,
       responseFormat: momentumResponseSchema
     });
@@ -178,7 +186,7 @@ export default function MomentumChat({
     const { validActions, errors } = validateThrustActions(parsed.actions);
 
     if (!errors || errors.length === 0) {
-      return { parsed, content };
+      return { parsed, content, thinking };
     }
 
     if (attempt >= maxAttempts) {
@@ -582,7 +590,7 @@ ${JSON.stringify(peopleContext, null, 2)}
         { role: 'user', content: inputValue }
       ];
 
-      const { parsed, content } = await requestMomentumActions(conversationMessages);
+      const { parsed, content, thinking } = await requestMomentumActions(conversationMessages);
       // Debug: log the raw parsed actions before validation
       console.log('[MomentumChat] Raw parsed actions:', JSON.stringify(parsed.actions, null, 2));
       // Use validated actions with resolved project IDs
@@ -599,6 +607,7 @@ ${JSON.stringify(peopleContext, null, 2)}
         author: 'Momentum',
         content: parsed.display || content,
         note: parsed.display || content,
+        thinking,
         date: new Date().toISOString(),
         actionResults,
         updatedProjectIds,
@@ -685,6 +694,8 @@ ${JSON.stringify(peopleContext, null, 2)}
   const renderMessage = (message) => {
     const isUser = message.role === 'user';
     const isLinked = (message.linkedProjectIds?.length > 0) || (message.updatedProjectIds?.length > 0);
+    const hasThinking = !isUser && message.thinking;
+    const isThinkingExpanded = expandedThinking[message.id];
 
     return (
       <div
@@ -701,6 +712,24 @@ ${JSON.stringify(peopleContext, null, 2)}
         }}>
           {!isUser && <div style={styles.aiAvatar}>M</div>}
           <div style={styles.messageContent}>
+            {hasThinking && (
+              <div style={styles.thinkingContainer} data-testid="thinking-block">
+                <button
+                  onClick={() => toggleThinking(message.id)}
+                  style={styles.thinkingToggle}
+                  aria-expanded={isThinkingExpanded}
+                  aria-label={isThinkingExpanded ? 'Hide thinking' : 'Show thinking'}
+                >
+                  <span style={styles.thinkingIcon}>{isThinkingExpanded ? '▼' : '▶'}</span>
+                  <span style={styles.thinkingLabel}>Thinking</span>
+                </button>
+                {isThinkingExpanded && (
+                  <div style={styles.thinkingContent} data-testid="thinking-content">
+                    {message.thinking}
+                  </div>
+                )}
+              </div>
+            )}
             <div style={{
               ...styles.messageText,
               ...(isUser ? styles.userText : styles.assistantText),
@@ -1056,6 +1085,44 @@ const getStyles = (colors) => ({
     flexDirection: 'column',
     gap: '8px',
     marginTop: '4px',
+  },
+  thinkingContainer: {
+    marginBottom: '8px',
+    borderRadius: '12px',
+    backgroundColor: '#F0EDE5',
+    border: '1px solid #E0DAC8',
+    overflow: 'hidden',
+  },
+  thinkingToggle: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    width: '100%',
+    padding: '8px 12px',
+    border: 'none',
+    backgroundColor: 'transparent',
+    cursor: 'pointer',
+    fontSize: '12px',
+    color: '#6B6554',
+    fontWeight: '600',
+    textAlign: 'left',
+  },
+  thinkingIcon: {
+    fontSize: '10px',
+    color: '#8B7355',
+  },
+  thinkingLabel: {
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+  },
+  thinkingContent: {
+    padding: '12px 16px',
+    paddingTop: '0',
+    fontSize: '13px',
+    lineHeight: '1.6',
+    color: '#5A5448',
+    whiteSpace: 'pre-wrap',
+    fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
   },
   actionCard: {
     backgroundColor: '#F9F7F3',

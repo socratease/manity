@@ -2349,7 +2349,25 @@ async def proxy_llm_chat(payload: ChatRequest, request: Request, session: Sessio
         )
 
     data = response.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    message_content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+
+    # Extract thinking and text content from OpenAI's extended thinking response format
+    # Content can be a string or an array of content blocks with types "thinking" and "text"
+    thinking = None
+    if isinstance(message_content, list):
+        # Extract thinking blocks and text blocks separately
+        thinking_parts = []
+        text_parts = []
+        for block in message_content:
+            if isinstance(block, dict):
+                if block.get("type") == "thinking":
+                    thinking_parts.append(block.get("thinking", ""))
+                elif block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+        thinking = "\n".join(thinking_parts) if thinking_parts else None
+        content = "\n".join(text_parts) if text_parts else ""
+    else:
+        content = message_content if message_content else ""
 
     # Log successful LLM conversation with full messages and response for auditing
     import json
@@ -2357,11 +2375,12 @@ async def proxy_llm_chat(payload: ChatRequest, request: Request, session: Sessio
         "model": payload.model,
         "messages": [{"role": m.role.value, "content": m.content} for m in payload.messages],
         "response": content,
+        "thinking": thinking,
         "usage": data.get("usage", {})
     }
     log_action(session, "llm_chat", "llm", None, conversation_log, request)
 
-    return {"content": content, "raw": data}
+    return {"content": content, "thinking": thinking, "raw": data}
 
 
 # PowerPoint Export Models and Endpoint
