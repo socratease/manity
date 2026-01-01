@@ -9,7 +9,7 @@
  * - Undo capabilities
  */
 
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
 import { getTheme } from '../lib/theme';
 
@@ -69,6 +69,7 @@ export default function MomentumChatWithAgent({
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
+  const activeAssistantMessageId = useRef(null);
 
   // Initialize agent runtime using the new SDK hook
   const {
@@ -88,6 +89,7 @@ export default function MomentumChatWithAgent({
 
   // State for streaming thinking steps during execution
   const [streamingThinkingSteps, setStreamingThinkingSteps] = useState([]);
+  const [inProgressAssistantMessage, setInProgressAssistantMessage] = useState(null);
 
   // Update project positions for link visualization
   const updateProjectPositions = useCallback(() => {
@@ -130,18 +132,41 @@ export default function MomentumChatWithAgent({
     prevMessagesLengthRef.current = messages.length;
   }, [messages]);
 
+  const displayedMessages = useMemo(() => {
+    if (!inProgressAssistantMessage) return messages;
+
+    const filteredMessages = messages.filter(m => m.id !== inProgressAssistantMessage.id);
+    return [...filteredMessages, inProgressAssistantMessage];
+  }, [messages, inProgressAssistantMessage]);
+
   // Callbacks for streaming thinking updates
   const thinkingCallbacks = {
     onThinkingStep: (step) => {
       setStreamingThinkingSteps(prev => {
         // Update existing step or add new one
         const existing = prev.findIndex(s => s.id === step.id);
-        if (existing >= 0) {
-          const updated = [...prev];
-          updated[existing] = step;
-          return updated;
-        }
-        return [...prev, step];
+        const updated = existing >= 0 ? Object.assign([...prev], { [existing]: step }) : [...prev, step];
+
+        setInProgressAssistantMessage(current => {
+          const baseMessage =
+            current || {
+              id: activeAssistantMessageId.current || `msg-${Date.now()}`,
+              role: 'assistant',
+              author: 'Momentum',
+              content: '',
+              note: '',
+              date: new Date().toISOString(),
+              actionResults: [],
+              updatedProjectIds: [],
+              linkedProjectIds: [],
+              deltas: [],
+              pendingQuestion: null,
+            };
+
+          return { ...baseMessage, thinkingSteps: updated };
+        });
+
+        return updated;
       });
     },
   };
@@ -165,13 +190,29 @@ export default function MomentumChatWithAgent({
     setInputValue('');
     setIsTyping(true);
     setStreamingThinkingSteps([]); // Reset thinking steps
+    const assistantId = `msg-${Date.now() + 1}`;
+    activeAssistantMessageId.current = assistantId;
+    setInProgressAssistantMessage({
+      id: assistantId,
+      role: 'assistant',
+      author: 'Momentum',
+      content: '',
+      note: '',
+      date: new Date().toISOString(),
+      actionResults: [],
+      updatedProjectIds: [],
+      linkedProjectIds: [],
+      deltas: [],
+      thinkingSteps: [],
+      pendingQuestion: null,
+    });
 
     try {
       // Execute message through the SDK agent with callbacks
       const result = await executeMessage(inputValue, thinkingCallbacks);
 
       const assistantMessage = {
-        id: `msg-${Date.now() + 1}`,
+        id: assistantId,
         role: 'assistant',
         author: 'Momentum',
         content: result.response,
@@ -184,6 +225,8 @@ export default function MomentumChatWithAgent({
         thinkingSteps: result.thinkingSteps, // Include thinking steps
         pendingQuestion: result.pendingQuestion, // Include pending question if any
       };
+
+      setInProgressAssistantMessage(assistantMessage);
 
       if (onSendMessage) {
         onSendMessage(assistantMessage);
@@ -206,12 +249,15 @@ export default function MomentumChatWithAgent({
         actionResults: [],
       };
 
+      setInProgressAssistantMessage(errorMessage);
+
       if (onSendMessage) {
         onSendMessage(errorMessage);
       }
     } finally {
       // Clear streaming steps after the run completes (success or error)
       setStreamingThinkingSteps([]);
+      activeAssistantMessageId.current = null;
       setIsTyping(false);
     }
   };
@@ -221,14 +267,34 @@ export default function MomentumChatWithAgent({
     setIsTyping(true);
     setStreamingThinkingSteps([]);
 
+    const assistantId = activeAssistantMessageId.current || `msg-${Date.now()}`;
+    const existingMessage =
+      inProgressAssistantMessage ||
+      messages.find(m => m.id === assistantId) || {
+        id: assistantId,
+        role: 'assistant',
+        author: 'Momentum',
+        content: '',
+        note: '',
+        date: new Date().toISOString(),
+        actionResults: [],
+        updatedProjectIds: [],
+        linkedProjectIds: [],
+        deltas: [],
+        thinkingSteps: [],
+        pendingQuestion: null,
+      };
+
+    activeAssistantMessageId.current = assistantId;
+    setInProgressAssistantMessage(existingMessage);
+
     try {
       const result = await continueWithUserResponse(response);
 
       // Update the last message with continued results
       const assistantMessage = {
-        id: `msg-${Date.now()}`,
-        role: 'assistant',
-        author: 'Momentum',
+        ...existingMessage,
+        id: assistantId,
         content: result.response,
         note: result.response,
         date: new Date().toISOString(),
@@ -239,6 +305,8 @@ export default function MomentumChatWithAgent({
         thinkingSteps: result.thinkingSteps,
         pendingQuestion: result.pendingQuestion,
       };
+
+      setInProgressAssistantMessage(assistantMessage);
 
       if (onSendMessage) {
         onSendMessage(assistantMessage);
@@ -261,12 +329,15 @@ export default function MomentumChatWithAgent({
         actionResults: [],
       };
 
+      setInProgressAssistantMessage(errorMessage);
+
       if (onSendMessage) {
         onSendMessage(errorMessage);
       }
     } finally {
       // Clear streaming steps when the resumed run finishes
       setStreamingThinkingSteps([]);
+      activeAssistantMessageId.current = null;
       setIsTyping(false);
     }
   };
@@ -545,7 +616,7 @@ export default function MomentumChatWithAgent({
         </div>
 
         <div ref={chatContainerRef} style={styles.messagesContainer} className="momentum-messages">
-          {messages.map(renderMessage)}
+          {displayedMessages.map(renderMessage)}
           {isTyping && (
             <div style={styles.typingWrapper}>
               <div style={styles.aiAvatar}>M</div>
