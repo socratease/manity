@@ -1312,6 +1312,8 @@ def normalize_project_stakeholders(session: Session, stakeholders: Optional[List
 
 
 def upsert_project(session: Session, payload: ProjectPayload) -> Project:
+    normalized_name = (payload.name or "").strip()
+
     statement = (
         select(Project)
         .where(Project.id == payload.id)
@@ -1325,22 +1327,21 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     project = session.exec(statement).first() if payload.id else None
     if project is None:
         project = Project(id=payload.id or generate_id("project"))
-        session.add(project)
 
     # Check for duplicate project name (case-insensitive)
     existing_project = session.exec(
         select(Project).where(
-            func.lower(Project.name) == func.lower(payload.name),
+            func.lower(Project.name) == func.lower(normalized_name),
             Project.id != (project.id if project else "")
         )
     ).first()
     if existing_project:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"A project with the name '{payload.name}' already exists. Please choose a different name."
+            detail=f"A project with the name '{normalized_name}' already exists. Please choose a different name."
         )
 
-    project.name = payload.name
+    project.name = normalized_name
     project.status = payload.status
     project.priority = payload.priority
     project.progress = payload.progress
