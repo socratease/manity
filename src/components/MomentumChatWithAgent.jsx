@@ -1,28 +1,17 @@
 /**
- * MomentumChat with Agent Runtime
+ * MomentumChat with OpenAI Agents SDK
  *
- * This is the updated MomentumChat component that uses the new agent layer
- * for planning, execution, and undo. It maintains full backwards compatibility
- * with the existing UI while delegating all tool execution to the agent runtime.
+ * This component uses the OpenAI Agents SDK for agent orchestration.
+ * It provides a chat interface for project management with tool execution
+ * and undo capabilities.
  */
 
-import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
-import { callOpenAIChat } from '../lib/llmClient';
-import { validateThrustActions as validateThrustActionsUtil } from '../lib/momentumValidation';
 import { getTheme } from '../lib/theme';
-import ThinkingProcess from './ThinkingProcess';
 
-// Import the agent layer
-import {
-  createToolRegistry,
-  AgentRuntime,
-  cloneProjectDeep,
-  buildProjectLookup,
-  createHelpers,
-  legacyResponseSchema,
-  supportedActionTypes,
-} from '../agent';
+// Import the new agent SDK
+import { useAgentRuntime } from '../agent-sdk';
 
 // Default to base theme, can be overridden by props
 const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
@@ -74,41 +63,14 @@ export default function MomentumChatWithAgent({
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
 
-  // Initialize agent runtime (memoized to prevent recreation)
-  const agentRuntime = useMemo(() => {
-    const registry = createToolRegistry();
-    return new AgentRuntime(registry);
-  }, []);
-
-  // Build services for agent execution
-  const buildServices = useCallback(() => ({
+  // Initialize agent runtime using the new SDK hook
+  const { executeMessage, undoManager, undoDeltas } = useAgentRuntime({
+    projects,
+    people,
+    loggedInUser,
     createPerson,
     sendEmail,
-    buildThrustContext: () =>
-      projects.map(project => ({
-        id: project.id,
-        name: project.name,
-        status: project.status,
-        progress: project.progress,
-        priority: project.priority,
-        lastUpdate: project.lastUpdate,
-        targetDate: project.targetDate,
-        stakeholders: project.stakeholders,
-        plan: project.plan.map(task => ({
-          id: task.id,
-          title: task.title,
-          status: task.status,
-          dueDate: task.dueDate,
-          subtasks: (task.subtasks || []).map(subtask => ({
-            id: subtask.id,
-            title: subtask.title,
-            status: subtask.status,
-            dueDate: subtask.dueDate,
-          })),
-        })),
-        recentActivity: project.recentActivity.slice(0, 3),
-      })),
-  }), [createPerson, sendEmail, projects]);
+  });
 
   // Update project positions for link visualization
   const updateProjectPositions = useCallback(() => {
@@ -151,113 +113,7 @@ export default function MomentumChatWithAgent({
     prevMessagesLengthRef.current = messages.length;
   }, [messages]);
 
-  // Helper: Parse assistant response
-  const parseAssistantResponse = (content) => {
-    try {
-      const parsed = JSON.parse(content);
-      return {
-        display: parsed.response || parsed.display || content,
-        actions: parsed.actions || []
-      };
-    } catch {
-      return { display: content, actions: [] };
-    }
-  };
-
-  // Helper: Validate actions (for error messages)
-  const validateThrustActions = useCallback((actions = []) => {
-    return validateThrustActionsUtil(actions, projects);
-  }, [projects]);
-
-  // Request actions from LLM with retry logic
-  const requestMomentumActions = async (conversationMessages, attempt = 1) => {
-    const maxAttempts = 3;
-    const { content } = await callOpenAIChat({
-      messages: conversationMessages,
-      responseFormat: legacyResponseSchema
-    });
-    const parsed = parseAssistantResponse(content);
-    const { validActions, errors } = validateThrustActions(parsed.actions);
-
-    if (!errors || errors.length === 0) {
-      return { parsed, content };
-    }
-
-    if (attempt >= maxAttempts) {
-      throw new Error(`Momentum response was invalid after ${maxAttempts} attempts: ${errors.join(' ')}`);
-    }
-
-    const retryMessages = [
-      ...conversationMessages,
-      { role: 'assistant', content },
-      {
-        role: 'system',
-        content: `Your previous response could not be applied because ${errors.join('; ')}. Use only these action types: ${supportedActionTypes.join(', ')}. Project-targeted actions must include a valid projectId or projectName that exists in the provided portfolio. Respond only with JSON containing "response" and "actions".`
-      }
-    ];
-
-    return requestMomentumActions(retryMessages, attempt + 1);
-  };
-
-  // Apply actions using the agent runtime
-  const applyThrustActions = useCallback(async (actions = []) => {
-    if (!actions.length) {
-      return { deltas: [], actionResults: [], updatedProjectIds: [], plan: null, executionLog: null };
-    }
-
-    const services = buildServices();
-    const context = {
-      userMessage: 'Execute actions',
-      projects: projects.map(cloneProjectDeep),
-      people: [...people],
-      loggedInUser,
-    };
-
-    const config = {
-      constraints: {
-        maxSteps: actions.length + 1,
-        allowSideEffects: true,
-        requireConfirmation: false,
-      },
-    };
-
-    try {
-      const result = await agentRuntime.executeActions(actions, context, services, config);
-
-      // Map agent results to the format expected by the UI
-      const actionResults = result.actionResults.map(ar => ({
-        type: ar.type,
-        label: ar.label,
-        deltas: ar.deltas,
-        detail: ar.detail,
-        error: ar.error,
-      }));
-
-      return {
-        deltas: result.deltas,
-        actionResults,
-        updatedProjectIds: result.updatedEntityIds,
-        plan: result.plan,
-        executionLog: result.executionLog,
-      };
-    } catch (error) {
-      console.error('Agent execution failed:', error);
-      return {
-        deltas: [],
-        actionResults: [{
-          type: 'error',
-          label: 'Execution failed',
-          deltas: [],
-          error: error.message,
-        }],
-        updatedProjectIds: [],
-        plan: null,
-        executionLog: null,
-      };
-    }
-  }, [agentRuntime, buildServices, projects, people, loggedInUser]);
-
-  // Handle send message
+  // Handle send message - now uses OpenAI Agents SDK
   const handleSend = async () => {
     if (!inputValue.trim() || isTyping) return;
 
@@ -277,56 +133,28 @@ export default function MomentumChatWithAgent({
     setIsTyping(true);
 
     try {
-      // Build system prompt using agent runtime
-      const systemPrompt = agentRuntime.buildSystemPrompt({
-        userMessage: inputValue,
-        projects: projects.map(p => ({
-          id: p.id,
-          name: p.name,
-          status: p.status,
-          priority: p.priority,
-          progress: p.progress,
-          description: p.description,
-        })),
-        people: people.map(p => ({
-          name: p.name,
-          team: p.team,
-          email: p.email || null,
-        })),
-        loggedInUser,
-      });
-
-      const conversationMessages = [
-        { role: 'system', content: systemPrompt },
-        ...messages.map(m => ({ role: m.role, content: m.note || m.content })),
-        { role: 'user', content: inputValue }
-      ];
-
-      const { parsed, content } = await requestMomentumActions(conversationMessages);
-      const { validActions } = validateThrustActions(parsed.actions || []);
-      const { actionResults, updatedProjectIds, plan, executionLog } = await applyThrustActions(validActions);
+      // Execute message through the SDK agent
+      const result = await executeMessage(inputValue);
 
       const assistantMessage = {
         id: `msg-${Date.now() + 1}`,
         role: 'assistant',
         author: 'Momentum',
-        content: parsed.display || content,
-        note: parsed.display || content,
+        content: result.response,
+        note: result.response,
         date: new Date().toISOString(),
-        actionResults,
-        updatedProjectIds,
-        linkedProjectIds: updatedProjectIds,
-        deltas: actionResults.flatMap(ar => ar.deltas || []),
-        plan,
-        executionLog,
+        actionResults: result.actionResults,
+        updatedProjectIds: result.updatedEntityIds,
+        linkedProjectIds: result.updatedEntityIds,
+        deltas: result.deltas,
       };
 
       if (onSendMessage) {
         onSendMessage(assistantMessage);
       }
 
-      if (onApplyActions && actionResults.length > 0) {
-        onApplyActions(actionResults, updatedProjectIds);
+      if (onApplyActions && result.actionResults.length > 0) {
+        onApplyActions(result.actionResults, result.updatedEntityIds);
       }
 
     } catch (error) {
@@ -420,13 +248,7 @@ export default function MomentumChatWithAgent({
             }}>
               {message.note || message.content}
             </div>
-            {!isUser && (message.plan || message.executionLog) && (
-              <ThinkingProcess
-                plan={message.plan}
-                executionLog={message.executionLog}
-                colors={colors}
-              />
-            )}
+            {/* ThinkingProcess removed - SDK handles execution internally */}
             {message.actionResults?.length > 0 && (
               <div style={styles.actionsContainer}>
                 {message.actionResults.map((a, i) => renderAction(a, i, message.id))}

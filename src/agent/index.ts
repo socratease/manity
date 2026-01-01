@@ -1,11 +1,11 @@
 /**
- * Agent Layer
+ * Agent Layer (Legacy)
  *
- * Main entry point for the agent module.
- * Exports all public types, classes, and utilities.
+ * This module is deprecated. Use agent-sdk instead.
+ * Kept for backwards compatibility - exports types and UndoManager.
  */
 
-// Types
+// Types - still used by agent-sdk and UI
 export type {
   // Delta types
   DeltaType,
@@ -19,46 +19,9 @@ export type {
   RestoreSubtaskDelta,
   RestoreProjectDelta,
 
-  // Tool types
-  ToolName,
-  ToolMetadata,
-  ToolInputSchema,
-  ToolResult,
-  ToolContext,
-  ToolContextHelpers,
-  ToolContextServices,
-  ToolDefinition,
-
-  // Input types
-  ToolInput,
-  CommentInput,
-  CreateProjectInput,
-  AddTaskInput,
-  UpdateTaskInput,
-  AddSubtaskInput,
-  UpdateSubtaskInput,
-  UpdateProjectInput,
-  AddPersonInput,
-  QueryPortfolioInput,
-  SendEmailInput,
-
   // Execution types
   ExecutionStatus,
-  ExecutionEvent,
-  ExecutionLog,
-
-  // Planning types
-  PlanStep,
-  ToolCall,
-  Plan,
-
-  // Agent types
-  AgentConstraints,
-  AgentContext,
-  AgentRuntimeConfig,
-  AgentResult,
   ActionResult,
-  StopReason,
 
   // Data types
   Stakeholder,
@@ -72,52 +35,7 @@ export type {
   ConversationMessage,
 } from './types';
 
-// Tool Registry
-export {
-  ToolRegistry,
-  validateToolInput,
-  getDefaultRegistry,
-  createRegistry,
-} from './ToolRegistry';
-
-// Tools
-export {
-  allTools,
-  registerAllTools,
-  createToolRegistry,
-  supportedActionTypes,
-  commentTool,
-  createProjectTool,
-  addTaskTool,
-  updateTaskTool,
-  addSubtaskTool,
-  updateSubtaskTool,
-  updateProjectTool,
-  addPersonTool,
-  queryPortfolioTool,
-  sendEmailTool,
-} from './tools';
-
-// Context helpers
-export {
-  resolveProject,
-  resolveTask,
-  resolveSubtask,
-  findPersonByName,
-  cloneProjectDeep,
-  generateActivityId,
-  generateTaskId,
-  generateSubtaskId,
-  generateProjectId,
-  syncProjectActivity,
-  normalizeStakeholderEntry,
-  normalizeStakeholderList,
-  describeDueDate,
-  buildProjectLookup,
-  createHelpers,
-} from './context/helpers';
-
-// Undo Manager
+// Undo Manager - still used by agent-sdk
 export {
   UndoManager,
   applyDelta,
@@ -126,31 +44,8 @@ export {
   getDefaultUndoManager,
 } from './UndoManager';
 
-// Planner
+// Context helpers - some utilities still useful
 export {
-  Planner,
-  planningResponseSchema,
-  legacyResponseSchema,
-  parsePlanningResponse,
-  convertLegacyActionsToPlan,
-  responseToPlan,
-  createNoOpPlan,
-  validatePlan,
-  buildPlanningSystemPrompt,
-  createPlanner,
-} from './Planner';
-
-// Tool Selector
-export {
-  ToolSelector,
-  createToolSelector,
-} from './ToolSelector';
-export type { SelectionResult } from './ToolSelector';
-
-// Agent Runtime
-export {
-  AgentRuntime,
-  defaultConstraints,
-  createAgentRuntime,
-  createDefaultAgentRuntime,
-} from './AgentRuntime';
+  cloneProjectDeep,
+  buildProjectLookup,
+} from './context/helpers';
