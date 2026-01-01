@@ -583,8 +583,14 @@ ${JSON.stringify(peopleContext, null, 2)}
       ];
 
       const { parsed, content } = await requestMomentumActions(conversationMessages);
+      // Debug: log the raw parsed actions before validation
+      console.log('[MomentumChat] Raw parsed actions:', JSON.stringify(parsed.actions, null, 2));
       // Use validated actions with resolved project IDs
-      const { validActions } = validateThrustActions(parsed.actions || []);
+      const { validActions, errors } = validateThrustActions(parsed.actions || []);
+      console.log('[MomentumChat] Validated actions:', JSON.stringify(validActions, null, 2));
+      if (errors?.length) {
+        console.warn('[MomentumChat] Validation errors:', errors);
+      }
       const { actionResults, updatedProjectIds } = await applyThrustActions(validActions);
 
       const assistantMessage = {
