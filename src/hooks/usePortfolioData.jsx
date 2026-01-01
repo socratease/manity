@@ -380,9 +380,12 @@ export const PortfolioProvider = ({ children }) => {
   }, []);
 
   const createProject = useCallback(async (project) => {
+    const payload = mapProjectForApi(project);
+    console.log('[usePortfolioData] createProject - input project:', JSON.stringify(project, null, 2));
+    console.log('[usePortfolioData] createProject - mapped payload:', JSON.stringify(payload, null, 2));
     const created = await apiRequest('/projects', {
       method: 'POST',
-      body: JSON.stringify(mapProjectForApi(project))
+      body: JSON.stringify(payload)
     });
     const normalized = normalizeProjectActivities(created);
     updateProjects(prev => [...prev, normalized]);

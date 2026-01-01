@@ -14,7 +14,7 @@ from typing import List, Optional, Sequence
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response, JSONResponse
-from pydantic import BaseModel, Field as PydanticField
+from pydantic import BaseModel, Field as PydanticField, field_validator
 import httpx
 from sqlalchemy import Column, ForeignKey, String, delete, event, func
 from sqlalchemy.dialects.sqlite import JSON
@@ -699,6 +699,17 @@ class ProjectPayload(SQLModel):
     id: Optional[str] = None
     plan: List[TaskPayload] = Field(default_factory=list)
     recentActivity: List[ActivityPayload] = Field(default_factory=list)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, v):
+        if v is None:
+            raise ValueError("Project name cannot be null")
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("Project name cannot be empty")
+        return v
 
 
 class ImportPayload(BaseModel):
