@@ -12,7 +12,7 @@ import { MOMENTUM_THRUST_SYSTEM_PROMPT } from './lib/momentumPrompts';
 import { verifyThrustActions } from './lib/momentumVerification';
 import SnowEffect from './components/SnowEffect';
 import ChristmasConfetti from './components/ChristmasConfetti';
-import MomentumChat from './components/MomentumChat';
+import MomentumChatWithAgent from './components/MomentumChatWithAgent';
 import Slides from './components/Slides';
 import DataPage from './components/DataPage';
 
@@ -5839,7 +5839,7 @@ PEOPLE & EMAIL ADDRESSES:
           />
         ) : activeView === 'thrust' ? (
           <div style={styles.momentumViewWrapper}>
-            <MomentumChat
+            <MomentumChatWithAgent
               messages={getThrustConversation()}
               onSendMessage={(message) => {
                 setThrustMessages(prev => [...prev, message]);
