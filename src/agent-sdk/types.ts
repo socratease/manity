@@ -80,3 +80,71 @@ export interface HandoffConfig {
   name: string;
   description: string;
 }
+
+/**
+ * Thinking step during agent execution
+ */
+export interface ThinkingStep {
+  id: string;
+  type: 'reasoning' | 'planning' | 'tool_call' | 'tool_result' | 'user_question';
+  content: string;
+  timestamp: number;
+  toolName?: string;
+  toolInput?: Record<string, unknown>;
+  toolResult?: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'failed' | 'awaiting_user';
+}
+
+/**
+ * Question from the agent to the user
+ */
+export interface UserQuestion {
+  id: string;
+  question: string;
+  context?: string;
+  options?: string[];
+  timestamp: number;
+}
+
+/**
+ * Execution state for tracking agent progress
+ */
+export interface ExecutionState {
+  status: 'idle' | 'running' | 'awaiting_user' | 'completed' | 'error';
+  thinkingSteps: ThinkingStep[];
+  pendingQuestion?: UserQuestion;
+  error?: string;
+}
+
+/**
+ * Tool category for permission handling
+ */
+export type ToolCategory = 'safe' | 'sensitive' | 'destructive';
+
+/**
+ * Metadata about a tool
+ */
+export interface ToolMetadata {
+  name: string;
+  category: ToolCategory;
+  requiresConfirmation?: boolean;
+  description?: string;
+}
+
+/**
+ * Callback for streaming updates during execution
+ */
+export interface ExecutionCallbacks {
+  onThinkingStep?: (step: ThinkingStep) => void;
+  onUserQuestion?: (question: UserQuestion) => Promise<string>;
+  onToolStart?: (toolName: string, input: Record<string, unknown>) => void;
+  onToolComplete?: (toolName: string, result: string) => void;
+}
+
+/**
+ * Extended result with thinking steps
+ */
+export interface AgentExecutionResultWithThinking extends AgentExecutionResult {
+  thinkingSteps: ThinkingStep[];
+  pendingQuestion?: UserQuestion;
+}

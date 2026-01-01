@@ -4,6 +4,8 @@
  * Exports all tools and utility functions.
  */
 
+import type { ToolMetadata, ToolCategory } from '../types';
+
 // Export all tools
 export { commentTool, CommentInput, type CommentInputType } from './comment';
 export { createProjectTool, CreateProjectInput, type CreateProjectInputType } from './createProject';
@@ -15,6 +17,7 @@ export { updateProjectTool, UpdateProjectInput, type UpdateProjectInputType } fr
 export { addPersonTool, AddPersonInput, type AddPersonInputType } from './addPerson';
 export { queryPortfolioTool, QueryPortfolioInput, type QueryPortfolioInputType } from './queryPortfolio';
 export { sendEmailTool, SendEmailInput, type SendEmailInputType } from './sendEmail';
+export { askUserTool, AskUserInput, type AskUserInputType, ASK_USER_MARKER, isAskUserResponse, parseAskUserResponse } from './askUser';
 
 // Import all tools for the allTools array
 import { commentTool } from './comment';
@@ -27,6 +30,7 @@ import { updateProjectTool } from './updateProject';
 import { addPersonTool } from './addPerson';
 import { queryPortfolioTool } from './queryPortfolio';
 import { sendEmailTool } from './sendEmail';
+import { askUserTool } from './askUser';
 
 /**
  * All available tools for the agent
@@ -42,6 +46,7 @@ export const allTools = [
   addPersonTool,
   queryPortfolioTool,
   sendEmailTool,
+  askUserTool,
 ];
 
 /**
@@ -57,7 +62,8 @@ export type ToolName =
   | 'update_project'
   | 'add_person'
   | 'query_portfolio'
-  | 'send_email';
+  | 'send_email'
+  | 'ask_user';
 
 export const toolNames: ToolName[] = [
   'comment',
@@ -70,4 +76,39 @@ export const toolNames: ToolName[] = [
   'add_person',
   'query_portfolio',
   'send_email',
+  'ask_user',
 ];
+
+/**
+ * Tool categories for permission handling
+ * - safe: Can be executed without confirmation
+ * - sensitive: Should show a confirmation prompt
+ * - destructive: Requires explicit user approval
+ */
+export const toolCategories: Record<ToolName, ToolMetadata> = {
+  'comment': { name: 'comment', category: 'safe', description: 'Add a comment to a project' },
+  'create_project': { name: 'create_project', category: 'safe', description: 'Create a new project' },
+  'add_task': { name: 'add_task', category: 'safe', description: 'Add a task to a project' },
+  'update_task': { name: 'update_task', category: 'safe', description: 'Update a task' },
+  'add_subtask': { name: 'add_subtask', category: 'safe', description: 'Add a subtask to a task' },
+  'update_subtask': { name: 'update_subtask', category: 'safe', description: 'Update a subtask' },
+  'update_project': { name: 'update_project', category: 'safe', description: 'Update project properties' },
+  'add_person': { name: 'add_person', category: 'safe', description: 'Add a person to the database' },
+  'query_portfolio': { name: 'query_portfolio', category: 'safe', description: 'Query portfolio information' },
+  'send_email': { name: 'send_email', category: 'sensitive', requiresConfirmation: true, description: 'Send an email (irreversible)' },
+  'ask_user': { name: 'ask_user', category: 'safe', description: 'Ask the user a question' },
+};
+
+/**
+ * Get tool category
+ */
+export function getToolCategory(toolName: string): ToolCategory {
+  return toolCategories[toolName as ToolName]?.category || 'safe';
+}
+
+/**
+ * Check if a tool requires confirmation
+ */
+export function toolRequiresConfirmation(toolName: string): boolean {
+  return toolCategories[toolName as ToolName]?.requiresConfirmation || false;
+}
