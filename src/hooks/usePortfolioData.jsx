@@ -183,12 +183,17 @@ export const PortfolioProvider = ({ children }) => {
     };
   }, [mapSubtaskForApi, personRefForApi]);
 
-  const mapProjectForApi = useCallback((project = {}) => ({
-    ...project,
-    stakeholders: (project.stakeholders || []).map(personRefForApi).filter(Boolean),
-    plan: (project.plan || []).map(mapTaskForApi),
-    recentActivity: (project.recentActivity || []).map(mapActivityForApi)
-  }), [mapActivityForApi, mapTaskForApi, personRefForApi]);
+  const mapProjectForApi = useCallback((project = {}) => {
+    const name = (project.name ?? project.projectName ?? '').trim();
+
+    return {
+      ...project,
+      name,
+      stakeholders: (project.stakeholders || []).map(personRefForApi).filter(Boolean),
+      plan: (project.plan || []).map(mapTaskForApi),
+      recentActivity: (project.recentActivity || []).map(mapActivityForApi)
+    };
+  }, [mapActivityForApi, mapTaskForApi, personRefForApi]);
 
   const apiRequest = useCallback(async (path, options = {}) => {
     const loggedInUser = (() => {
