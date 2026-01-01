@@ -193,9 +193,6 @@ export default function MomentumChatWithAgent({
         onApplyActions(result.actionResults, result.updatedEntityIds);
       }
 
-      // Clear streaming steps after message is complete
-      setStreamingThinkingSteps([]);
-
     } catch (error) {
       console.error('Failed to send Momentum request:', error);
 
@@ -213,6 +210,8 @@ export default function MomentumChatWithAgent({
         onSendMessage(errorMessage);
       }
     } finally {
+      // Clear streaming steps after the run completes (success or error)
+      setStreamingThinkingSteps([]);
       setIsTyping(false);
     }
   };
@@ -220,6 +219,7 @@ export default function MomentumChatWithAgent({
   // Handle user response to agent question
   const handleUserQuestionResponse = async (response) => {
     setIsTyping(true);
+    setStreamingThinkingSteps([]);
 
     try {
       const result = await continueWithUserResponse(response);
@@ -265,6 +265,8 @@ export default function MomentumChatWithAgent({
         onSendMessage(errorMessage);
       }
     } finally {
+      // Clear streaming steps when the resumed run finishes
+      setStreamingThinkingSteps([]);
       setIsTyping(false);
     }
   };
