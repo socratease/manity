@@ -457,6 +457,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     const services = buildServices();
     const agentContext = buildContext(message);
 
+    let shouldClearContext = true;
+
     // Create tool execution context with delta tracking
     const toolContext = createToolExecutionContext(
       agentContext.projects,
@@ -489,6 +491,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         setIsAwaitingUser(true);
         setPendingQuestion(result.pausedQuestion);
 
+        shouldClearContext = false;
+
         // Return partial result
         const deltas = toolContext.getDeltas();
         return {
@@ -517,11 +521,11 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       };
     } finally {
       // Only clear context if not paused
-      if (!isAwaitingUser) {
+      if (shouldClearContext && !pausedExecutionRef.current) {
         clearToolContext();
       }
     }
-  }, [buildContext, buildServices, runAgentLoop, buildActionResults, isAwaitingUser]);
+  }, [buildContext, buildServices, runAgentLoop, buildActionResults]);
 
   // Continue execution after user responds to a question
   const continueWithUserResponse = useCallback(async (
@@ -532,6 +536,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     }
 
     const { agent, conversationHistory, toolContext, thinkingSteps, callbacks } = pausedExecutionRef.current;
+
+    let shouldClearContext = true;
 
     // Clear paused state
     setIsAwaitingUser(false);
@@ -582,6 +588,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         setIsAwaitingUser(true);
         setPendingQuestion(result.pausedQuestion);
 
+        shouldClearContext = false;
+
         const deltas = toolContext.getDeltas();
         return {
           response: result.response,
@@ -607,11 +615,11 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         thinkingSteps: result.thinkingSteps,
       };
     } finally {
-      if (!isAwaitingUser) {
+      if (shouldClearContext && !pausedExecutionRef.current) {
         clearToolContext();
       }
     }
-  }, [runAgentLoop, buildActionResults, isAwaitingUser]);
+  }, [runAgentLoop, buildActionResults]);
 
   // Undo helper
   const undoDeltas = useCallback((currentProjects: Project[], deltas: Delta[]): Project[] => {
