@@ -11,6 +11,7 @@
 import { useCallback, useMemo, useRef, useState } from 'react';
 import { Agent, setDefaultModelProvider } from '@openai/agents';
 import { createProjectManagementAgent, defaultAgentConfig, type AgentConfig } from './agent';
+import { EMPTY_RESPONSE_ERROR, getAssistantMessage } from './responseUtils';
 import {
   setToolContext,
   clearToolContext,
@@ -309,7 +310,13 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       });
 
       // Extract content and tool calls from response
-      const assistantMessage = response.choices[0]?.message;
+      const assistantMessage = getAssistantMessage(response);
+      if (!assistantMessage) {
+        planningStep.status = 'failed';
+        planningStep.content = EMPTY_RESPONSE_ERROR;
+        callbacks?.onThinkingStep?.(planningStep);
+        throw new Error(EMPTY_RESPONSE_ERROR);
+      }
       const content = assistantMessage?.content || '';
       const toolCalls = assistantMessage?.tool_calls || [];
 
