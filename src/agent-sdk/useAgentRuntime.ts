@@ -183,6 +183,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       const toolName = toolCall.name;
       const toolInput = toolCall.arguments;
 
+      console.debug('[Momentum] Starting tool', toolName, toolInput);
+
       // Create thinking step for tool call
       const toolStep = createThinkingStep('tool_call', `Calling ${toolName}`, {
         toolName,
@@ -207,6 +209,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       try {
         // Execute the tool
         const result = await (tool as any).execute(toolInput);
+
+        console.debug('[Momentum] Tool result', { toolName, result });
 
         // Check if this is an ask_user response that should pause execution
         if (isAskUserResponse(result)) {
@@ -307,6 +311,12 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
           },
         })),
         tool_choice: 'auto',
+      });
+
+      console.debug('[Momentum] Agent completion response', {
+        choicesCount: response?.choices?.length,
+        contentPreview: response?.choices?.[0]?.message?.content || response?.content,
+        toolCallCount: response?.choices?.[0]?.message?.tool_calls?.length || response?.toolCalls?.length,
       });
 
       // Extract content and tool calls from response
