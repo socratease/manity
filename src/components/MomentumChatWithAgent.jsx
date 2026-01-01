@@ -1,97 +1,70 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+/**
+ * MomentumChat with Agent Runtime
+ *
+ * This is the updated MomentumChat component that uses the new agent layer
+ * for planning, execution, and undo. It maintains full backwards compatibility
+ * with the existing UI while delegating all tool execution to the agent runtime.
+ */
+
+import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
 import { callOpenAIChat } from '../lib/llmClient';
-import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil } from '../lib/momentumValidation';
-import { MOMENTUM_CHAT_SYSTEM_PROMPT } from '../lib/momentumPrompts';
-import { getTheme, getPriorityColor as getThemePriorityColor, getStatusColor as getThemeStatusColor } from '../lib/theme';
+import { validateThrustActions as validateThrustActionsUtil } from '../lib/momentumValidation';
+import { getTheme } from '../lib/theme';
+import ThinkingProcess from './ThinkingProcess';
+
+// Import the agent layer
+import {
+  createToolRegistry,
+  AgentRuntime,
+  cloneProjectDeep,
+  buildProjectLookup,
+  createHelpers,
+  legacyResponseSchema,
+  supportedActionTypes,
+} from '../agent';
 
 // Default to base theme, can be overridden by props
 const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
 
-// JSON Schema for structured output - ensures LLM returns properly formatted actions
-// Includes all action-specific fields to ensure LLM includes them in output
-const momentumResponseSchema = {
-  type: "json_schema",
-  json_schema: {
-    name: "momentum_response",
-    schema: {
-      type: "object",
-      properties: {
-        response: { type: "string" },
-        actions: {
-          type: "array",
-          items: {
-            type: "object",
-            properties: {
-              type: { type: "string" },
-              // Project identification (use either projectId OR projectName)
-              projectId: { type: "string" },
-              projectName: { type: "string" },
-              // create_project fields - use "name" as the primary field
-              name: { type: "string" },
-              status: { type: "string" },
-              priority: { type: "string" },
-              progress: { type: "number" },
-              description: { type: "string" },
-              targetDate: { type: "string" },
-              startDate: { type: "string" },
-              stakeholders: { type: "string" },
-              executiveUpdate: { type: "string" },
-              // Task/subtask fields
-              taskId: { type: "string" },
-              taskTitle: { type: "string" },
-              subtaskId: { type: "string" },
-              subtaskTitle: { type: "string" },
-              title: { type: "string" },
-              dueDate: { type: "string" },
-              completedDate: { type: "string" },
-              assignee: { type: "string" },
-              // Comment fields
-              note: { type: "string" },
-              content: { type: "string" },
-              author: { type: "string" },
-              // Email fields
-              recipients: { type: "string" },
-              subject: { type: "string" },
-              body: { type: "string" },
-              // Person fields
-              personName: { type: "string" },
-              team: { type: "string" },
-              email: { type: "string" },
-              // Query fields
-              scope: { type: "string" },
-              detailLevel: { type: "string" },
-              includePeople: { type: "boolean" },
-            }
-          }
-        }
-      },
-      required: ["response", "actions"]
-    }
-  }
-};
-
-export default function MomentumChat({
+export default function MomentumChatWithAgent({
   messages = [],
   onSendMessage,
   onApplyActions,
   onUndoAction,
-  loggedInUser = '',
+  loggedInUser = 'You',
   people = [],
   isSantafied = false,
   recentlyUpdatedProjects = {}
 }) {
   const colors = getColors(isSantafied);
   const styles = getStyles(colors);
+
   const getPriorityColor = (priority) => {
     const map = { high: colors.coral, medium: colors.amber, low: colors.sage };
     return map[priority] || colors.stone;
   };
+
   const getStatusColor = (status) => {
     const map = { active: colors.sage, planning: colors.amber, 'on-hold': colors.stone, completed: colors.earth };
     return map[status] || colors.stone;
   };
-  const { projects, addTask, updateTask, addSubtask, updateSubtask, updateProject, createProject, addActivity, createPerson, sendEmail } = usePortfolioData();
+
+  // Get data and services from portfolio hook
+  const {
+    projects,
+    createProject,
+    updateProject,
+    addActivity,
+    addTask,
+    updateTask,
+    addSubtask,
+    updateSubtask,
+    createPerson,
+    sendEmail,
+  } = usePortfolioData();
+
+  // Component state
   const [inputValue, setInputValue] = useState('');
   const [hoveredProject, setHoveredProject] = useState(null);
   const [linkedMessageId, setLinkedMessageId] = useState(null);
@@ -101,6 +74,43 @@ export default function MomentumChat({
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
 
+  // Initialize agent runtime (memoized to prevent recreation)
+  const agentRuntime = useMemo(() => {
+    const registry = createToolRegistry();
+    return new AgentRuntime(registry);
+  }, []);
+
+  // Build services for agent execution
+  const buildServices = useCallback(() => ({
+    createPerson,
+    sendEmail,
+    buildThrustContext: () =>
+      projects.map(project => ({
+        id: project.id,
+        name: project.name,
+        status: project.status,
+        progress: project.progress,
+        priority: project.priority,
+        lastUpdate: project.lastUpdate,
+        targetDate: project.targetDate,
+        stakeholders: project.stakeholders,
+        plan: project.plan.map(task => ({
+          id: task.id,
+          title: task.title,
+          status: task.status,
+          dueDate: task.dueDate,
+          subtasks: (task.subtasks || []).map(subtask => ({
+            id: subtask.id,
+            title: subtask.title,
+            status: subtask.status,
+            dueDate: subtask.dueDate,
+          })),
+        })),
+        recentActivity: project.recentActivity.slice(0, 3),
+      })),
+  }), [createPerson, sendEmail, projects]);
+
+  // Update project positions for link visualization
   const updateProjectPositions = useCallback(() => {
     const newPositions = {};
     messages.forEach((msg) => {
@@ -135,23 +145,13 @@ export default function MomentumChat({
   const prevMessagesLengthRef = useRef(0);
 
   useEffect(() => {
-    // Only scroll if messages were actually added (not just on mount/navigation)
     if (messages.length > prevMessagesLengthRef.current && prevMessagesLengthRef.current > 0) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }
     prevMessagesLengthRef.current = messages.length;
   }, [messages]);
 
-  const generateActivityId = () => {
-    return `activity-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
-  };
-
-  const findPersonByName = useCallback((name) => {
-    if (!name) return null;
-    const lower = name.toLowerCase();
-    return people.find(person => person.name?.toLowerCase() === lower) || null;
-  }, [people]);
-
+  // Helper: Parse assistant response
   const parseAssistantResponse = (content) => {
     try {
       const parsed = JSON.parse(content);
@@ -164,15 +164,17 @@ export default function MomentumChat({
     }
   };
 
-  const validateThrustActions = (actions = []) => {
+  // Helper: Validate actions (for error messages)
+  const validateThrustActions = useCallback((actions = []) => {
     return validateThrustActionsUtil(actions, projects);
-  };
+  }, [projects]);
 
-  const requestMomentumActions = async (messages, attempt = 1) => {
+  // Request actions from LLM with retry logic
+  const requestMomentumActions = async (conversationMessages, attempt = 1) => {
     const maxAttempts = 3;
     const { content } = await callOpenAIChat({
-      messages,
-      responseFormat: momentumResponseSchema
+      messages: conversationMessages,
+      responseFormat: legacyResponseSchema
     });
     const parsed = parseAssistantResponse(content);
     const { validActions, errors } = validateThrustActions(parsed.actions);
@@ -186,339 +188,76 @@ export default function MomentumChat({
     }
 
     const retryMessages = [
-      ...messages,
+      ...conversationMessages,
       { role: 'assistant', content },
       {
         role: 'system',
-        content: `Your previous response could not be applied because ${errors.join('; ')}. Use only these action types: ${supportedMomentumActions.join(', ')}. Project-targeted actions must include a valid projectId or projectName that exists in the provided portfolio. Respond only with JSON containing "response" and "actions".`
+        content: `Your previous response could not be applied because ${errors.join('; ')}. Use only these action types: ${supportedActionTypes.join(', ')}. Project-targeted actions must include a valid projectId or projectName that exists in the provided portfolio. Respond only with JSON containing "response" and "actions".`
       }
     ];
 
     return requestMomentumActions(retryMessages, attempt + 1);
   };
 
-  const applyThrustActions = async (actions = []) => {
-    const deltas = [];
-    const actionResults = [];
-    const updatedProjectIds = [];
-
-    for (const action of actions) {
-      try {
-        let label = '';
-        let projectId = action.projectId;
-        const actionDeltas = [];
-
-        if (action.type === 'create_project') {
-          // Validate that project name is provided - check both name and projectName
-          const rawName = action.name ?? action.projectName ?? '';
-          const projectName = (typeof rawName === 'string' ? rawName : String(rawName)).trim();
-          if (!projectName) {
-            // Log the action for debugging
-            console.warn('[MomentumChat] create_project action has empty name:', {
-              action,
-              actionName: action.name,
-              actionProjectName: action.projectName,
-              rawName
-            });
-            actionResults.push({
-              type: 'create_project',
-              label: 'Failed to create project',
-              deltas: [],
-              error: 'Project name is required but was not provided'
-            });
-            continue;
-          }
-
-          const newProject = {
-            name: projectName,
-            priority: action.priority || 'medium',
-            status: action.status || 'planning',
-            progress: action.progress || 0,
-            description: action.description || '',
-            stakeholders: action.stakeholders
-              ? action.stakeholders.split(',').map(name => ({ name: name.trim(), team: 'Contributor' }))
-              : [{ name: loggedInUser || 'Momentum', team: 'Owner' }],
-            targetDate: action.targetDate || '',
-            plan: [],
-            recentActivity: action.description
-              ? [{ id: generateActivityId(), date: new Date().toISOString(), note: action.description, author: 'Momentum' }]
-              : []
-          };
-
-          const created = await createProject(newProject);
-          projectId = created.id;
-          updatedProjectIds.push(projectId);
-          label = `Created project "${created.name}"`;
-
-          // Track delta for undo
-          actionDeltas.push({
-            type: 'remove_project',
-            projectId: created.id
-          });
-
-          actionResults.push({ type: 'create_project', label, deltas: actionDeltas });
-
-        } else if (action.type === 'update_project') {
-          const project = projects.find(p => p.id === projectId);
-          if (project) {
-            const updates = {};
-            const previous = {};
-            const changesList = [];
-
-            if (action.progress !== undefined) {
-              updates.progress = action.progress;
-              previous.progress = project.progress;
-              changesList.push(`Progress: ${previous.progress}% → ${action.progress}%`);
-            }
-            if (action.status !== undefined) {
-              updates.status = action.status;
-              previous.status = project.status;
-              changesList.push(`Status: ${previous.status} → ${action.status}`);
-            }
-            if (action.priority !== undefined) {
-              updates.priority = action.priority;
-              previous.priority = project.priority;
-              changesList.push(`Priority: ${previous.priority} → ${action.priority}`);
-            }
-            if (action.targetDate !== undefined) {
-              updates.targetDate = action.targetDate;
-              previous.targetDate = project.targetDate;
-              changesList.push(`Target: ${previous.targetDate || 'none'} → ${action.targetDate}`);
-            }
-
-            await updateProject(projectId, updates);
-            updatedProjectIds.push(projectId);
-            label = `Updated "${project.name}"`;
-
-            // Track delta for undo
-            actionDeltas.push({
-              type: 'restore_project',
-              projectId: projectId,
-              previous: previous
-            });
-
-            actionResults.push({ type: 'update_project', label, deltas: actionDeltas, detail: changesList.join(', ') });
-          }
-
-        } else if (action.type === 'comment') {
-          const project = projects.find(p => p.id === projectId);
-          if (project) {
-            const requestedNote = (action.note || action.content || action.comment || '').trim();
-            const note = requestedNote || 'Update logged by Momentum';
-            const detail = requestedNote
-              ? note
-              : `${note} (placeholder used because the comment was empty)`;
-
-            const newActivity = {
-              id: generateActivityId(),
-              date: new Date().toISOString(),
-              note,
-              author: loggedInUser || ''
-            };
-            await addActivity(projectId, newActivity);
-            updatedProjectIds.push(projectId);
-            label = `Added comment to "${project.name}"`;
-
-            // Track delta for undo
-            actionDeltas.push({
-              type: 'remove_activity',
-              projectId: projectId,
-              activityId: newActivity.id
-            });
-
-            actionResults.push({ type: 'comment', label, deltas: actionDeltas, detail });
-          }
-
-        } else if (action.type === 'add_task') {
-          const project = projects.find(p => p.id === projectId);
-          if (project) {
-            const newTask = {
-              id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              title: action.title || action.name || '',
-              dueDate: action.dueDate || '',
-              completed: false,
-              assignedTo: action.assignedTo || '',
-              subtasks: []
-            };
-            await addTask(projectId, newTask);
-            updatedProjectIds.push(projectId);
-            label = `Added task "${newTask.title}" to "${project.name}"`;
-
-            // Track delta for undo
-            actionDeltas.push({
-              type: 'remove_task',
-              projectId: projectId,
-              taskId: newTask.id
-            });
-
-            actionResults.push({ type: 'add_task', label, deltas: actionDeltas, detail: `Task: ${newTask.title}${newTask.dueDate ? `, Due: ${newTask.dueDate}` : ''}` });
-          }
-
-        } else if (action.type === 'update_task') {
-          const project = projects.find(p => p.id === projectId);
-          if (project) {
-            const taskId = action.taskId;
-            const task = project.plan?.find(t => t.id === taskId);
-            const updates = {};
-            const previous = {};
-
-            if (task) {
-              if (action.completed !== undefined) {
-                updates.completed = action.completed;
-                previous.completed = task.completed;
-              }
-              if (action.title !== undefined) {
-                updates.title = action.title;
-                previous.title = task.title;
-              }
-              if (action.dueDate !== undefined) {
-                updates.dueDate = action.dueDate;
-                previous.dueDate = task.dueDate;
-              }
-              if (action.assignedTo !== undefined) {
-                updates.assignedTo = action.assignedTo;
-                previous.assignedTo = task.assignedTo;
-              }
-            }
-
-            await updateTask(projectId, taskId, updates);
-            updatedProjectIds.push(projectId);
-            label = `Updated task in "${project.name}"`;
-
-            // Track delta for undo
-            actionDeltas.push({
-              type: 'restore_task',
-              projectId: projectId,
-              taskId: taskId,
-              previous: previous
-            });
-
-            actionResults.push({ type: 'update_task', label, deltas: actionDeltas });
-          }
-
-        } else if (action.type === 'add_subtask') {
-          const project = projects.find(p => p.id === projectId);
-          if (project) {
-            const newSubtask = {
-              id: `subtask-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-              title: action.title || action.name || '',
-              dueDate: action.dueDate || '',
-              completed: false,
-              assignedTo: action.assignedTo || ''
-            };
-            await addSubtask(projectId, action.taskId, newSubtask);
-            updatedProjectIds.push(projectId);
-            label = `Added subtask to "${project.name}"`;
-
-            // Track delta for undo
-            actionDeltas.push({
-              type: 'remove_subtask',
-              projectId: projectId,
-              taskId: action.taskId,
-              subtaskId: newSubtask.id
-            });
-
-            actionResults.push({ type: 'add_subtask', label, deltas: actionDeltas });
-          }
-
-        } else if (action.type === 'add_person') {
-          const personName = action.name || action.personName;
-          if (personName) {
-            await createPerson({
-              name: personName,
-              team: action.team || 'Contributor',
-              email: action.email || null
-            });
-            label = `Added person "${personName}"`;
-            // Note: No undo tracking for add_person yet
-            actionResults.push({ type: 'add_person', label, deltas: [] });
-          }
-
-        } else if (action.type === 'send_email') {
-          const recipients = Array.isArray(action.recipients)
-            ? action.recipients
-            : `${action.recipients || ''}`.split(',');
-
-          const normalizedRecipients = recipients
-            .map(recipient => recipient?.trim())
-            .filter(Boolean)
-            .map(recipient => {
-              if (recipient.includes('@')) return recipient;
-              const person = findPersonByName(recipient);
-              return person?.email || recipient;
-            })
-            .filter(Boolean);
-
-          if (!normalizedRecipients.length) {
-            actionResults.push({
-              type: 'send_email',
-              label: 'Skipped send_email: no recipients',
-              deltas: actionDeltas,
-              detail: 'No recipients were provided for the email.'
-            });
-            continue;
-          }
-
-          const subject = (action.subject || '').trim();
-          const body = (action.body || '').trim();
-
-          if (!subject || !body) {
-            actionResults.push({
-              type: 'send_email',
-              label: 'Skipped send_email: missing content',
-              deltas: actionDeltas,
-              detail: 'Both subject and body are required to send an email.'
-            });
-            continue;
-          }
-
-          const signature = '-sent by an AI clerk';
-          const cleanedBody = body
-            .replace(/\n*-?\s*sent (with the help of|by) an AI clerk\s*$/gi, '')
-            .trim();
-          const bodyWithSignature = cleanedBody ? `${cleanedBody}\n\n${signature}` : signature;
-
-          try {
-            await sendEmail({
-              recipients: normalizedRecipients,
-              subject,
-              body: bodyWithSignature
-            });
-
-            label = `Email sent to ${normalizedRecipients.join(', ')}`;
-            actionResults.push({
-              type: 'send_email',
-              label,
-              deltas: actionDeltas,
-              detail: `Sent email "${subject}"`
-            });
-          } catch (error) {
-            actionResults.push({
-              type: 'send_email',
-              label: 'Failed to send email',
-              deltas: actionDeltas,
-              error: error.message
-            });
-          }
-        }
-
-        // Collect all deltas
-        deltas.push(...actionDeltas);
-
-      } catch (error) {
-        console.error('Error applying action:', action, error);
-        actionResults.push({
-          type: action.type,
-          label: `Failed: ${action.type}`,
-          deltas: [],
-          error: error.message
-        });
-      }
+  // Apply actions using the agent runtime
+  const applyThrustActions = useCallback(async (actions = []) => {
+    if (!actions.length) {
+      return { deltas: [], actionResults: [], updatedProjectIds: [], plan: null, executionLog: null };
     }
 
-    return { deltas, actionResults, updatedProjectIds };
-  };
+    const services = buildServices();
+    const context = {
+      userMessage: 'Execute actions',
+      projects: projects.map(cloneProjectDeep),
+      people: [...people],
+      loggedInUser,
+    };
 
+    const config = {
+      constraints: {
+        maxSteps: actions.length + 1,
+        allowSideEffects: true,
+        requireConfirmation: false,
+      },
+    };
+
+    try {
+      const result = await agentRuntime.executeActions(actions, context, services, config);
+
+      // Map agent results to the format expected by the UI
+      const actionResults = result.actionResults.map(ar => ({
+        type: ar.type,
+        label: ar.label,
+        deltas: ar.deltas,
+        detail: ar.detail,
+        error: ar.error,
+      }));
+
+      return {
+        deltas: result.deltas,
+        actionResults,
+        updatedProjectIds: result.updatedEntityIds,
+        plan: result.plan,
+        executionLog: result.executionLog,
+      };
+    } catch (error) {
+      console.error('Agent execution failed:', error);
+      return {
+        deltas: [],
+        actionResults: [{
+          type: 'error',
+          label: 'Execution failed',
+          deltas: [],
+          error: error.message,
+        }],
+        updatedProjectIds: [],
+        plan: null,
+        executionLog: null,
+      };
+    }
+  }, [agentRuntime, buildServices, projects, people, loggedInUser]);
+
+  // Handle send message
   const handleSend = async () => {
     if (!inputValue.trim() || isTyping) return;
 
@@ -530,7 +269,6 @@ export default function MomentumChat({
       date: new Date().toISOString(),
     };
 
-    // Call parent handler to add user message
     if (onSendMessage) {
       onSendMessage(userMessage);
     }
@@ -539,42 +277,24 @@ export default function MomentumChat({
     setIsTyping(true);
 
     try {
-      // Prepare system prompt with portfolio context
-      const portfolioContext = projects.map(p => ({
-        id: p.id,
-        name: p.name,
-        status: p.status,
-        priority: p.priority,
-        progress: p.progress,
-        description: p.description
-      }));
-
-      const peopleContext = people.map(p => ({
-        name: p.name,
-        team: p.team,
-        email: p.email || null
-      }));
-
-      const systemPrompt = `${MOMENTUM_CHAT_SYSTEM_PROMPT}
-
-LOGGED-IN USER: ${loggedInUser || 'Not set'}
-- When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
-- When adding comments or updates, use the logged-in user's name as the author unless otherwise specified
-- You may send emails on the user's behalf when it moves the work forward (status updates, requests, reminders); the system will handle the From address.
-
-PEOPLE & EMAIL ADDRESSES:
-- Each person in the system may have an email address stored in their profile
-- When referencing people, you can look up their email addresses from the people list below
-- All project stakeholders/contributors are people with potential email addresses
-
-Available action types: ${supportedMomentumActions.join(', ')}.
-
-Current portfolio:
-${JSON.stringify(portfolioContext, null, 2)}
-
-People database:
-${JSON.stringify(peopleContext, null, 2)}
-`;
+      // Build system prompt using agent runtime
+      const systemPrompt = agentRuntime.buildSystemPrompt({
+        userMessage: inputValue,
+        projects: projects.map(p => ({
+          id: p.id,
+          name: p.name,
+          status: p.status,
+          priority: p.priority,
+          progress: p.progress,
+          description: p.description,
+        })),
+        people: people.map(p => ({
+          name: p.name,
+          team: p.team,
+          email: p.email || null,
+        })),
+        loggedInUser,
+      });
 
       const conversationMessages = [
         { role: 'system', content: systemPrompt },
@@ -583,15 +303,8 @@ ${JSON.stringify(peopleContext, null, 2)}
       ];
 
       const { parsed, content } = await requestMomentumActions(conversationMessages);
-      // Debug: log the raw parsed actions before validation
-      console.log('[MomentumChat] Raw parsed actions:', JSON.stringify(parsed.actions, null, 2));
-      // Use validated actions with resolved project IDs
-      const { validActions, errors } = validateThrustActions(parsed.actions || []);
-      console.log('[MomentumChat] Validated actions:', JSON.stringify(validActions, null, 2));
-      if (errors?.length) {
-        console.warn('[MomentumChat] Validation errors:', errors);
-      }
-      const { actionResults, updatedProjectIds } = await applyThrustActions(validActions);
+      const { validActions } = validateThrustActions(parsed.actions || []);
+      const { actionResults, updatedProjectIds, plan, executionLog } = await applyThrustActions(validActions);
 
       const assistantMessage = {
         id: `msg-${Date.now() + 1}`,
@@ -604,14 +317,14 @@ ${JSON.stringify(peopleContext, null, 2)}
         updatedProjectIds,
         linkedProjectIds: updatedProjectIds,
         deltas: actionResults.flatMap(ar => ar.deltas || []),
+        plan,
+        executionLog,
       };
 
-      // Call parent handler to add assistant message
       if (onSendMessage) {
         onSendMessage(assistantMessage);
       }
 
-      // Notify parent of applied actions
       if (onApplyActions && actionResults.length > 0) {
         onApplyActions(actionResults, updatedProjectIds);
       }
@@ -707,6 +420,13 @@ ${JSON.stringify(peopleContext, null, 2)}
             }}>
               {message.note || message.content}
             </div>
+            {!isUser && (message.plan || message.executionLog) && (
+              <ThinkingProcess
+                plan={message.plan}
+                executionLog={message.executionLog}
+                colors={colors}
+              />
+            )}
             {message.actionResults?.length > 0 && (
               <div style={styles.actionsContainer}>
                 {message.actionResults.map((a, i) => renderAction(a, i, message.id))}
@@ -826,7 +546,6 @@ ${JSON.stringify(peopleContext, null, 2)}
         @keyframes pulse { 0%, 100% { opacity: 0.3; } 50% { opacity: 1; } }
         @keyframes slideIn { from { opacity: 0; transform: translateX(12px); } to { opacity: 1; transform: translateX(0); } }
 
-        /* Fix chat input positioning on small screens */
         @media (max-height: 600px) {
           .momentum-input-container {
             position: sticky !important;
@@ -836,33 +555,15 @@ ${JSON.stringify(peopleContext, null, 2)}
         }
 
         @media (max-height: 800px) {
-          .momentum-chat-header {
-            padding: 12px 18px !important;
-          }
-
-          .momentum-messages {
-            padding: 14px 18px !important;
-            max-height: calc(100vh - 170px);
-          }
-
-          .momentum-input-container {
-            padding: 12px 18px !important;
-          }
+          .momentum-chat-header { padding: 12px 18px !important; }
+          .momentum-messages { padding: 14px 18px !important; max-height: calc(100vh - 170px); }
+          .momentum-input-container { padding: 12px 18px !important; }
         }
 
         @media (max-height: 650px) {
-          .momentum-chat-header {
-            padding: 10px 14px !important;
-          }
-
-          .momentum-messages {
-            padding: 10px 14px !important;
-            max-height: calc(100vh - 140px);
-          }
-
-          .momentum-input-container {
-            padding: 10px 14px !important;
-          }
+          .momentum-chat-header { padding: 10px 14px !important; }
+          .momentum-messages { padding: 10px 14px !important; max-height: calc(100vh - 140px); }
+          .momentum-input-container { padding: 10px 14px !important; }
         }
       `}</style>
 
@@ -923,11 +624,9 @@ ${JSON.stringify(peopleContext, null, 2)}
         <div style={styles.projectsContainer}>
           {[...projects]
             .sort((a, b) => {
-              // Sort by recently updated projects first
               const aTime = recentlyUpdatedProjects[a.id] || 0;
               const bTime = recentlyUpdatedProjects[b.id] || 0;
               if (aTime !== bTime) return bTime - aTime;
-              // Then by priority (high > medium > low)
               const priorityOrder = { high: 3, medium: 2, low: 1 };
               return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
             })
@@ -944,11 +643,11 @@ ${JSON.stringify(peopleContext, null, 2)}
   );
 }
 
+// Styles (same as original MomentumChat)
 const getStyles = (colors) => ({
   container: {
     display: 'flex',
-    height: '100%',
-    minHeight: 0,
+    height: '100vh',
     width: '100%',
     backgroundColor: '#FAF8F3',
     fontFamily: "system-ui, -apple-system, sans-serif",
@@ -960,8 +659,6 @@ const getStyles = (colors) => ({
     borderRight: '1px solid #E8E3D8',
     backgroundColor: '#FFFFFF',
     minWidth: 0,
-    minHeight: 0,
-    overflow: 'hidden',
   },
   chatHeader: {
     display: 'flex',
@@ -976,9 +673,7 @@ const getStyles = (colors) => ({
     alignItems: 'center',
     gap: '12px',
   },
-  logoIcon: {
-    fontSize: '22px',
-  },
+  logoIcon: { fontSize: '22px' },
   logoText: {
     fontSize: '20px',
     fontFamily: "Georgia, serif",
@@ -1179,8 +874,6 @@ const getStyles = (colors) => ({
     flexDirection: 'column',
     backgroundColor: '#FAF8F3',
     flexShrink: 0,
-    minHeight: 0,
-    overflow: 'hidden',
   },
   canvasHeader: {
     display: 'flex',
@@ -1362,8 +1055,5 @@ const getStyles = (colors) => ({
     color: colors.stone,
     cursor: 'pointer',
     transition: 'all 0.2s',
-    '&:hover': {
-      backgroundColor: colors.stone + '40',
-    }
   },
 });

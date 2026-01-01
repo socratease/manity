@@ -1,5 +1,4 @@
 import React, { createContext, useContext, useEffect, useMemo, useRef, useState, useCallback } from 'react';
-import { defaultPortfolio } from '../lib/data/portfolio';
 
 const PortfolioContext = createContext(null);
 
@@ -13,7 +12,12 @@ const sortActivitiesDesc = (activities = []) =>
   [...activities].sort((a, b) => new Date(b.date || 0) - new Date(a.date || 0));
 
 const normalizeProjectActivities = (project = {}) => {
-  const sortedActivity = sortActivitiesDesc(project.recentActivity || []);
+  const normalizedActivity = (project.recentActivity || []).map(activity => ({
+    ...activity,
+    author: activity.author || activity.authorPerson?.name || '',
+    authorId: activity.authorId || activity.authorPerson?.id || null
+  }));
+  const sortedActivity = sortActivitiesDesc(normalizedActivity);
   return {
     ...project,
     recentActivity: sortedActivity,
@@ -25,6 +29,7 @@ const normalizeProjects = (projects = []) => projects.map(normalizeProjectActivi
 
 // Local storage key for email settings
 const EMAIL_SETTINGS_KEY = 'manity_email_settings';
+const LOGGED_IN_USER_KEY = 'manity_logged_in_user';
 
 // Clean up any stored credentials from localStorage (migration)
 const cleanupStoredCredentials = () => {
@@ -79,6 +84,7 @@ const loadEmailSettingsFromStorage = () => {
 export const PortfolioProvider = ({ children }) => {
   const [projects, setProjectsState] = useState([]);
   const [people, setPeopleState] = useState([]);
+  const [projectsError, setProjectsError] = useState('');
   // Email settings stored in localStorage (browser-specific)
   const [emailSettings, setEmailSettings] = useState(loadEmailSettingsFromStorage);
   const hasInitializedRef = useRef(false);
@@ -94,6 +100,7 @@ export const PortfolioProvider = ({ children }) => {
       map.set(key, {
         ...existing,
         ...person,
+        id: person.id || existing.id,
         name: person.name || existing.name,
         team: person.team || existing.team || 'Contributor',
         email: person.email ?? existing.email ?? null
@@ -103,10 +110,103 @@ export const PortfolioProvider = ({ children }) => {
     return Array.from(map.values());
   }, []);
 
+  const findPersonByName = useCallback((name) => {
+    if (!name) return null;
+    const lower = name.toLowerCase();
+    return people.find(person => person.name.toLowerCase() === lower) || null;
+  }, [people]);
+
+  const findPersonById = useCallback((id) => {
+    if (!id) return null;
+    return people.find(person => person.id === id) || null;
+  }, [people]);
+
+  const personRefForApi = useCallback((input) => {
+    if (!input) return null;
+
+    if (typeof input === 'string') {
+      const existing = findPersonByName(input);
+      return existing
+        ? { id: existing.id, name: existing.name, team: existing.team, email: existing.email ?? null }
+        : { name: input, team: 'Contributor' };
+    }
+
+    const source = input.id ? findPersonById(input.id) || input : input;
+    const fallbackByName = source.name ? findPersonByName(source.name) : null;
+    const resolved = source || fallbackByName;
+
+    if (!resolved?.name && fallbackByName) {
+      return {
+        id: fallbackByName.id,
+        name: fallbackByName.name,
+        team: fallbackByName.team || 'Contributor',
+        email: fallbackByName.email ?? null
+      };
+    }
+
+    if (!resolved?.name) return null;
+
+    return {
+      id: resolved.id || fallbackByName?.id || null,
+      name: resolved.name,
+      team: resolved.team || fallbackByName?.team || 'Contributor',
+      email: resolved.email ?? fallbackByName?.email ?? null
+    };
+  }, [findPersonById, findPersonByName]);
+
+  const mapActivityForApi = useCallback((activity = {}) => {
+    const authorRef = personRefForApi(activity.authorPerson || activity.authorId || activity.author);
+    return {
+      ...activity,
+      author: activity.author || authorRef?.name || '',
+      authorId: authorRef?.id || activity.authorId || null,
+      authorPerson: undefined
+    };
+  }, [personRefForApi]);
+
+  const mapSubtaskForApi = useCallback((subtask = {}) => {
+    const assigneeRef = personRefForApi(subtask.assignee || subtask.assigneeId);
+    return {
+      ...subtask,
+      assigneeId: assigneeRef?.id || subtask.assigneeId || null,
+      assignee: assigneeRef || null
+    };
+  }, [personRefForApi]);
+
+  const mapTaskForApi = useCallback((task = {}) => {
+    const assigneeRef = personRefForApi(task.assignee || task.assigneeId);
+    return {
+      ...task,
+      assigneeId: assigneeRef?.id || task.assigneeId || null,
+      assignee: assigneeRef || null,
+      subtasks: (task.subtasks || []).map(mapSubtaskForApi)
+    };
+  }, [mapSubtaskForApi, personRefForApi]);
+
+  const mapProjectForApi = useCallback((project = {}) => {
+    const name = (project.name ?? project.projectName ?? '').trim();
+
+    return {
+      ...project,
+      name,
+      stakeholders: (project.stakeholders || []).map(personRefForApi).filter(Boolean),
+      plan: (project.plan || []).map(mapTaskForApi),
+      recentActivity: (project.recentActivity || []).map(mapActivityForApi)
+    };
+  }, [mapActivityForApi, mapTaskForApi, personRefForApi]);
+
   const apiRequest = useCallback(async (path, options = {}) => {
+    const loggedInUser = (() => {
+      if (typeof localStorage === 'undefined') return '';
+      return localStorage.getItem(LOGGED_IN_USER_KEY) || '';
+    })();
+    const userHeader = loggedInUser.trim()
+      ? { 'X-Logged-In-User': loggedInUser.trim() }
+      : {};
     const response = await fetch(resolveUrl(path), {
       headers: {
         'Content-Type': 'application/json',
+        ...userHeader,
         ...(options.headers || {})
       },
       ...options
@@ -124,15 +224,16 @@ export const PortfolioProvider = ({ children }) => {
   const persistPortfolio = useCallback(async (nextProjects, nextPeople = people) => {
     if (!hasInitializedRef.current) return;
     const normalizedProjects = normalizeProjects(nextProjects);
+    const projectsForApi = normalizedProjects.map(mapProjectForApi);
     try {
       await apiRequest('/import', {
         method: 'POST',
-        body: JSON.stringify({ projects: normalizedProjects, people: nextPeople || people, mode: 'replace' })
+        body: JSON.stringify({ projects: projectsForApi, people: nextPeople || people, mode: 'replace' })
       });
     } catch (error) {
       console.error('Unable to persist portfolio to API', error);
     }
-  }, [apiRequest, people]);
+  }, [apiRequest, mapProjectForApi, people]);
 
   const refreshProjects = useCallback(async () => {
     try {
@@ -140,23 +241,12 @@ export const PortfolioProvider = ({ children }) => {
       if (Array.isArray(data)) {
         setProjectsState(normalizeProjects(data));
         hasInitializedRef.current = true;
+        setProjectsError('');
       }
     } catch (error) {
-      console.error('Failed to load projects, seeding defaults', error);
-      try {
-        const seeded = await apiRequest('/import', {
-          method: 'POST',
-          body: JSON.stringify({ projects: defaultPortfolio, mode: 'replace' })
-        });
-        if (Array.isArray(seeded?.projects)) {
-          setProjectsState(normalizeProjects(seeded.projects));
-          hasInitializedRef.current = true;
-        }
-      } catch (seedError) {
-        console.error('Unable to seed defaults', seedError);
-        setProjectsState(normalizeProjects(defaultPortfolio));
-        hasInitializedRef.current = true;
-      }
+      console.error('Failed to load projects', error);
+      const errorMessage = error?.message || 'Unable to load projects. Please try again.';
+      setProjectsError(errorMessage);
     }
   }, [apiRequest]);
 
@@ -232,10 +322,11 @@ export const PortfolioProvider = ({ children }) => {
     setProjectsState(prevProjects => {
       const nextProjects = typeof updater === 'function' ? updater(prevProjects) : updater;
       const normalized = normalizeProjects(nextProjects);
-      persistPortfolio(normalized);
+      // Note: Do NOT call persistPortfolio here to avoid destructive replace operations
+      // Individual CRUD operations (createProject, updateProject, etc.) handle persistence
       return normalized;
     });
-  }, [persistPortfolio]);
+  }, []);
 
   const handleExport = useCallback((projectId) => {
     const url = new URL(resolveUrl('/export'));
@@ -289,25 +380,28 @@ export const PortfolioProvider = ({ children }) => {
   }, []);
 
   const createProject = useCallback(async (project) => {
+    const payload = mapProjectForApi(project);
+    console.log('[usePortfolioData] createProject - input project:', JSON.stringify(project, null, 2));
+    console.log('[usePortfolioData] createProject - mapped payload:', JSON.stringify(payload, null, 2));
     const created = await apiRequest('/projects', {
       method: 'POST',
-      body: JSON.stringify(project)
+      body: JSON.stringify(payload)
     });
     const normalized = normalizeProjectActivities(created);
     updateProjects(prev => [...prev, normalized]);
     return normalized;
-  }, [apiRequest, updateProjects]);
+  }, [apiRequest, mapProjectForApi, updateProjects]);
 
   const updateProject = useCallback(async (projectId, updates) => {
     const existing = projects.find(project => project.id === projectId) || {};
     const updated = await apiRequest(`/projects/${projectId}`, {
       method: 'PUT',
-      body: JSON.stringify({ ...existing, ...updates, id: projectId })
+      body: JSON.stringify(mapProjectForApi({ ...existing, ...updates, id: projectId }))
     });
     const normalized = normalizeProjectActivities(updated);
     updateProjects(prev => prev.map(project => project.id === projectId ? normalized : project));
     return normalized;
-  }, [apiRequest, updateProjects, projects]);
+  }, [apiRequest, mapProjectForApi, updateProjects, projects]);
 
   const deleteProject = useCallback(async (projectId) => {
     await apiRequest(`/projects/${projectId}`, { method: 'DELETE' });
@@ -323,18 +417,18 @@ export const PortfolioProvider = ({ children }) => {
   const addTask = useCallback(async (projectId, task) => {
     const updatedProject = await apiRequest(`/projects/${projectId}/tasks`, {
       method: 'POST',
-      body: JSON.stringify(task)
+      body: JSON.stringify(mapTaskForApi(task))
     });
     return updateProjectFromResponse(updatedProject);
-  }, [apiRequest, updateProjectFromResponse]);
+  }, [apiRequest, mapTaskForApi, updateProjectFromResponse]);
 
   const updateTask = useCallback(async (projectId, taskId, updates) => {
     const updatedProject = await apiRequest(`/projects/${projectId}/tasks/${taskId}`, {
       method: 'PUT',
-      body: JSON.stringify({ ...updates, id: taskId })
+      body: JSON.stringify(mapTaskForApi({ ...updates, id: taskId }))
     });
     return updateProjectFromResponse(updatedProject);
-  }, [apiRequest, updateProjectFromResponse]);
+  }, [apiRequest, mapTaskForApi, updateProjectFromResponse]);
 
   const deleteTask = useCallback(async (projectId, taskId) => {
     await apiRequest(`/projects/${projectId}/tasks/${taskId}`, { method: 'DELETE' });
@@ -344,18 +438,18 @@ export const PortfolioProvider = ({ children }) => {
   const addSubtask = useCallback(async (projectId, taskId, subtask) => {
     const updatedProject = await apiRequest(`/projects/${projectId}/tasks/${taskId}/subtasks`, {
       method: 'POST',
-      body: JSON.stringify(subtask)
+      body: JSON.stringify(mapSubtaskForApi(subtask))
     });
     return updateProjectFromResponse(updatedProject);
-  }, [apiRequest, updateProjectFromResponse]);
+  }, [apiRequest, mapSubtaskForApi, updateProjectFromResponse]);
 
   const updateSubtask = useCallback(async (projectId, taskId, subtaskId, updates) => {
     const updatedProject = await apiRequest(`/projects/${projectId}/tasks/${taskId}/subtasks/${subtaskId}`, {
       method: 'PUT',
-      body: JSON.stringify({ ...updates, id: subtaskId })
+      body: JSON.stringify(mapSubtaskForApi({ ...updates, id: subtaskId }))
     });
     return updateProjectFromResponse(updatedProject);
-  }, [apiRequest, updateProjectFromResponse]);
+  }, [apiRequest, mapSubtaskForApi, updateProjectFromResponse]);
 
   const deleteSubtask = useCallback(async (projectId, taskId, subtaskId) => {
     await apiRequest(`/projects/${projectId}/tasks/${taskId}/subtasks/${subtaskId}`, { method: 'DELETE' });
@@ -368,18 +462,18 @@ export const PortfolioProvider = ({ children }) => {
   const addActivity = useCallback(async (projectId, activity) => {
     const updatedProject = await apiRequest(`/projects/${projectId}/activities`, {
       method: 'POST',
-      body: JSON.stringify(activity)
+      body: JSON.stringify(mapActivityForApi(activity))
     });
     return updateProjectFromResponse(updatedProject);
-  }, [apiRequest, updateProjectFromResponse]);
+  }, [apiRequest, mapActivityForApi, updateProjectFromResponse]);
 
   const updateActivity = useCallback(async (projectId, activityId, updates) => {
     const updatedProject = await apiRequest(`/projects/${projectId}/activities/${activityId}`, {
       method: 'PUT',
-      body: JSON.stringify({ ...updates, id: activityId })
+      body: JSON.stringify(mapActivityForApi({ ...updates, id: activityId }))
     });
     return updateProjectFromResponse(updatedProject);
-  }, [apiRequest, updateProjectFromResponse]);
+  }, [apiRequest, mapActivityForApi, updateProjectFromResponse]);
 
   const deleteActivity = useCallback(async (projectId, activityId) => {
     await apiRequest(`/projects/${projectId}/activities/${activityId}`, { method: 'DELETE' });
@@ -450,6 +544,7 @@ export const PortfolioProvider = ({ children }) => {
     deleteActivity,
     refreshProjects,
     people,
+    projectsError,
     createPerson,
     updatePerson,
     deletePerson,
@@ -477,6 +572,7 @@ export const PortfolioProvider = ({ children }) => {
     deleteActivity,
     refreshProjects,
     people,
+    projectsError,
     createPerson,
     updatePerson,
     deletePerson,
