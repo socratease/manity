@@ -3,6 +3,18 @@ from .models.models import Project, Person, MigrationState
 from .services.person_service import normalize_project_stakeholders
 from .database import create_engine_from_env
 
+from sqlmodel import Session, select
+
+if __package__ in (None, ""):
+    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+    PARENT_DIR = os.path.dirname(CURRENT_DIR)
+    if PARENT_DIR not in sys.path:
+        sys.path.append(PARENT_DIR)
+
+from backend.database import create_engine_from_env
+from backend.models.models import MigrationState, Person, Project
+from backend.services.person_service import normalize_project_stakeholders
+
 def run_people_backfill_migration(session: Session) -> None:
     migration_key = "people-backfill-v1"
     if session.get(MigrationState, migration_key):
