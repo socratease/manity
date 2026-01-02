@@ -28,8 +28,8 @@ from .services.person_service import (
     build_person_index,
     generate_id
 )
-from .database import engine, get_session, create_db_and_tables, current_environment, PROTECTED_ENVIRONMENTS
-from .utils import log_action, get_logged_in_user
+from .database import engine, get_session, create_db_and_tables
+from .utils import log_action, get_logged_in_user, current_environment, PROTECTED_ENVIRONMENTS
 
 # Register router
 from .routers import projects as projects_router
