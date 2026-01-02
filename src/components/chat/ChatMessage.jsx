@@ -48,24 +48,7 @@ const ChatMessage = forwardRef(({
           {/* Thinking Process - shows agent's reasoning */}
           {message.thinkingSteps?.length > 0 && (
             <ThinkingProcess
-              plan={{
-                goal: message.content,
-                steps: message.thinkingSteps.map(step => ({
-                  rationale: step.content,
-                  toolCandidates: step.toolName ? [{
-                    toolName: step.toolName,
-                    input: step.toolInput || {},
-                  }] : [],
-                })),
-                status: message.pendingQuestion ? 'in_progress' : 'completed',
-              }}
-              executionLog={{
-                id: message.id,
-                events: message.thinkingSteps.map(step => ({
-                  status: step.status,
-                  label: step.toolResult || step.content,
-                })),
-              }}
+              steps={message.thinkingSteps}
               colors={colors}
             />
           )}
