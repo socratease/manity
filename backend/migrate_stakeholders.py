@@ -1,8 +1,6 @@
-import argparse
-import os
-from sqlmodel import Session, select, create_engine
+from sqlmodel import Session, select
 from .models.models import Project, Person, MigrationState
-from .services.person_service import normalize_project_stakeholders, upsert_person_from_details
+from .services.person_service import normalize_project_stakeholders
 from .database import create_engine_from_env
 
 def run_people_backfill_migration(session: Session) -> None:
