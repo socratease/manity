@@ -11,8 +11,8 @@ import type {
   ExecutionEvent,
   ExecutionLog,
   Activity,
-} from './types';
-import { cloneProjectDeep, syncProjectActivity } from './context/helpers';
+} from '../types/portfolio';
+import { cloneProjectDeep, syncProjectActivity } from '../lib/agentHelpers';
 
 /**
  * Apply a single delta to undo a change.
