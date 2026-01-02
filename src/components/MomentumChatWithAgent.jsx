@@ -519,9 +519,7 @@ export default function MomentumChatWithAgent({
         }} />
 
         <div style={styles.projectCompact}>
-          <span style={styles.projectName}>
-            {project.name.length > 14 ? project.name.substring(0, 12) + '…' : project.name}
-          </span>
+          <span style={styles.projectName}>{project.name}</span>
           <div style={styles.progressRing}>
             <svg width="32" height="32" viewBox="0 0 32 32">
               <circle cx="16" cy="16" r="12" fill="none" stroke={colors.cloud} strokeWidth="3" />
@@ -1023,6 +1021,10 @@ const getStyles = (colors) => ({
     fontWeight: '600',
     color: '#3A3631',
     flex: 1,
+    minWidth: 0,
+    whiteSpace: 'nowrap',
+    overflow: 'hidden',
+    textOverflow: 'ellipsis',
   },
   progressRing: {
     position: 'relative',
