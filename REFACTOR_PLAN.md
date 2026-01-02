@@ -220,19 +220,226 @@ src/agent-sdk/       # NEW - OpenAI Agents SDK integration
 
 ---
 
-## Phase 4: Remove Vestigial Code
+## Product Decisions (Resolved)
 
-### 4.1 Seasonal Theme Code (Christmas)
+| Question | Decision |
+|----------|----------|
+| Seasonal themes | **KEEP** - Convert to modular system with auto-switching by date |
+| Email settings | **KEEP AS-IS** - Dual storage (localStorage + backend) |
+| Daily check-in | **KEEP** - Feature will be improved in future |
+| Demo data | Keep for development |
 
-**Files to evaluate:**
-- `SnowEffect.jsx` - Snow animation
-- `ChristmasConfetti.jsx` - Holiday confetti
+---
 
-**Decision:** Remove or make configurable
-- If keeping: Add `VITE_ENABLE_SEASONAL_THEMES` flag
-- If removing: Delete components and references
+## Phase 4: Seasonal Themes Module
 
-### 4.2 Unused Demo/Seed Data
+### 4.1 Overview
+
+Convert the hardcoded Christmas theme into a modular seasonal themes system that:
+- Auto-switches based on system date
+- Supports multiple holidays (Christmas, Easter, Halloween, etc.)
+- Provides both visual effects (confetti/particles) and color schemes
+- Is easily extensible for future holidays
+
+### 4.2 Architecture
+
+```
+src/themes/
+├── index.ts                    # Main exports, getActiveTheme()
+├── types.ts                    # SeasonalTheme interface
+├── seasonManager.ts            # Date-based theme selection
+├── colors/
+│   ├── index.ts                # Color palette exports
+│   ├── base.ts                 # Default/neutral palette
+│   ├── christmas.ts            # Christmas reds/greens/golds
+│   ├── easter.ts               # Easter pastels
+│   ├── halloween.ts            # Halloween oranges/purples
+│   ├── valentines.ts           # Valentine pinks/reds
+│   └── stPatricks.ts           # St. Patrick's greens
+├── effects/
+│   ├── index.ts                # Effect component exports
+│   ├── ParticleCanvas.tsx      # Shared canvas component
+│   ├── SnowEffect.tsx          # Winter snow (refactored)
+│   ├── EasterConfetti.tsx      # Easter eggs/bunnies
+│   ├── HalloweenEffect.tsx     # Bats/pumpkins/ghosts
+│   ├── HeartsEffect.tsx        # Valentine hearts
+│   └── ShamrockEffect.tsx      # St. Patrick's clovers
+└── hooks/
+    ├── useSeasonalTheme.ts     # React hook for current theme
+    └── useSeasonalEffect.ts    # React hook for current effect
+```
+
+### 4.3 Theme Definition Interface
+
+```typescript
+// src/themes/types.ts
+
+interface SeasonalTheme {
+  id: string;
+  name: string;
+
+  // Date range for auto-activation (month/day)
+  startDate: { month: number; day: number };
+  endDate: { month: number; day: number };
+
+  // Color palette (maps to existing color names)
+  colors: {
+    earth: string;
+    sage: string;
+    coral: string;
+    amber: string;
+    cream: string;
+    cloud: string;
+    stone: string;
+    charcoal: string;
+  };
+
+  // Visual effect configuration
+  effect: {
+    component: React.ComponentType;
+    emojis?: string[];           // For confetti-style effects
+    particleColor?: string;      // For particle effects (snow)
+    particleCount?: number;
+  };
+}
+```
+
+### 4.4 Season Schedule
+
+| Theme | Start Date | End Date | Effect | Emojis |
+|-------|------------|----------|--------|--------|
+| Christmas | Dec 1 | Dec 31 | Snow + Confetti | 🎄🎅🎁⛄🦌🔔⭐🍬🕯️❄️ |
+| Valentine's | Feb 7 | Feb 14 | Hearts | 💕❤️💖💘💝🌹 |
+| St. Patrick's | Mar 14 | Mar 17 | Shamrocks | ☘️🍀🌈🪙💚 |
+| Easter | *Dynamic* | *Dynamic* | Confetti | 🐰🥚🐣🌷🌸🦋🐥 |
+| Halloween | Oct 24 | Oct 31 | Bats/Pumpkins | 🎃👻🦇🕷️🕸️🍬💀🌙 |
+| Base | *Default* | *Default* | None | - |
+
+*Easter uses lunar calendar calculation for dynamic dates*
+
+### 4.5 Season Manager Logic
+
+```typescript
+// src/themes/seasonManager.ts
+
+import { christmasTheme } from './colors/christmas';
+import { easterTheme } from './colors/easter';
+import { halloweenTheme } from './colors/halloween';
+import { valentinesTheme } from './colors/valentines';
+import { stPatricksTheme } from './colors/stPatricks';
+import { baseTheme } from './colors/base';
+
+const themes: SeasonalTheme[] = [
+  christmasTheme,
+  valentinesTheme,
+  stPatricksTheme,
+  easterTheme,      // Uses getEasterDate() for dynamic range
+  halloweenTheme,
+];
+
+export function getActiveTheme(date: Date = new Date()): SeasonalTheme {
+  const month = date.getMonth() + 1;  // 1-12
+  const day = date.getDate();
+
+  for (const theme of themes) {
+    if (isDateInRange(month, day, theme.startDate, theme.endDate)) {
+      return theme;
+    }
+  }
+
+  return baseTheme;
+}
+
+// Easter calculation (Computus algorithm)
+export function getEasterDate(year: number): Date {
+  // ... Computus algorithm implementation
+}
+```
+
+### 4.6 Usage in Application
+
+```tsx
+// In ManityApp.jsx (or future AppShell component)
+
+import { useSeasonalTheme, useSeasonalEffect } from './themes/hooks';
+
+function AppShell({ children }) {
+  const theme = useSeasonalTheme();
+  const EffectComponent = useSeasonalEffect();
+
+  return (
+    <ThemeProvider value={theme.colors}>
+      {children}
+      {EffectComponent && <EffectComponent />}
+    </ThemeProvider>
+  );
+}
+```
+
+### 4.7 Theme Color Definitions
+
+**Easter Theme:**
+```typescript
+export const easterTheme: SeasonalTheme = {
+  id: 'easter',
+  name: 'Easter',
+  colors: {
+    earth: '#E8B4D8',      // Soft pink
+    sage: '#98D8AA',       // Mint green
+    coral: '#FFB4B4',      // Blush
+    amber: '#FFEAA7',      // Pale yellow
+    cream: '#FFF8F0',      // Warm white
+    cloud: '#F0E6F6',      // Lavender tint
+    stone: '#B4A7D6',      // Soft purple
+    charcoal: '#4A4063',   // Deep purple
+  },
+  effect: {
+    component: EasterConfetti,
+    emojis: ['🐰', '🥚', '🐣', '🌷', '🌸', '🦋', '🐥', '🌼'],
+  },
+};
+```
+
+**Halloween Theme:**
+```typescript
+export const halloweenTheme: SeasonalTheme = {
+  id: 'halloween',
+  name: 'Halloween',
+  colors: {
+    earth: '#FF6600',      // Pumpkin orange
+    sage: '#4A0080',       // Deep purple
+    coral: '#FF4444',      // Blood red
+    amber: '#FFD700',      // Candy gold
+    cream: '#1A1A2E',      // Dark background
+    cloud: '#2D2D44',      // Dark cloud
+    stone: '#8B4513',      // Brown
+    charcoal: '#0D0D1A',   // Near black
+  },
+  effect: {
+    component: HalloweenEffect,
+    emojis: ['🎃', '👻', '🦇', '🕷️', '🕸️', '🍬', '💀', '🌙'],
+  },
+};
+```
+
+### 4.8 Migration Steps
+
+1. Create `src/themes/` directory structure
+2. Extract and refactor `SnowEffect.jsx` → `effects/SnowEffect.tsx`
+3. Extract and refactor `ChristmasConfetti.jsx` → `effects/ChristmasConfetti.tsx`
+4. Create shared `ParticleCanvas.tsx` for common canvas logic
+5. Migrate `lib/theme.js` → `themes/colors/base.ts` + `themes/colors/christmas.ts`
+6. Implement `seasonManager.ts` with date logic
+7. Create hooks: `useSeasonalTheme`, `useSeasonalEffect`
+8. Build out additional themes (Easter, Halloween, Valentine's, St. Patrick's)
+9. Update `ManityApp.jsx` to use new theme system
+10. Delete old files: `lib/theme.js`, `components/SnowEffect.jsx`, `components/ChristmasConfetti.jsx`
+
+---
+
+## Phase 5: Clean Up Vestigial Code
+
+### 5.1 Demo/Seed Data
 
 **File:** `backend/seed_demo_data.py`
 
@@ -241,18 +448,7 @@ src/agent-sdk/       # NEW - OpenAI Agents SDK integration
 - Ensure not accidentally run in production
 - Consider moving to `scripts/` directory
 
-### 4.3 Email Settings Dual Storage
-
-**Problem:** Email settings stored in both:
-- `localStorage` (browser)
-- Backend `EmailSettings` table
-
-**Solution:** Single source of truth
-- Store only in backend
-- Frontend fetches settings via API
-- Remove localStorage email config
-
-### 4.4 Audit for Unused Exports/Functions
+### 5.2 Audit for Unused Exports/Functions
 
 Run dead code analysis:
 ```bash
@@ -263,11 +459,18 @@ npx ts-prune src/
 vulture backend/
 ```
 
+### 5.3 Legacy Agent Cleanup
+
+After Phase 3 (Agent Migration) is complete:
+- Remove `src/agent/context/` entirely
+- Keep only `UndoManager.ts` (moved to `src/lib/`)
+- Keep only type definitions (moved to `src/types/`)
+
 ---
 
-## Phase 5: Type Safety & Testing
+## Phase 6: Type Safety & Testing
 
-### 5.1 Enforce TypeScript
+### 6.1 Enforce TypeScript
 
 **Current:** Mix of `.jsx` and `.ts/.tsx`
 
@@ -277,7 +480,7 @@ vulture backend/
 - Define types for all API responses
 - Use Zod for runtime validation (already in place for agent tools)
 
-### 5.2 Add Test Coverage
+### 6.2 Add Test Coverage
 
 **Frontend Tests:**
 ```
@@ -326,9 +529,11 @@ Phase 1.4 (Decompose Components)    ████░░░░░░  MEDIUM IMPAC
     ↓
 Phase 2.2-2.3 (Backend Cleanup)     ███░░░░░░░  LOW IMPACT
     ↓
-Phase 4 (Remove Vestigial)          ██░░░░░░░░  LOW IMPACT
+Phase 4 (Seasonal Themes Module)    ████░░░░░░  MEDIUM IMPACT
     ↓
-Phase 5 (Types & Tests)             █████░░░░░  ONGOING
+Phase 5 (Clean Up Vestigial)        ██░░░░░░░░  LOW IMPACT
+    ↓
+Phase 6 (Types & Tests)             █████░░░░░  ONGOING
 ```
 
 ### Dependencies
@@ -337,7 +542,8 @@ Phase 5 (Types & Tests)             █████░░░░░  ONGOING
 - Phase 1.3 can run parallel to 1.2
 - Phase 2.1 is independent (can start immediately)
 - Phase 3 requires 1.1-1.2 to settle
-- Phase 4-5 can happen throughout
+- Phase 4 (Seasonal Themes) can run in parallel with other phases
+- Phase 5-6 can happen throughout
 
 ---
 
@@ -360,35 +566,31 @@ After refactoring:
 - [ ] `main.py` < 200 lines (router/startup only)
 - [ ] No file > 800 lines
 - [ ] Zero duplicate person resolution logic
-- [ ] Legacy `agent/` directory removed
+- [ ] Legacy `agent/` directory cleaned up (only UndoManager + types remain, moved)
+- [ ] Modular seasonal themes system with 5+ themes
 - [ ] Test coverage > 60% on critical paths
 - [ ] Full TypeScript (no `.jsx` files)
-- [ ] Clear separation: views / hooks / components / store
+- [ ] Clear separation: views / hooks / components / store / themes
 
 ---
 
-## Files to Delete (Vestigial)
+## Files to Delete (After Migration)
 
-Pending investigation, likely candidates:
-- `src/agent/context/` - Legacy agent context
-- Parts of `src/agent/` after migration
-- Seasonal theme components (if not wanted)
-- Any unused utility functions identified by dead code analysis
-
----
-
-## Questions for Product Decision
-
-1. **Seasonal themes** - Keep SnowEffect/ChristmasConfetti? Make configurable?
-2. **Email settings** - Backend-only or keep browser storage option?
-3. **Demo data** - Keep seed_demo_data.py for onboarding?
-4. **Daily checkin** - Is CheckinView still used/wanted?
+| File/Directory | Delete After | Replacement |
+|----------------|--------------|-------------|
+| `src/agent/context/` | Phase 3 | `src/agent-sdk/` |
+| `src/agent/types.ts` | Phase 3 | `src/types/portfolio.ts` |
+| `src/agent/UndoManager.ts` | Phase 3 | `src/lib/UndoManager.ts` |
+| `src/lib/theme.js` | Phase 4 | `src/themes/colors/*.ts` |
+| `src/components/SnowEffect.jsx` | Phase 4 | `src/themes/effects/SnowEffect.tsx` |
+| `src/components/ChristmasConfetti.jsx` | Phase 4 | `src/themes/effects/ChristmasConfetti.tsx` |
+| `MIGRATION_PLAN_OPENAI_AGENTS_SDK.md` | Phase 3 | N/A (completed) |
 
 ---
 
 ## Next Steps
 
-1. Review and approve this plan
-2. Create feature branch for Phase 1.1
-3. Begin extracting views from ManityApp.jsx
-4. Set up parallel work on Phase 2.1 (backend modules)
+1. ✅ Plan reviewed and approved
+2. Begin Phase 1.1: Extract views from ManityApp.jsx
+3. Set up parallel work on Phase 2.1 (backend modules)
+4. Phase 4 (Seasonal Themes) can begin independently
