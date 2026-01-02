@@ -147,6 +147,15 @@ export default function MomentumChatWithAgent({
   const displayedMessages = useMemo(() => {
     if (!inProgressAssistantMessage) return messages;
 
+    const hasRenderableAssistantContent = Boolean(
+      inProgressAssistantMessage.note?.trim() ||
+      inProgressAssistantMessage.content?.trim() ||
+      (inProgressAssistantMessage.thinkingSteps?.length ?? 0) > 0 ||
+      inProgressAssistantMessage.pendingQuestion
+    );
+
+    if (!hasRenderableAssistantContent) return messages;
+
     const filteredMessages = messages.filter(m => m.id !== inProgressAssistantMessage.id);
     return [...filteredMessages, inProgressAssistantMessage];
   }, [messages, inProgressAssistantMessage]);
