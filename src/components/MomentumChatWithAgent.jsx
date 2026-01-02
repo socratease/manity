@@ -623,11 +623,6 @@ export default function MomentumChatWithAgent({
             <div style={styles.typingWrapper}>
               <div style={styles.aiAvatar}>M</div>
               <div style={styles.messageContent}>
-                <div style={styles.typingIndicator}>
-                  <div style={styles.typingDot} />
-                  <div style={{ ...styles.typingDot, animationDelay: '0.2s' }} />
-                  <div style={{ ...styles.typingDot, animationDelay: '0.4s' }} />
-                </div>
                 {/* Show streaming thinking steps while typing */}
                 {streamingThinkingSteps.length > 0 && (
                   <ThinkingProcess
@@ -635,6 +630,11 @@ export default function MomentumChatWithAgent({
                     colors={colors}
                   />
                 )}
+                <div style={styles.typingIndicator}>
+                  <div style={styles.typingDot} />
+                  <div style={{ ...styles.typingDot, animationDelay: '0.2s' }} />
+                  <div style={{ ...styles.typingDot, animationDelay: '0.4s' }} />
+                </div>
               </div>
             </div>
           )}
@@ -881,7 +881,7 @@ const getStyles = (colors) => ({
   },
   typingWrapper: {
     display: 'flex',
-    alignItems: 'center',
+    alignItems: 'flex-start',
     gap: '10px',
   },
   typingIndicator: {
