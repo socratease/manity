@@ -7,14 +7,14 @@ import PeopleGraph from './components/PeopleGraph';
 import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
 import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
-import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
-import { MOMENTUM_THRUST_SYSTEM_PROMPT } from './lib/momentumPrompts';
-import { verifyThrustActions } from './lib/momentumVerification';
-import SnowEffect from './components/SnowEffect';
-import ChristmasConfetti from './components/ChristmasConfetti';
+import SeasonalEffects from './components/SeasonalEffects';
 import MomentumChatWithAgent from './components/MomentumChatWithAgent';
 import Slides from './components/Slides';
 import DataPage from './components/DataPage';
+import { rollbackDeltas } from './agent-sdk';
+import PortfolioView from './views/PortfolioView';
+import PeopleView from './views/PeopleView';
+import ProjectDetailView from './views/ProjectDetailView';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -98,12 +98,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [thrustMessages, setThrustMessages] = useState([]);
-  const [thrustDraft, setThrustDraft] = useState('');
-  const [thrustError, setThrustError] = useState('');
-  const [thrustPendingActions, setThrustPendingActions] = useState([]);
-  const [thrustIsRequesting, setThrustIsRequesting] = useState(false);
-  const [thrustRequestStart, setThrustRequestStart] = useState(null);
-  const [thrustElapsedMs, setThrustElapsedMs] = useState(0);
   const [expandedMomentumProjects, setExpandedMomentumProjects] = useState({});
   const SIDEBAR_MIN_WIDTH = 200;
   const SIDEBAR_MAX_WIDTH = 360;
@@ -1704,44 +1698,6 @@ Write a professional executive summary that highlights the project's current sta
     }
   };
 
-  const handleThrustDraftChange = (e) => {
-    const text = e.target.value;
-    const cursorPos = e.target.selectionStart;
-
-    setThrustDraft(text);
-    setThrustCursorPosition(cursorPos);
-
-    // Check if we should show tag suggestions
-    const textUpToCursor = text.substring(0, cursorPos);
-    const lastAtSymbol = textUpToCursor.lastIndexOf('@');
-
-    if (lastAtSymbol !== -1) {
-      const textAfterAt = textUpToCursor.substring(lastAtSymbol + 1);
-      if (!textAfterAt.includes(' ')) {
-        setThrustTagSearchTerm(textAfterAt);
-        setShowThrustTagSuggestions(true);
-        setSelectedThrustTagIndex(0); // Reset selection when typing
-      } else {
-        setShowThrustTagSuggestions(false);
-      }
-    } else {
-      setShowThrustTagSuggestions(false);
-    }
-  };
-
-  const insertThrustTag = (tag) => {
-    const textBeforeCursor = thrustDraft.substring(0, thrustCursorPosition);
-    const textAfterCursor = thrustDraft.substring(thrustCursorPosition);
-    const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
-
-    const beforeAt = thrustDraft.substring(0, lastAtSymbol);
-    const tagText = `@${tag.display}`;
-    const newText = beforeAt + tagText + ' ' + textAfterCursor;
-
-    setThrustDraft(newText);
-    setShowThrustTagSuggestions(false);
-    setThrustTagSearchTerm('');
-  };
 
   const handleCheckinNoteChange = (e) => {
     const text = e.target.value;
@@ -2051,1038 +2007,6 @@ Write a professional executive summary that highlights the project's current sta
     setStakeholderSelectionTarget(null);
   };
 
-  const buildThrustContext = () => {
-    return projects.map(project => {
-      const contributors = (project.stakeholders || []).map(person => ({
-        name: person.name,
-        team: person.team,
-        email: person.email || null
-      }));
-
-      return {
-        id: project.id,
-        name: project.name,
-        status: project.status,
-        progress: project.progress,
-        priority: project.priority,
-        lastUpdate: project.lastUpdate,
-        targetDate: project.targetDate,
-        stakeholders: contributors,
-        contributors,
-        plan: project.plan.map(task => ({
-          id: task.id,
-          title: task.title,
-          status: task.status,
-          dueDate: task.dueDate,
-          subtasks: (task.subtasks || []).map(subtask => ({
-            id: subtask.id,
-            title: subtask.title,
-            status: subtask.status,
-            dueDate: subtask.dueDate
-          }))
-        })),
-        recentActivity: project.recentActivity.slice(0, 3)
-      };
-    });
-  };
-
-  const parseAssistantResponse = (content) => {
-    // With structured output, content should already be valid JSON
-    // but we still handle markdown code blocks as fallback
-    const match = content.match(/```json\s*([\s\S]*?)```/);
-    const maybeJson = match ? match[1] : content;
-
-    try {
-      const parsed = JSON.parse(maybeJson);
-      return {
-        display: parsed.response || parsed.message || parsed.summary || content,
-        actions: Array.isArray(parsed.actions) ? parsed.actions : []
-      };
-    } catch (error) {
-      console.error('Failed to parse LLM response as JSON:', error, 'Content:', content);
-      // Return content as display message with empty actions
-      // The validation will catch any issues with missing actions
-      return { display: content, actions: [] };
-    }
-  };
-
-  // Wrapper functions to provide projects context to imported validation utilities
-  const resolveMomentumProjectRef = (target) => {
-    return resolveMomentumProjectRefUtil(target, projects);
-  };
-
-  const validateThrustActions = (actions = []) => {
-    return validateThrustActionsUtil(actions, projects);
-  };
-
-  const rollbackDeltas = (deltas) => {
-    if (!deltas || deltas.length === 0) return;
-
-    setProjects(prevProjects => {
-      const working = prevProjects.map(cloneProjectDeep);
-
-      deltas.slice().reverse().forEach(delta => {
-        // Handle remove_project separately since it removes the entire project
-        if (delta.type === 'remove_project') {
-          const index = working.findIndex(p => `${p.id}` === `${delta.projectId}`);
-          if (index !== -1) {
-            working.splice(index, 1);
-          }
-          return;
-        }
-
-        const project = working.find(p => `${p.id}` === `${delta.projectId}`);
-        if (!project) return;
-
-        switch (delta.type) {
-          case 'remove_activity':
-            Object.assign(
-              project,
-              syncProjectActivity(project, project.recentActivity.filter(activity => activity.id !== delta.activityId))
-            );
-            break;
-          case 'remove_task':
-            project.plan = project.plan.filter(task => task.id !== delta.taskId);
-            break;
-          case 'restore_task':
-            project.plan = project.plan.map(task => task.id === delta.taskId ? { ...task, ...delta.previous } : task);
-            break;
-          case 'remove_subtask':
-            project.plan = project.plan.map(task =>
-              task.id === delta.taskId
-                ? { ...task, subtasks: task.subtasks.filter(st => st.id !== delta.subtaskId) }
-                : task
-            );
-            break;
-          case 'restore_subtask':
-            project.plan = project.plan.map(task =>
-              task.id === delta.taskId
-                ? {
-                    ...task,
-                    subtasks: task.subtasks.map(subtask =>
-                      subtask.id === delta.subtaskId ? { ...subtask, ...delta.previous } : subtask
-                    )
-                  }
-                : task
-            );
-            break;
-          case 'restore_project':
-            project.status = delta.previous.status;
-            project.progress = delta.previous.progress;
-            project.targetDate = delta.previous.targetDate;
-            project.lastUpdate = delta.previous.lastUpdate;
-            break;
-          default:
-            break;
-        }
-      });
-
-      return working;
-    });
-  };
-
-
-  const applyThrustActions = async (actions = []) => {
-    if (!actions.length) {
-      return { deltas: [], actionResults: [], updatedProjectIds: [], verification: { perAction: [], hasFailures: false, summary: 'No actions to verify.' } };
-    }
-
-    const result = { deltas: [], actionResults: [], updatedProjectIds: new Set() };
-    const originalProjects = projects.map(cloneProjectDeep);
-    const workingProjects = projects.map(cloneProjectDeep);
-    const projectLookup = new Map();
-    workingProjects.forEach(project => {
-      projectLookup.set(`${project.id}`.toLowerCase(), project.id);
-      projectLookup.set(project.name.toLowerCase(), project.id);
-    });
-
-    const appendActionResult = (label, detail, deltas = []) => {
-      result.actionResults.push({
-        label: label || 'Action processed',
-        detail: detail || 'No additional details provided.',
-        deltas
-      });
-      result.deltas.push(...deltas);
-    };
-
-    const resolveProject = (target) => {
-      if (!target) return null;
-      const normalizedTarget = `${target}`.toLowerCase();
-      const mappedId = projectLookup.get(normalizedTarget);
-      const lookupTarget = mappedId || target;
-      const lowerTarget = `${lookupTarget}`.toLowerCase();
-      return workingProjects.find(p => `${p.id}` === `${lookupTarget}` || p.name.toLowerCase() === lowerTarget);
-    };
-
-    const resolveTask = (project, target) => {
-      if (!project || !target) return null;
-      const lowerTarget = `${target}`.toLowerCase();
-      return project.plan.find(task => `${task.id}` === `${target}` || task.title.toLowerCase() === lowerTarget);
-    };
-
-    const describeDueDate = (date) => date ? `due ${new Date(date).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'no due date set';
-
-    let projectsChanged = false;
-
-    for (const action of actions) {
-      const actionDeltas = [];
-      let label = '';
-      let detail = '';
-
-      if (action.type === 'query_portfolio') {
-        const scope = ['portfolio', 'project', 'people'].includes(action.scope)
-          ? action.scope
-          : action.projectId || action.projectName
-            ? 'project'
-            : 'portfolio';
-        const detailLevel = ['summary', 'detailed'].includes(action.detailLevel)
-          ? action.detailLevel
-          : 'summary';
-        const includePeople = action.includePeople !== false;
-        const portfolioContext = buildThrustContext();
-        let scopedProjects = portfolioContext;
-
-        if (scope === 'project' && (action.projectId || action.projectName)) {
-          const scopedProject = resolveProject(action.projectId || action.projectName);
-          if (!scopedProject) {
-            appendActionResult('Skipped action: unknown project', 'Skipped query_portfolio because the project was not found.', actionDeltas);
-            continue;
-          }
-          scopedProjects = portfolioContext.filter(project => `${project.id}` === `${scopedProject.id}`);
-        }
-
-        const projectSummary = scopedProjects.map(project => ({
-          id: project.id,
-          name: project.name,
-          status: project.status,
-          priority: project.priority,
-          progress: project.progress,
-          targetDate: project.targetDate,
-          lastUpdate: project.lastUpdate,
-          contributors: project.contributors || project.stakeholders || []
-        }));
-
-        const queryResult = {
-          scope,
-          detailLevel,
-          projects: detailLevel === 'detailed' ? scopedProjects : projectSummary,
-          ...(includePeople ? { people: people.map(person => ({ name: person.name, team: person.team, email: person.email || null })) } : {})
-        };
-
-        appendActionResult(
-          'Shared portfolio data',
-          `Portfolio snapshot (${detailLevel}, ${scope}): ${JSON.stringify(queryResult, null, 2)}`,
-          actionDeltas
-        );
-        continue;
-      }
-
-      if (action.type === 'add_person') {
-        const personName = (action.name || action.personName || '').trim();
-        if (!personName) {
-          appendActionResult('Skipped action: missing person name', 'Skipped add_person because no name was provided.', actionDeltas);
-          continue;
-        }
-
-        const targetTeam = action.team || 'Contributor';
-        const existing = findPersonByName(personName);
-        const saved = await createPerson({
-          name: personName,
-          team: targetTeam,
-          email: action.email || existing?.email || null
-        });
-
-        const updatedTeam = existing && saved.team !== existing.team;
-        label = existing ? `Updated person ${saved.name}` : `Added person ${saved.name}`;
-        detail = updatedTeam
-          ? `Ensured ${saved.name} is tracked with team ${saved.team}.`
-          : `${saved.name} is available in People.`;
-
-        appendActionResult(label, detail, actionDeltas);
-        continue;
-      }
-
-      if (action.type === 'create_project') {
-        // Check both name and projectName with defensive coercion
-        const rawName = action.name ?? action.projectName ?? '';
-        const projectName = (typeof rawName === 'string' ? rawName : String(rawName)).trim();
-        if (!projectName) {
-          // Log for debugging
-          console.warn('[ManityApp] create_project action has empty name:', {
-            action,
-            actionName: action.name,
-            actionProjectName: action.projectName,
-            rawName
-          });
-          label = 'Skipped action: missing project name';
-          detail = 'Skipped create_project because no name was provided.';
-          appendActionResult(label, detail, actionDeltas);
-          continue;
-        }
-
-        const stakeholderEntries = action.stakeholders
-          ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean).map(name => ({ name, team: 'Contributor' }))
-          : [{ name: loggedInUser || 'Momentum', team: 'Owner' }];
-        const normalizedStakeholders = normalizeStakeholderList(stakeholderEntries);
-        const createdAt = new Date().toISOString();
-        const newId = action.projectId || action.id || `ai-project-${Math.random().toString(36).slice(2, 7)}`;
-        const newProject = syncProjectActivity({
-          id: newId,
-          name: projectName,
-          priority: action.priority || 'medium',
-          status: action.status || 'active',
-          progress: typeof action.progress === 'number' ? action.progress : 0,
-          stakeholders: normalizedStakeholders,
-          description: action.description || '',
-          startDate: createdAt.split('T')[0],
-          targetDate: action.targetDate || '',
-          plan: [],
-          recentActivity: action.description
-            ? [{ id: generateActivityId(), date: createdAt, note: action.description, author: 'Momentum' }]
-            : []
-        });
-
-        workingProjects.push(newProject);
-        projectLookup.set(`${projectName}`.toLowerCase(), newId);
-        projectLookup.set(`${newId}`.toLowerCase(), newId);
-        if (action.projectId || action.id) {
-          projectLookup.set(`${action.projectId || action.id}`.toLowerCase(), newId);
-        }
-
-        actionDeltas.push({ type: 'remove_project', projectId: newId });
-        label = `Created new project "${projectName}"`;
-        detail = `Created new project "${projectName}" with status ${newProject.status} and priority ${newProject.priority}`;
-        projectsChanged = true;
-        result.updatedProjectIds.add(newId);
-
-        appendActionResult(label, detail, actionDeltas);
-        await syncStakeholdersToPeople(newProject.stakeholders);
-        continue;
-      }
-
-      let project = null;
-      if (action.type !== 'send_email') {
-        project = resolveProject(action.projectId || action.projectName);
-
-        if (!project) {
-          appendActionResult('Skipped action: unknown project', 'Skipped action because the project was not found.', actionDeltas);
-          continue;
-        }
-      }
-
-      switch (action.type) {
-        case 'comment': {
-          const activityId = generateActivityId();
-          const requestedNote = (action.note || action.content || action.comment || '').trim();
-          const note = requestedNote || 'Update logged by Momentum';
-          const newActivity = {
-            id: activityId,
-            date: new Date().toISOString(),
-            note,
-            author: action.author || activityAuthor || ''
-          };
-          Object.assign(
-            project,
-            syncProjectActivity(project, [newActivity, ...project.recentActivity])
-          );
-          actionDeltas.push({ type: 'remove_activity', projectId: project.id, activityId });
-          label = `Commented on ${project.name}`;
-          detail = requestedNote
-            ? `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author}`
-            : `Comment on ${project.name}: "${newActivity.note}" by ${newActivity.author} (placeholder used because the comment was empty)`;
-          projectsChanged = true;
-          result.updatedProjectIds.add(project.id);
-          break;
-        }
-        case 'add_task': {
-          const taskId = action.taskId || `ai-task-${Math.random().toString(36).slice(2, 7)}`;
-          // Resolve assignee if provided
-          let taskAssignee = null;
-          if (action.assignee) {
-            const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
-            if (assigneeName) {
-              const person = findPersonByName(assigneeName);
-              taskAssignee = person ? { id: person.id, name: person.name, team: person.team } : { name: assigneeName };
-            }
-          }
-          const newTask = {
-            id: taskId,
-            title: action.title || 'New task',
-            status: action.status || 'todo',
-            dueDate: action.dueDate,
-            completedDate: action.completedDate,
-            assignee: taskAssignee,
-            subtasks: (action.subtasks || []).map(subtask => ({
-              id: subtask.id || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`,
-              title: subtask.title || 'New subtask',
-              status: subtask.status || 'todo',
-              dueDate: subtask.dueDate
-            }))
-          };
-          project.plan = [...project.plan, newTask];
-          actionDeltas.push({ type: 'remove_task', projectId: project.id, taskId });
-          label = `Added task "${newTask.title}" to ${project.name}`;
-          detail = `Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)})${taskAssignee ? ` assigned to ${taskAssignee.name}` : ''} to ${project.name}`;
-          projectsChanged = true;
-          result.updatedProjectIds.add(project.id);
-          break;
-        }
-        case 'update_task': {
-          const task = resolveTask(project, action.taskId || action.taskTitle);
-          if (!task) {
-            label = `Skipped action: missing task in ${project.name}`;
-            detail = `Skipped task update in ${project.name} because the task was not found.`;
-            break;
-          }
-
-          const previous = { ...task };
-          const changes = [];
-
-          if (action.title && action.title !== task.title) {
-            changes.push(`renamed to "${action.title}"`);
-            task.title = action.title;
-          }
-          if (action.status && action.status !== task.status) {
-            changes.push(`status ${task.status} → ${action.status}`);
-            task.status = action.status;
-          }
-          if (action.dueDate && action.dueDate !== task.dueDate) {
-            changes.push(`due date ${task.dueDate || 'unset'} → ${action.dueDate}`);
-            task.dueDate = action.dueDate;
-          }
-          if (action.completedDate && action.completedDate !== task.completedDate) {
-            changes.push(`completed ${action.completedDate}`);
-            task.completedDate = action.completedDate;
-          }
-          // Handle assignee changes
-          if (action.assignee !== undefined) {
-            const currentAssigneeName = task.assignee?.name || 'unassigned';
-            if (action.assignee === null || action.assignee === '') {
-              // Clear assignee
-              if (task.assignee) {
-                changes.push(`unassigned from ${currentAssigneeName}`);
-                task.assignee = null;
-              }
-            } else {
-              // Set new assignee - accept name string or object with name
-              const newAssigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
-              if (newAssigneeName && newAssigneeName !== currentAssigneeName) {
-                const person = findPersonByName(newAssigneeName);
-                changes.push(`assigned to ${newAssigneeName}`);
-                task.assignee = person ? { id: person.id, name: person.name, team: person.team } : { name: newAssigneeName };
-              }
-            }
-          }
-
-          actionDeltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
-          label = `Updated task "${task.title}" in ${project.name}`;
-          detail = `Updated task "${task.title}" in ${project.name}: ${changes.join('; ') || 'no tracked changes'}`;
-          projectsChanged = true;
-          result.updatedProjectIds.add(project.id);
-          break;
-        }
-        case 'add_subtask': {
-          const task = resolveTask(project, action.taskId || action.taskTitle);
-          if (!task) {
-            label = `Skipped action: missing task in ${project.name}`;
-            detail = `Skipped subtask creation in ${project.name} because the parent task was not found.`;
-            break;
-          }
-
-          const subtaskId = action.subtaskId || `ai-subtask-${Math.random().toString(36).slice(2, 7)}`;
-          // Resolve assignee if provided
-          let subtaskAssignee = null;
-          if (action.assignee) {
-            const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
-            if (assigneeName) {
-              const person = findPersonByName(assigneeName);
-              subtaskAssignee = person ? { id: person.id, name: person.name, team: person.team } : { name: assigneeName };
-            }
-          }
-          const newSubtask = {
-            id: subtaskId,
-            title: action.subtaskTitle || action.title || 'New subtask',
-            status: action.status || 'todo',
-            dueDate: action.dueDate,
-            assignee: subtaskAssignee
-          };
-          task.subtasks = [...(task.subtasks || []), newSubtask];
-          actionDeltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
-          label = `Added subtask "${newSubtask.title}" to ${task.title}`;
-          detail = `Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)})${subtaskAssignee ? ` assigned to ${subtaskAssignee.name}` : ''} under ${task.title} in ${project.name}`;
-          projectsChanged = true;
-          result.updatedProjectIds.add(project.id);
-          break;
-        }
-        case 'update_subtask': {
-          const task = resolveTask(project, action.taskId || action.taskTitle);
-          if (!task) {
-            label = `Skipped action: missing task in ${project.name}`;
-            detail = `Skipped subtask update in ${project.name} because the parent task was not found.`;
-            break;
-          }
-
-          const subtask = resolveTask({ plan: task.subtasks || [] }, action.subtaskId || action.subtaskTitle);
-          if (!subtask) {
-            label = `Skipped action: missing subtask in ${task.title}`;
-            detail = `Skipped subtask update in ${task.title} because the subtask was not found.`;
-            break;
-          }
-
-          const previous = { ...subtask };
-          const changes = [];
-
-          if (action.title && action.title !== subtask.title) {
-            changes.push(`renamed to "${action.title}"`);
-            subtask.title = action.title;
-          }
-          if (action.status && action.status !== subtask.status) {
-            changes.push(`status ${subtask.status} → ${action.status}`);
-            subtask.status = action.status;
-          }
-          if (action.dueDate && action.dueDate !== subtask.dueDate) {
-            changes.push(`due date ${subtask.dueDate || 'unset'} → ${action.dueDate}`);
-            subtask.dueDate = action.dueDate;
-          }
-          if (action.completedDate && action.completedDate !== subtask.completedDate) {
-            changes.push(`completed ${action.completedDate}`);
-            subtask.completedDate = action.completedDate;
-          }
-          // Handle assignee changes
-          if (action.assignee !== undefined) {
-            const currentAssigneeName = subtask.assignee?.name || 'unassigned';
-            if (action.assignee === null || action.assignee === '') {
-              // Clear assignee
-              if (subtask.assignee) {
-                changes.push(`unassigned from ${currentAssigneeName}`);
-                subtask.assignee = null;
-              }
-            } else {
-              // Set new assignee - accept name string or object with name
-              const newAssigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
-              if (newAssigneeName && newAssigneeName !== currentAssigneeName) {
-                const person = findPersonByName(newAssigneeName);
-                changes.push(`assigned to ${newAssigneeName}`);
-                subtask.assignee = person ? { name: person.name, team: person.team } : { name: newAssigneeName };
-              }
-            }
-          }
-
-          actionDeltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
-          label = `Updated subtask "${subtask.title}" in ${task.title}`;
-          detail = `Updated subtask "${subtask.title}" in ${task.title}: ${changes.join('; ') || 'no tracked changes'}`;
-          projectsChanged = true;
-          result.updatedProjectIds.add(project.id);
-          break;
-        }
-        case 'update_project': {
-          const previous = {
-            name: project.name,
-            description: project.description,
-            executiveUpdate: project.executiveUpdate,
-            status: project.status,
-            priority: project.priority,
-            progress: project.progress,
-            targetDate: project.targetDate,
-            startDate: project.startDate,
-            lastUpdate: project.lastUpdate
-          };
-          const changes = [];
-
-          if (action.name && action.name !== project.name) {
-            changes.push(`renamed "${project.name}" → "${action.name}"`);
-            project.name = action.name;
-          }
-          if (action.description && action.description !== project.description) {
-            changes.push(`description updated`);
-            project.description = action.description;
-          }
-          if (action.executiveUpdate && action.executiveUpdate !== project.executiveUpdate) {
-            changes.push(`executive update revised`);
-            project.executiveUpdate = action.executiveUpdate;
-          }
-          if (action.status && action.status !== project.status) {
-            changes.push(`status ${project.status} → ${action.status}`);
-            project.status = action.status;
-          }
-          if (action.priority && action.priority !== project.priority) {
-            changes.push(`priority ${project.priority} → ${action.priority}`);
-            project.priority = action.priority;
-          }
-          if (typeof action.progress === 'number' && action.progress !== project.progress) {
-            changes.push(`progress ${project.progress}% → ${action.progress}%`);
-            project.progress = action.progress;
-          }
-          if (action.targetDate && action.targetDate !== project.targetDate) {
-            changes.push(`target ${project.targetDate || 'unset'} → ${action.targetDate}`);
-            project.targetDate = action.targetDate;
-          }
-          if (action.startDate && action.startDate !== project.startDate) {
-            changes.push(`start date ${project.startDate || 'unset'} → ${action.startDate}`);
-            project.startDate = action.startDate;
-          }
-          if (action.lastUpdate && action.lastUpdate !== project.lastUpdate) {
-            changes.push(`last update → ${action.lastUpdate}`);
-            project.lastUpdate = action.lastUpdate;
-          }
-
-          actionDeltas.push({ type: 'restore_project', projectId: project.id, previous });
-          label = `Updated ${project.name}`;
-          detail = `Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`;
-          projectsChanged = true;
-          result.updatedProjectIds.add(project.id);
-          break;
-        }
-        case 'send_email': {
-          const recipients = Array.isArray(action.recipients)
-            ? action.recipients
-            : `${action.recipients || ''}`.split(',');
-
-          const normalizedRecipients = recipients
-            .map(recipient => recipient?.trim())
-            .filter(Boolean)
-            .map(recipient => {
-              if (recipient.includes('@')) return recipient;
-              const person = findPersonByName(recipient);
-              return person?.email || recipient;
-            })
-            .filter(Boolean);
-
-          if (!normalizedRecipients.length) {
-            appendActionResult('Skipped action: missing recipients', 'Skipped send_email because no recipients were provided.', actionDeltas);
-            continue;
-          }
-
-          if (!action.subject || !action.body) {
-            appendActionResult('Skipped action: incomplete email', 'Skipped send_email because subject or body was missing.', actionDeltas);
-            continue;
-          }
-
-          const signature = '-sent by an AI clerk';
-          const normalizedBody = action.body || '';
-          // Remove any existing AI clerk signatures to prevent duplicates
-          const cleanedBody = normalizedBody
-            .replace(/\n*-?\s*sent (with the help of|by) an AI clerk\s*$/gi, '')
-            .trim();
-          const bodyWithSignature = cleanedBody ? `${cleanedBody}\n\n${signature}` : signature;
-
-          try {
-            await sendEmail({
-              recipients: normalizedRecipients,
-              subject: action.subject,
-              body: bodyWithSignature
-            });
-            label = `Email sent to ${normalizedRecipients.join(', ')}`;
-            detail = `Sent email "${action.subject}"`;
-            appendActionResult(label, detail, actionDeltas);
-          } catch (error) {
-            appendActionResult('Failed to send email', error?.message || 'Email service returned an error.', actionDeltas);
-            continue;
-          }
-
-          break;
-        }
-        default:
-          label = 'Skipped action: unsupported type';
-          detail = `Skipped unsupported action type: ${action.type}`;
-      }
-
-      appendActionResult(label, detail, actionDeltas);
-    }
-
-    if (projectsChanged) {
-      setProjects(workingProjects);
-    }
-
-    const verification = verifyThrustActions(actions, originalProjects, workingProjects, result.actionResults);
-    const annotatedActionResults = result.actionResults.map((actionResult, idx) => {
-      const verificationResult = verification.perAction[idx];
-      if (!verificationResult) return actionResult;
-
-      const detailParts = [];
-      if (actionResult.detail) detailParts.push(actionResult.detail);
-
-      if (verificationResult.status === 'passed') {
-        detailParts.push('Verification passed.');
-      } else if (verificationResult.status === 'skipped') {
-        detailParts.push('Verification skipped.');
-      } else if (verificationResult.status === 'failed') {
-        const discrepancyText = verificationResult.discrepancies.join('; ');
-        detailParts.push(`Verification failed: ${discrepancyText}`);
-        if (!actionResult.error) {
-          return {
-            ...actionResult,
-            verification: verificationResult,
-            detail: detailParts.join(' '),
-            error: `Verification failed: ${discrepancyText}`
-          };
-        }
-      }
-
-      return {
-        ...actionResult,
-        verification: verificationResult,
-        detail: detailParts.join(' ')
-      };
-    });
-
-    return {
-      deltas: result.deltas,
-      actionResults: annotatedActionResults,
-      updatedProjectIds: Array.from(result.updatedProjectIds),
-      verification
-    };
-  };
-
-  const describeActionPreview = (action) => {
-    const project = projects.find(p => `${p.id}` === `${action.projectId}` || p.name.toLowerCase() === `${action.projectName || ''}`.toLowerCase());
-    const projectName = project?.name || action.projectName || `Project ${action.projectId || '?'}`;
-    const dueLabel = action.dueDate ? `due ${new Date(action.dueDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}` : 'no due date set';
-
-    switch (action.type) {
-      case 'comment':
-        return `Comment on ${projectName}: "${action.note || action.content || ''}"`;
-      case 'add_task':
-        return `Add task "${action.title || 'New task'}" (${dueLabel}) to ${projectName}`;
-      case 'update_task':
-        return `Update task "${action.title || action.taskTitle || action.taskId || ''}" in ${projectName}`;
-      case 'add_subtask':
-        return `Add subtask "${action.subtaskTitle || action.title || ''}" (${dueLabel}) under ${action.taskTitle || action.taskId || 'task'} in ${projectName}`;
-      case 'update_subtask':
-        return `Update subtask "${action.subtaskTitle || action.title || action.subtaskId || ''}" in ${projectName}`;
-      case 'update_project':
-        return `Update project ${projectName}: status/progress/date tweaks`;
-      case 'add_person':
-        return `Add ${action.name || action.personName || 'a new person'} to People`;
-      case 'send_email':
-        return `Email ${action.recipients?.join ? action.recipients.join(', ') : action.recipients || 'recipients'} about "${action.subject || ''}"`;
-      case 'query_portfolio':
-        return action.projectName || action.projectId
-          ? `Fetch portfolio context for ${action.projectName || `project ${action.projectId}`}`
-          : 'Fetch latest portfolio context';
-      default:
-        return `Action queued: ${action.type || 'unknown'} for ${projectName}`;
-    }
-  };
-
-  const getAllStakeholders = () => {
-    // Return people from the People database
-    // Include admin users for backwards compatibility
-    const stakeholderMap = new Map();
-
-    const addStakeholder = (entry) => {
-      const normalized = normalizeStakeholderEntry(entry);
-      if (!normalized) return;
-
-      const key = normalized.id || normalized.name.toLowerCase();
-      const existing = stakeholderMap.get(key);
-
-      if (!existing || (!existing.team && normalized.team)) {
-        stakeholderMap.set(key, normalized);
-      }
-    };
-
-    adminUsers.forEach(addStakeholder);
-    people.forEach(addStakeholder);
-
-    // Also include any stakeholders from projects that aren't in the People database yet
-    // (for backwards compatibility with existing data)
-    projects.forEach(project => {
-      project.stakeholders.forEach(addStakeholder);
-    });
-
-    return Array.from(stakeholderMap.values());
-  };
-
-  const isAdminUser = (name) => adminUsers.some(admin => admin.name === name);
-
-  // Show all projects, but organize by who is on them
-  const visibleProjects = projects.filter(project => project.status !== 'deleted');
-
-  // Filter projects by search query (when search is open) or portfolio filter (persistent)
-  const searchFilterProjects = (projectList) => {
-    // Determine which query to use: live search or persistent filter
-    const activeQuery = globalSearchOpen ? globalSearchQuery : portfolioFilter;
-
-    if (!activeQuery.trim() || activeView !== 'overview' || viewingProjectId) {
-      return projectList;
-    }
-    const lowerQuery = activeQuery.toLowerCase();
-    return projectList.filter(project => {
-      // Match project name
-      if (project.name.toLowerCase().includes(lowerQuery)) return true;
-      // Match task titles
-      if (project.plan.some(task => task.title.toLowerCase().includes(lowerQuery))) return true;
-      // Match subtask titles
-      if (project.plan.some(task =>
-        task.subtasks.some(subtask => subtask.title.toLowerCase().includes(lowerQuery))
-      )) return true;
-      // Match stakeholder names
-      if (project.stakeholders.some(s => s.name.toLowerCase().includes(lowerQuery))) return true;
-      return false;
-    });
-  };
-
-  // Clear the persistent portfolio filter
-  const clearPortfolioFilter = () => {
-    setPortfolioFilter('');
-  };
-
-  // Projects the logged-in user is on
-  const userProjects = visibleProjects.filter(project =>
-    isAdminUser(loggedInUser) || project.stakeholders.some(stakeholder => stakeholder.name === loggedInUser)
-  );
-
-  // Split active and completed for user's projects (with search filter applied)
-  const userActiveProjects = searchFilterProjects(
-    userProjects.filter(project => !['completed', 'closed'].includes(project.status))
-  );
-  const userCompletedProjects = searchFilterProjects(
-    userProjects.filter(project => ['completed', 'closed'].includes(project.status))
-  );
-
-  // Projects the logged-in user is NOT on
-  const otherProjects = visibleProjects.filter(project =>
-    !isAdminUser(loggedInUser) && !project.stakeholders.some(stakeholder => stakeholder.name === loggedInUser)
-  );
-
-  // Split active and completed for other projects (with search filter applied)
-  const otherActiveProjects = searchFilterProjects(
-    otherProjects.filter(project => !['completed', 'closed'].includes(project.status))
-  );
-  const otherCompletedProjects = searchFilterProjects(
-    otherProjects.filter(project => ['completed', 'closed'].includes(project.status))
-  );
-
-  // For backwards compatibility (used in slides, daily update, etc.)
-  const activeProjects = userActiveProjects;
-  const completedProjects = userCompletedProjects;
-
-  const handleAddTimelineUpdate = async () => {
-    if (timelineUpdate.trim()) {
-      const targetProjectId = viewingProjectId || visibleProjects[0]?.id;
-
-      if (targetProjectId) {
-        try {
-          await addActivity(targetProjectId, {
-            date: new Date().toISOString(),
-            note: timelineUpdate,
-            author: activityAuthor
-          });
-        } catch (error) {
-          console.error('Failed to add timeline update:', error);
-        }
-      }
-
-      setTimelineUpdate('');
-    }
-  };
-
-  const openDeleteProject = (project) => {
-    if (!projectDeletionEnabled) return;
-    setProjectToDelete(project);
-    setDeleteConfirmation('');
-  };
-
-  const closeDeleteModal = () => {
-    setProjectToDelete(null);
-    setDeleteConfirmation('');
-  };
-
-  const handleConfirmDeleteProject = async () => {
-    if (!projectToDelete || deleteConfirmation.trim() !== projectToDelete.name) return;
-
-    try {
-      await apiDeleteProject(projectToDelete.id);
-    } catch (error) {
-      console.error('Failed to delete project:', error);
-    }
-
-    if (viewingProjectId === projectToDelete.id) {
-      setViewingProjectId(null);
-    }
-
-    if (selectedProject?.id === projectToDelete.id) {
-      setSelectedProject(null);
-    }
-
-    setProjectToDelete(null);
-    setDeleteConfirmation('');
-  };
-
-  const getAllActivities = () => {
-    const allActivities = [];
-
-    visibleProjects.forEach(project => {
-      project.recentActivity.forEach(activity => {
-        allActivities.push({
-          ...activity,
-          projectId: project.id,
-          projectName: project.name
-        });
-      });
-    });
-    
-    // Sort by date, newest first
-    return allActivities.sort((a, b) => new Date(b.date) - new Date(a.date));
-  };
-
-  const requestMomentumActions = async (messages, attempt = 1) => {
-    const maxAttempts = 3;
-    const { content } = await callOpenAIChat({
-      messages,
-      responseFormat: momentumResponseSchema
-    });
-    const parsed = parseAssistantResponse(content);
-    const { validActions, errors } = validateThrustActions(parsed.actions);
-
-    if (errors.length === 0) {
-      return { parsed: { ...parsed, actions: validActions }, content, attempt };
-    }
-
-    if (attempt >= maxAttempts) {
-      throw new Error(`Momentum response was invalid after ${maxAttempts} attempts: ${errors.join(' ')}`);
-    }
-
-    const retryMessages = [
-      ...messages,
-      { role: 'assistant', content },
-      {
-        role: 'system',
-        content: `Your previous response could not be applied because ${errors.join('; ')}. Use only these action types: ${supportedMomentumActions.join(', ')}. Project-targeted actions must include a valid projectId or projectName that exists in the provided portfolio. Respond only with JSON containing "response" and "actions".`
-      }
-    ];
-
-    return requestMomentumActions(retryMessages, attempt + 1);
-  };
-
-  const handleSendThrustMessage = async () => {
-    if (!thrustDraft.trim() || thrustIsRequesting) return;
-
-    const userMessage = {
-      id: generateActivityId(),
-      role: 'user',
-      author: resolvedLoggedInUser || 'User',
-      note: thrustDraft,
-      date: new Date().toISOString(),
-    };
-
-    const nextMessages = [...thrustMessages, userMessage];
-    setThrustMessages(nextMessages);
-    setThrustDraft('');
-    setThrustError('');
-    setThrustPendingActions([]);
-
-    const systemPrompt = `${MOMENTUM_THRUST_SYSTEM_PROMPT}
-
-LOGGED-IN USER: ${loggedInUser || 'Not set'}
-- When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
-- When adding comments or updates, use the logged-in user's name as the author unless otherwise specified
-- When sending emails on behalf of the user, the "from" address will be automatically set to the logged-in user's email
-
-PEOPLE & EMAIL ADDRESSES:
-- Each person in the system may have an email address stored in their profile
-- People are stored with: name, team, and email (optional)
-- When sending emails, you can reference people by name and the system will resolve their email addresses
-- To find a person's email, use query_portfolio with scope='people' and includePeople=true
-- All project stakeholders/contributors are people with potential email addresses`;
-    const context = buildThrustContext();
-    const orderedMessages = [...nextMessages].sort((a, b) => new Date(a.date) - new Date(b.date));
-    const messages = [
-      { role: 'system', content: `${systemPrompt}\n\nCurrent portfolio context: ${JSON.stringify(context)}` },
-      ...orderedMessages.map(message => ({
-        role: message.role === 'user' ? 'user' : 'assistant',
-        content: message.note || message.content || ''
-      }))
-    ];
-
-    setThrustIsRequesting(true);
-    setThrustRequestStart(Date.now());
-    const responseId = generateActivityId();
-
-    try {
-      const { parsed, content } = await requestMomentumActions(messages);
-      setThrustPendingActions(parsed.actions || []);
-      const { deltas, actionResults, updatedProjectIds, verification } = await applyThrustActions(parsed.actions || []);
-
-      if (verification?.hasFailures) {
-        setThrustError('Some Momentum actions did not match the requested changes. Review verification notes.');
-      } else {
-        setThrustError('');
-      }
-
-      // Track recently updated projects for highlighting
-      if (updatedProjectIds && updatedProjectIds.length > 0) {
-        setRecentlyUpdatedProjects(prev => new Set([...prev, ...updatedProjectIds]));
-        // Expand all updated projects in the momentum view
-        setExpandedMomentumProjects(prev => {
-          const newExpanded = { ...prev };
-          updatedProjectIds.forEach(id => {
-            newExpanded[String(id)] = true;
-          });
-          return newExpanded;
-        });
-        // Highlights now persist through the session
-      }
-
-      const assistantMessage = {
-        id: responseId,
-        role: 'assistant',
-        author: 'Momentum',
-        note: parsed.display || content,
-        date: new Date().toISOString(),
-        actionResults,
-        deltas,
-        updatedProjectIds: updatedProjectIds || [],
-        verificationSummary: verification?.summary
-      };
-
-      // Auto-expand portfolio panel if projects were updated
-      if (updatedProjectIds && updatedProjectIds.length > 0) {
-        setPortfolioMinimized(false);
-        setActiveProjectInChat(updatedProjectIds[0]);
-      }
-
-      setThrustMessages(prev => [...prev, assistantMessage]);
-    } catch (error) {
-      setThrustError(error?.message || 'Failed to send Momentum request.');
-    } finally {
-      setThrustRequestStart(null);
-      setThrustPendingActions([]);
-      setThrustIsRequesting(false);
-    }
-  };
-
-  const getThrustConversation = () => {
-    return [...thrustMessages].sort((a, b) => new Date(a.date) - new Date(b.date));
-  };
-
-  const undoThrustAction = (messageId, actionIndex) => {
-    setThrustMessages(prev => prev.map(message => {
-      if (message.id !== messageId || !message.actionResults || !message.actionResults[actionIndex]) {
-        return message;
-      }
-
-      const targetAction = message.actionResults[actionIndex];
-      if (targetAction.undone || !targetAction.deltas || targetAction.deltas.length === 0) {
-        return message;
-      }
-
-      rollbackDeltas(targetAction.deltas);
-
-      const updatedActions = message.actionResults.map((action, idx) =>
-        idx === actionIndex ? { ...action, undone: true } : action
-      );
-
-      const remainingDeltas = (message.deltas || []).filter(delta => !targetAction.deltas.includes(delta));
-
-      return {
-        ...message,
-        actionResults: updatedActions,
-        deltas: remainingDeltas
-      };
-    }));
-  };
 
   const formatDateTime = (dateString) => {
     const date = new Date(dateString);
@@ -5844,7 +4768,11 @@ PEOPLE & EMAIL ADDRESSES:
               onSendMessage={(message) => {
                 setThrustMessages(prev => [...prev, message]);
               }}
-              onApplyActions={(actionResults, updatedProjectIds) => {
+              onApplyActions={(actionResults, updatedProjectIds, workingProjects) => {
+                if (workingProjects) {
+                  setProjects(workingProjects);
+                }
+
                 // Track recently updated projects for highlighting with timestamps
                 if (updatedProjectIds && updatedProjectIds.length > 0) {
                   const now = Date.now();
@@ -5864,7 +4792,34 @@ PEOPLE & EMAIL ADDRESSES:
                   });
                 }
               }}
-              onUndoAction={undoThrustAction}
+              onUndoAction={(messageId, actionIndex) => {
+                setThrustMessages(prev => prev.map(message => {
+                  if (message.id !== messageId || !message.actionResults || !message.actionResults[actionIndex]) {
+                    return message;
+                  }
+
+                  const targetAction = message.actionResults[actionIndex];
+                  if (targetAction.undone || !targetAction.deltas || targetAction.deltas.length === 0) {
+                    return message;
+                  }
+
+                  // Use the imported rollbackDeltas function which returns updated projects
+                  const updatedProjects = rollbackDeltas(projects, targetAction.deltas);
+                  setProjects(updatedProjects);
+
+                  const updatedActions = message.actionResults.map((action, idx) =>
+                    idx === actionIndex ? { ...action, undone: true } : action
+                  );
+
+                  const remainingDeltas = (message.deltas || []).filter(delta => !targetAction.deltas.includes(delta));
+
+                  return {
+                    ...message,
+                    actionResults: updatedActions,
+                    deltas: remainingDeltas
+                  };
+                }));
+              }}
               loggedInUser={loggedInUser}
               people={people}
               isSantafied={isSantafied}
@@ -5880,43 +4835,20 @@ PEOPLE & EMAIL ADDRESSES:
             apiBaseUrl={import.meta.env.VITE_API_BASE_URL || ''}
           />
         ) : activeView === 'people' ? (
-          // People View
-          <>
-            <header style={styles.header}>
-              <div>
-                <h2 style={styles.pageTitle}>People</h2>
-                <p style={styles.pageSubtitle}>
-                  Manage people in your portfolio
-                </p>
-              </div>
-              <button
-                onClick={() => setEditingPerson({})}
-                style={styles.newProjectButton}
-              >
-                <Plus size={18} />
-                Add Person
-              </button>
-            </header>
-
-            <div style={{ marginTop: '16px' }}>
-              <PeopleGraph
-                people={people}
-                projects={projects}
-                onUpdatePerson={updatePerson}
-                onDeletePerson={deletePerson}
-                onViewProject={(projectId) => {
-                  setActiveView('overview');
-                  setViewingProjectId(projectId);
-                }}
-                onLoginAs={(personName) => {
-                  setLoggedInUser(personName);
-                  localStorage.setItem('manity_logged_in_user', personName);
-                }}
-                loggedInUser={loggedInUser}
-                featuredPersonId={featuredPersonId}
-              />
-            </div>
-          </>
+          <PeopleView
+            people={people}
+            projects={projects}
+            onUpdatePerson={updatePerson}
+            onDeletePerson={deletePerson}
+            onViewProject={(projectId) => {
+              setActiveView('overview');
+              setViewingProjectId(projectId);
+            }}
+            setLoggedInUser={setLoggedInUser}
+            loggedInUser={loggedInUser}
+            featuredPersonId={featuredPersonId}
+            onAddPerson={() => setEditingPerson({})}
+          />
         ) : (
           // Projects Overview
           <>
@@ -6079,78 +5011,23 @@ PEOPLE & EMAIL ADDRESSES:
               </div>
             )}
 
-            <div style={styles.projectsSection}>
-              {visibleProjects.length === 0 ? (
-                <div style={styles.emptyState}>
-                  No projects found. Create a new project to get started.
-                </div>
-              ) : (
-                <>
-                  {/* Your Active Projects */}
-                  <div style={styles.sectionHeaderRow}>
-                    <div>
-                      <h3 style={styles.sectionTitle}>Your Active Projects</h3>
-                      <p style={styles.sectionSubtitle}>{userActiveProjects.length} in progress</p>
-                    </div>
-                  </div>
-
-                  {userActiveProjects.length === 0 ? (
-                    <div style={styles.emptyState}>
-                      {loggedInUser ? `No active projects for ${loggedInUser}.` : 'No active projects for you.'}
-                    </div>
-                  ) : (
-                    <div style={styles.projectsGrid}>
-                      {userActiveProjects.map((project, index) => renderProjectCard(project, index))}
-                    </div>
-                  )}
-
-                  {/* Other Active Projects */}
-                  {otherActiveProjects.length > 0 && (
-                    <div style={{ marginTop: '32px' }}>
-                      <div style={styles.sectionHeaderRow}>
-                        <div>
-                          <h3 style={styles.sectionTitle}>Other Active Projects</h3>
-                          <p style={styles.sectionSubtitle}>{otherActiveProjects.length} in progress</p>
-                        </div>
-                      </div>
-                      <div style={styles.projectsGrid}>
-                        {otherActiveProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Your Completed Projects */}
-                  {userCompletedProjects.length > 0 && (
-                    <div style={{ marginTop: '32px' }}>
-                      <div style={styles.sectionHeaderRow}>
-                        <div>
-                          <h3 style={styles.sectionTitle}>Your Completed & Closed</h3>
-                          <p style={styles.sectionSubtitle}>{userCompletedProjects.length} wrapped up</p>
-                        </div>
-                      </div>
-                      <div style={styles.projectsGrid}>
-                        {userCompletedProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length + otherActiveProjects.length))}
-                      </div>
-                    </div>
-                  )}
-
-                  {/* Other Completed Projects */}
-                  {otherCompletedProjects.length > 0 && (
-                    <div style={{ marginTop: '32px' }}>
-                      <div style={styles.sectionHeaderRow}>
-                        <div>
-                          <h3 style={styles.sectionTitle}>Other Completed & Closed</h3>
-                          <p style={styles.sectionSubtitle}>{otherCompletedProjects.length} wrapped up</p>
-                        </div>
-                      </div>
-                      <div style={styles.projectsGrid}>
-                        {otherCompletedProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length + otherActiveProjects.length + userCompletedProjects.length))}
-                      </div>
-                    </div>
-                  )}
-                </>
-              )}
-            </div>
+            <PortfolioView
+              projects={projects}
+              userActiveProjects={userActiveProjects}
+              userCompletedProjects={userCompletedProjects}
+              otherActiveProjects={otherActiveProjects}
+              otherCompletedProjects={otherCompletedProjects}
+              loggedInUser={loggedInUser}
+              visibleProjects={visibleProjects}
+              onViewProject={(projectId) => {
+                setActiveView('overview');
+                setViewingProjectId(projectId);
+              }}
+              onOpenNewProject={() => setShowNewProject(true)}
+              onDeleteProject={openDeleteProject}
+              projectDeletionEnabled={projectDeletionEnabled}
+              renderProjectCard={renderProjectCard}
+            />
           </>
         )}
       </main>
@@ -6163,12 +5040,7 @@ PEOPLE & EMAIL ADDRESSES:
       />
 
       {/* Santa-fy Effects */}
-      {isSantafied && (
-        <>
-          <SnowEffect />
-          <ChristmasConfetti />
-        </>
-      )}
+      <SeasonalEffects isEnabled={isSantafied} />
     </div>
     </>
   );
