@@ -5,8 +5,8 @@
  */
 
 import { z } from 'zod';
-import { tool } from '@openai/agents';
-import { getToolContext } from '../context';
+import { tool, RunContext } from '@openai/agents';
+import { getContextFromRunContext, ToolExecutionContext } from '../context';
 
 export const AddPersonInput = z.object({
   name: z.string().describe('Name of the person'),
@@ -21,8 +21,8 @@ export const addPersonTool = tool({
   name: 'add_person',
   description: 'Add a new person to the database. Provide their name and optionally team and email.',
   parameters: AddPersonInput,
-  execute: async (input: AddPersonInputType): Promise<string> => {
-    const ctx = getToolContext();
+  execute: async (input: AddPersonInputType, runContext?: RunContext<ToolExecutionContext>): Promise<string> => {
+    const ctx = getContextFromRunContext(runContext);
 
     // Get person name
     const name = (input.name || input.personName || '').trim();

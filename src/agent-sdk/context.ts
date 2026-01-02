@@ -2,9 +2,10 @@
  * Tool Execution Context
  *
  * Provides a context for tools to access state and track deltas.
- * Uses a singleton pattern that gets set before agent execution.
+ * Context is passed to tools via the SDK's dependency injection (RunContext).
  */
 
+import type { RunContext } from '@openai/agents';
 import type {
   Delta,
   Project,
@@ -60,39 +61,17 @@ export interface ToolExecutionContext {
   getUpdatedEntityIds: () => (string | number)[];
 }
 
-// Singleton context
-let currentContext: ToolExecutionContext | null = null;
-
 /**
- * Set the current tool execution context
+ * Extract ToolExecutionContext from the SDK's RunContext.
+ * Tools receive RunContext<ToolExecutionContext> as their second parameter.
  */
-export function setToolContext(ctx: ToolExecutionContext): void {
-  currentContext = ctx;
-}
-
-/**
- * Get the current tool execution context
- * Throws if not initialized
- */
-export function getToolContext(): ToolExecutionContext {
-  if (!currentContext) {
-    throw new Error('Tool context not initialized. Call setToolContext before executing tools.');
+export function getContextFromRunContext(
+  runContext: RunContext<ToolExecutionContext> | undefined
+): ToolExecutionContext {
+  if (!runContext || !runContext.context) {
+    throw new Error('Tool context not available. Ensure context is passed to run().');
   }
-  return currentContext;
-}
-
-/**
- * Clear the current tool context
- */
-export function clearToolContext(): void {
-  currentContext = null;
-}
-
-/**
- * Check if a context is currently set
- */
-export function hasToolContext(): boolean {
-  return currentContext !== null;
+  return runContext.context;
 }
 
 /**

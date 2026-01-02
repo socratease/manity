@@ -5,8 +5,8 @@
  */
 
 import { z } from 'zod';
-import { tool } from '@openai/agents';
-import { getToolContext } from '../context';
+import { tool, RunContext } from '@openai/agents';
+import { getContextFromRunContext, ToolExecutionContext } from '../context';
 
 export const QueryPortfolioInput = z.object({
   scope: z.enum(['portfolio', 'project', 'people']).optional().default('portfolio').describe('What to query'),
@@ -22,8 +22,8 @@ export const queryPortfolioTool = tool({
   name: 'query_portfolio',
   description: 'Query portfolio information. Use this to get context about projects, tasks, or people before taking actions.',
   parameters: QueryPortfolioInput,
-  execute: async (input: QueryPortfolioInputType): Promise<string> => {
-    const ctx = getToolContext();
+  execute: async (input: QueryPortfolioInputType, runContext?: RunContext<ToolExecutionContext>): Promise<string> => {
+    const ctx = getContextFromRunContext(runContext);
 
     // If querying a specific project
     if (input.scope === 'project' || input.projectId || input.projectName) {

@@ -5,8 +5,8 @@
  */
 
 import { z } from 'zod';
-import { tool } from '@openai/agents';
-import { getToolContext } from '../context';
+import { tool, RunContext } from '@openai/agents';
+import { getContextFromRunContext, ToolExecutionContext } from '../context';
 import type { RemoveTaskDelta } from '../../agent/types';
 
 export const AddTaskInput = z.object({
@@ -24,8 +24,8 @@ export const addTaskTool = tool({
   name: 'add_task',
   description: 'Add a new task to a project plan. Specify the project and task title. Optionally set status, due date, and assignee.',
   parameters: AddTaskInput,
-  execute: async (input: AddTaskInputType): Promise<string> => {
-    const ctx = getToolContext();
+  execute: async (input: AddTaskInputType, runContext?: RunContext<ToolExecutionContext>): Promise<string> => {
+    const ctx = getContextFromRunContext(runContext);
 
     // Resolve project
     const project = ctx.resolveProject(input.projectId || input.projectName);

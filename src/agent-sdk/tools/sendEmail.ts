@@ -6,8 +6,8 @@
  */
 
 import { z } from 'zod';
-import { tool } from '@openai/agents';
-import { getToolContext } from '../context';
+import { tool, RunContext } from '@openai/agents';
+import { getContextFromRunContext, ToolExecutionContext } from '../context';
 
 export const SendEmailInput = z.object({
   recipients: z.union([
@@ -24,8 +24,8 @@ export const sendEmailTool = tool({
   name: 'send_email',
   description: 'Send an email to one or more recipients. This action cannot be undone. Provide recipients (comma-separated or array), subject, and body.',
   parameters: SendEmailInput,
-  execute: async (input: SendEmailInputType): Promise<string> => {
-    const ctx = getToolContext();
+  execute: async (input: SendEmailInputType, runContext?: RunContext<ToolExecutionContext>): Promise<string> => {
+    const ctx = getContextFromRunContext(runContext);
 
     // Normalize recipients to array
     let recipients: string[];
