@@ -431,7 +431,7 @@ export default function MomentumChatWithAgent({
               {message.note || message.content}
             </div>
             {/* Thinking Process - shows agent's reasoning */}
-            {message.thinkingSteps?.length > 0 && (
+            {message.thinkingSteps?.length > 0 && !(isTyping && inProgressAssistantMessage && message.id === inProgressAssistantMessage.id) && (
               <ThinkingProcess
                 plan={{
                   goal: message.content,
