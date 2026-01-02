@@ -121,6 +121,9 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
   const [isAwaitingUser, setIsAwaitingUser] = useState(false);
   const [pendingQuestion, setPendingQuestion] = useState<UserQuestion | null>(null);
 
+  // Keep track of the full conversation history across runs
+  const conversationHistoryRef = useRef<Array<{ role: string; content: string }>>([]);
+
   // Refs for resumable execution
   const pausedExecutionRef = useRef<{
     agent: Agent;
@@ -278,8 +281,10 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     conversationHistory: Array<{ role: string; content: string }>;
   }> => {
     const thinkingSteps: ThinkingStep[] = existingThinkingSteps || [];
-    const conversationHistory: Array<{ role: string; content: string }> = existingHistory || [
-      { role: 'user', content: initialMessage }
+    const seededHistory = existingHistory || [];
+    const conversationHistory: Array<{ role: string; content: string }> = [
+      ...seededHistory,
+      ...(initialMessage ? [{ role: 'user', content: initialMessage }] : []),
     ];
 
     let turns = 0;
@@ -492,7 +497,13 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       const agent = createProjectManagementAgent(agentContext);
 
       // Run the agent loop with sequential execution
-      const result = await runAgentLoop(agent, message, toolContext, callbacks);
+      const result = await runAgentLoop(
+        agent,
+        message,
+        toolContext,
+        callbacks,
+        conversationHistoryRef.current
+      );
 
       // If paused for user input
       if (result.paused && result.pausedQuestion) {
@@ -504,6 +515,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
           thinkingSteps: result.thinkingSteps,
           callbacks,
         };
+
+        conversationHistoryRef.current = result.conversationHistory;
 
         setIsAwaitingUser(true);
         setPendingQuestion(result.pausedQuestion);
@@ -527,6 +540,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       const deltas = toolContext.getDeltas();
       const updatedEntityIds = toolContext.getUpdatedEntityIds();
       const workingProjects = toolContext.workingProjects;
+
+      conversationHistoryRef.current = result.conversationHistory;
 
       return {
         response: result.response,
@@ -602,6 +617,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
           callbacks,
         };
 
+        conversationHistoryRef.current = result.conversationHistory;
+
         setIsAwaitingUser(true);
         setPendingQuestion(result.pausedQuestion);
 
@@ -621,6 +638,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
 
       // Clear paused execution ref
       pausedExecutionRef.current = null;
+
+      conversationHistoryRef.current = result.conversationHistory;
 
       const deltas = toolContext.getDeltas();
       return {
