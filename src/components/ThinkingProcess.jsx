@@ -4,24 +4,34 @@ import React, { useState } from 'react';
  * ThinkingProcess Component
  *
  * Displays the AI's planning and execution process in a collapsible UI.
- * Shows the goal, steps, rationales, and execution status.
+ * Shows planning, reasoning, and tool interactions.
  */
-export default function ThinkingProcess({ plan, executionLog, colors }) {
+export default function ThinkingProcess({ steps = [], colors }) {
   const [isExpanded, setIsExpanded] = useState(false);
 
-  if (!plan && !executionLog) {
+  if (!steps || steps.length === 0) {
     return null;
   }
 
+  const sortedSteps = [...steps].sort((a, b) => (a.timestamp || 0) - (b.timestamp || 0));
   const styles = getStyles(colors);
+
+  const headerStatus = (() => {
+    const statuses = sortedSteps.map((step) => step.status);
+    if (statuses.includes('failed')) return 'failed';
+    if (statuses.includes('awaiting_user')) return 'awaiting_user';
+    if (statuses.every((status) => status === 'completed')) return 'completed';
+    return 'in_progress';
+  })();
 
   // Get status icon
   const getStatusIcon = (status) => {
     switch (status) {
-      case 'success': return '✓';
-      case 'failure': return '✗';
-      case 'skipped': return '⊘';
-      case 'blocked': return '⏸';
+      case 'completed': return '✓';
+      case 'failed': return '✗';
+      case 'awaiting_user': return '⏸';
+      case 'in_progress': return '⟳';
+      case 'pending': return '…';
       default: return '○';
     }
   };
@@ -29,13 +39,16 @@ export default function ThinkingProcess({ plan, executionLog, colors }) {
   // Get status color
   const getStatusColor = (status) => {
     switch (status) {
-      case 'success': return colors.sage;
-      case 'failure': return colors.coral;
-      case 'skipped': return colors.stone;
-      case 'blocked': return colors.amber;
+      case 'completed': return colors.sage;
+      case 'failed': return colors.coral;
+      case 'awaiting_user': return colors.amber;
+      case 'in_progress': return colors.sky || colors.earth;
+      case 'pending': return colors.stone;
       default: return colors.earth;
     }
   };
+
+  const headerColor = getStatusColor(headerStatus);
 
   return (
     <div style={styles.container}>
@@ -46,133 +59,109 @@ export default function ThinkingProcess({ plan, executionLog, colors }) {
       >
         <span style={styles.toggleIcon}>{isExpanded ? '▼' : '▶'}</span>
         <span style={styles.toggleText}>Thinking Process</span>
-        <span style={styles.badge}>
-          {plan?.status === 'completed' ? 'Completed' :
-           plan?.status === 'failed' ? 'Failed' :
-           'In Progress'}
+        <span style={{
+          ...styles.badge,
+          backgroundColor: headerColor + '25',
+          color: headerColor,
+        }}>
+          {headerStatus === 'completed' ? 'Completed'
+            : headerStatus === 'failed' ? 'Failed'
+            : headerStatus === 'awaiting_user' ? 'Awaiting User'
+            : 'In Progress'}
         </span>
       </button>
 
       {isExpanded && (
         <div style={styles.content}>
-          {/* Goal */}
-          {plan?.goal && (
-            <div style={styles.section}>
-              <div style={styles.sectionTitle}>Goal</div>
-              <div style={styles.goalText}>{plan.goal}</div>
-            </div>
-          )}
-
           {/* Steps */}
-          {plan?.steps && plan.steps.length > 0 && (
-            <div style={styles.section}>
-              <div style={styles.sectionTitle}>
-                Planning Steps ({plan.steps.length})
-              </div>
-              {plan.steps.map((step, index) => {
-                const executionEvent = executionLog?.events?.[index];
-                const status = executionEvent?.status || 'pending';
+          <div style={styles.section}>
+            <div style={styles.sectionTitle}>
+              Steps ({sortedSteps.length})
+            </div>
+            {sortedSteps.map((step, index) => {
+              const statusColor = getStatusColor(step.status);
 
-                return (
-                  <div key={index} style={styles.step}>
-                    <div style={styles.stepHeader}>
-                      <span style={{
-                        ...styles.stepNumber,
-                        backgroundColor: getStatusColor(status) + '25',
-                        color: getStatusColor(status),
-                      }}>
-                        {index + 1}
-                      </span>
-                      <span style={{
-                        ...styles.statusIcon,
-                        color: getStatusColor(status),
-                      }}>
-                        {getStatusIcon(status)}
-                      </span>
-                      <span style={styles.stepRationale}>{step.rationale}</span>
-                    </div>
-
-                    {/* Tool candidates */}
-                    {step.toolCandidates && step.toolCandidates.length > 0 && (
-                      <div style={styles.toolCandidates}>
-                        {step.toolCandidates.map((candidate, tcIndex) => (
-                          <div key={tcIndex} style={styles.toolCandidate}>
-                            <span style={styles.toolName}>
-                              {candidate.toolName}
-                            </span>
-                            {Object.keys(candidate.input || {}).length > 0 && (
-                              <div style={styles.toolInput}>
-                                {Object.entries(candidate.input).map(([key, value]) => (
-                                  <div key={key} style={styles.inputParam}>
-                                    <span style={styles.paramKey}>{key}:</span>
-                                    <span style={styles.paramValue}>
-                                      {typeof value === 'object'
-                                        ? JSON.stringify(value, null, 2)
-                                        : String(value)}
-                                    </span>
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {/* Execution result */}
-                    {executionEvent && (
-                      <div style={styles.executionResult}>
-                        <div style={styles.resultLabel}>
-                          {executionEvent.label}
-                        </div>
-                        {executionEvent.detail && (
-                          <div style={styles.resultDetail}>
-                            {executionEvent.detail}
-                          </div>
-                        )}
-                        {executionEvent.error && (
-                          <div style={styles.resultError}>
-                            Error: {executionEvent.error}
-                          </div>
-                        )}
-                      </div>
-                    )}
+              return (
+                <div key={step.id || index} style={styles.step}>
+                  <div style={styles.stepHeader}>
+                    <span style={{
+                      ...styles.stepNumber,
+                      backgroundColor: statusColor + '25',
+                      color: statusColor,
+                    }}>
+                      {index + 1}
+                    </span>
+                    <span style={{
+                      ...styles.statusIcon,
+                      color: statusColor,
+                    }}>
+                      {getStatusIcon(step.status)}
+                    </span>
+                    <span style={styles.stepType}>{formatStepType(step.type)}</span>
                   </div>
-                );
-              })}
-            </div>
-          )}
 
-          {/* Execution metadata */}
-          {executionLog && (
-            <div style={styles.metadata}>
-              <div style={styles.metadataItem}>
-                <span style={styles.metadataLabel}>Execution ID:</span>
-                <span style={styles.metadataValue}>{executionLog.id}</span>
-              </div>
-              {executionLog.startedAt && (
-                <div style={styles.metadataItem}>
-                  <span style={styles.metadataLabel}>Started:</span>
-                  <span style={styles.metadataValue}>
-                    {new Date(executionLog.startedAt).toLocaleTimeString()}
-                  </span>
+                  {step.content && (
+                    <div style={styles.stepRationale}>{step.content}</div>
+                  )}
+
+                  {step.type === 'tool_call' && step.toolName && (
+                    <div style={styles.toolCandidates}>
+                      <div style={styles.toolCandidate}>
+                        <span style={styles.toolName}>{step.toolName}</span>
+                        {step.toolInput && Object.keys(step.toolInput).length > 0 && (
+                          <div style={styles.toolInput}>
+                            {Object.entries(step.toolInput).map(([key, value]) => (
+                              <div key={key} style={styles.inputParam}>
+                                <span style={styles.paramKey}>{key}:</span>
+                                <span style={styles.paramValue}>
+                                  {typeof value === 'object'
+                                    ? JSON.stringify(value, null, 2)
+                                    : String(value)}
+                                </span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
+
+                  {step.type === 'tool_result' && (step.toolResult || step.toolName) && (
+                    <div style={styles.executionResult}>
+                      {step.toolName && (
+                        <div style={styles.resultLabel}>{step.toolName} result</div>
+                      )}
+                      {step.toolResult && (
+                        <div style={styles.resultDetail}>{step.toolResult}</div>
+                      )}
+                    </div>
+                  )}
                 </div>
-              )}
-              {executionLog.completedAt && (
-                <div style={styles.metadataItem}>
-                  <span style={styles.metadataLabel}>Completed:</span>
-                  <span style={styles.metadataValue}>
-                    {new Date(executionLog.completedAt).toLocaleTimeString()}
-                  </span>
-                </div>
-              )}
-            </div>
-          )}
+              );
+            })}
+          </div>
         </div>
       )}
     </div>
   );
 }
+
+const formatStepType = (type) => {
+  switch (type) {
+    case 'planning':
+      return 'Planning';
+    case 'reasoning':
+      return 'Reasoning';
+    case 'tool_call':
+      return 'Tool Call';
+    case 'tool_result':
+      return 'Tool Result';
+    case 'user_question':
+      return 'Awaiting User';
+    default:
+      return type;
+  }
+};
 
 const getStyles = (colors) => ({
   container: {
@@ -278,6 +267,12 @@ const getStyles = (colors) => ({
     color: colors.earth,
     fontWeight: '500',
     lineHeight: '1.4',
+    marginBottom: '6px',
+  },
+  stepType: {
+    fontSize: '10px',
+    fontWeight: '700',
+    color: colors.stone,
   },
   toolCandidates: {
     marginTop: '8px',
@@ -333,31 +328,5 @@ const getStyles = (colors) => ({
     fontSize: '10px',
     color: colors.stone,
     lineHeight: '1.4',
-  },
-  resultError: {
-    fontSize: '10px',
-    color: colors.coral,
-    fontWeight: '500',
-    marginTop: '4px',
-  },
-  metadata: {
-    marginTop: '12px',
-    paddingTop: '12px',
-    borderTop: `1px solid ${colors.cloud}`,
-    display: 'flex',
-    flexDirection: 'column',
-    gap: '4px',
-  },
-  metadataItem: {
-    fontSize: '9px',
-    color: colors.stone,
-    display: 'flex',
-    gap: '6px',
-  },
-  metadataLabel: {
-    fontWeight: '600',
-  },
-  metadataValue: {
-    fontFamily: 'monospace',
   },
 });

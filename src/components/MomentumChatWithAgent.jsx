@@ -427,24 +427,7 @@ export default function MomentumChatWithAgent({
             {/* Thinking Process - shows agent's reasoning */}
             {message.thinkingSteps?.length > 0 && !(isTyping && inProgressAssistantMessage && message.id === inProgressAssistantMessage.id) && (
               <ThinkingProcess
-                plan={{
-                  goal: message.content,
-                  steps: message.thinkingSteps.map(step => ({
-                    rationale: step.content,
-                    toolCandidates: step.toolName ? [{
-                      toolName: step.toolName,
-                      input: step.toolInput || {},
-                    }] : [],
-                  })),
-                  status: message.pendingQuestion ? 'in_progress' : 'completed',
-                }}
-                executionLog={{
-                  id: message.id,
-                  events: message.thinkingSteps.map(step => ({
-                    status: step.status,
-                    label: step.toolResult || step.content,
-                  })),
-                }}
+                steps={message.thinkingSteps}
                 colors={colors}
               />
             )}
@@ -627,24 +610,7 @@ export default function MomentumChatWithAgent({
                 {/* Show streaming thinking steps while typing */}
                 {streamingThinkingSteps.length > 0 && (
                   <ThinkingProcess
-                    plan={{
-                      goal: 'Processing your request...',
-                      steps: streamingThinkingSteps.map(step => ({
-                        rationale: step.content,
-                        toolCandidates: step.toolName ? [{
-                          toolName: step.toolName,
-                          input: step.toolInput || {},
-                        }] : [],
-                      })),
-                      status: 'in_progress',
-                    }}
-                    executionLog={{
-                      id: 'streaming',
-                      events: streamingThinkingSteps.map(step => ({
-                        status: step.status,
-                        label: step.toolResult || step.content,
-                      })),
-                    }}
+                    steps={streamingThinkingSteps}
                     colors={colors}
                   />
                 )}
