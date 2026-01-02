@@ -5,8 +5,8 @@
  */
 
 import { z } from 'zod';
-import { tool } from '@openai/agents';
-import { getToolContext } from '../context';
+import { tool, RunContext } from '@openai/agents';
+import { getContextFromRunContext, ToolExecutionContext } from '../context';
 import type { RemoveActivityDelta } from '../../agent/types';
 
 export const CommentInput = z.object({
@@ -24,8 +24,8 @@ export const commentTool = tool({
   name: 'comment',
   description: 'Add a comment or activity note to a project. Use this to log updates, notes, or progress on a project.',
   parameters: CommentInput,
-  execute: async (input: CommentInputType): Promise<string> => {
-    const ctx = getToolContext();
+  execute: async (input: CommentInputType, runContext?: RunContext<ToolExecutionContext>): Promise<string> => {
+    const ctx = getContextFromRunContext(runContext);
 
     // Resolve project
     const project = ctx.resolveProject(input.projectId || input.projectName);

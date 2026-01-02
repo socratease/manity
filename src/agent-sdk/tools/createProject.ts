@@ -5,8 +5,8 @@
  */
 
 import { z } from 'zod';
-import { tool } from '@openai/agents';
-import { getToolContext } from '../context';
+import { tool, RunContext } from '@openai/agents';
+import { getContextFromRunContext, ToolExecutionContext } from '../context';
 import type { RemoveProjectDelta } from '../../agent/types';
 
 export const CreateProjectInput = z.object({
@@ -27,8 +27,8 @@ export const createProjectTool = tool({
   name: 'create_project',
   description: 'Create a new project in the portfolio. Provide at least a name and optionally description, priority, status, and target date.',
   parameters: CreateProjectInput,
-  execute: async (input: CreateProjectInputType): Promise<string> => {
-    const ctx = getToolContext();
+  execute: async (input: CreateProjectInputType, runContext?: RunContext<ToolExecutionContext>): Promise<string> => {
+    const ctx = getContextFromRunContext(runContext);
 
     // Get project name
     const projectName = (input.name || input.projectName || '').trim();

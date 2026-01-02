@@ -2,21 +2,22 @@
  * useAgentRuntime Hook - OpenAI Agents SDK
  *
  * React hook that provides a simple interface for running the agent.
+ * Uses the SDK's context injection pattern for tools.
  * Features:
+ * - Context passed via SDK's RunContext (no global singleton)
  * - Sequential tool execution (fixes task/subtask race condition)
  * - Thinking process capture and exposure
  * - Human-in-the-loop support via ask_user tool
  */
 
 import { useCallback, useMemo, useRef, useState } from 'react';
-import { Agent, setDefaultModelProvider } from '@openai/agents';
+import { Agent, RunContext, setDefaultModelProvider } from '@openai/agents';
 import { createProjectManagementAgent, defaultAgentConfig, type AgentConfig } from './agent';
 import { EMPTY_RESPONSE_ERROR, getAssistantMessage } from './responseUtils';
 import {
-  setToolContext,
-  clearToolContext,
   createToolExecutionContext,
   cloneProjectDeep,
+  ToolExecutionContext,
 } from './context';
 import { backendModelProvider } from './modelProvider';
 import { UndoManager, rollbackDeltas } from '../agent/UndoManager';
@@ -25,7 +26,6 @@ import type { Project, Person, Delta, ActionResult } from '../agent/types';
 import type {
   AgentContext,
   ToolServices,
-  AgentExecutionResult,
   ThinkingStep,
   UserQuestion,
   ExecutionCallbacks,
@@ -102,7 +102,7 @@ function createThinkingStep(
 
 /**
  * Hook for running the OpenAI Agents SDK-based agent
- * with sequential tool execution and thinking process exposure
+ * with SDK context injection and sequential tool execution
  */
 export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeReturn {
   const {
@@ -126,9 +126,9 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
 
   // Refs for resumable execution
   const pausedExecutionRef = useRef<{
-    agent: Agent;
+    agent: Agent<ToolExecutionContext>;
     conversationHistory: Array<{ role: string; content: string }>;
-    toolContext: ReturnType<typeof createToolExecutionContext>;
+    runContext: RunContext<ToolExecutionContext>;
     thinkingSteps: ThinkingStep[];
     callbacks?: ExecutionCallbacks;
   } | null>(null);
@@ -172,11 +172,12 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
   }), [projects, people, loggedInUser]);
 
   /**
-   * Execute tools sequentially from a list of tool calls
-   * Returns the results and whether execution was paused
+   * Execute tools sequentially from a list of tool calls.
+   * Tools receive the RunContext for dependency injection.
    */
   const executeToolsSequentially = useCallback(async (
-    toolCalls: Array<{ name: string; arguments: Record<string, unknown> }>,
+    toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>,
+    runContext: RunContext<ToolExecutionContext>,
     thinkingSteps: ThinkingStep[],
     callbacks?: ExecutionCallbacks
   ): Promise<{ results: string[]; paused: boolean; pausedQuestion?: UserQuestion }> => {
@@ -198,7 +199,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       callbacks?.onThinkingStep?.(toolStep);
       callbacks?.onToolStart?.(toolName, toolInput as Record<string, unknown>);
 
-      // Find and execute the tool
+      // Find the tool
       const tool = allTools.find(t => t.name === toolName);
       if (!tool) {
         const errorResult = `Error: Tool ${toolName} not found`;
@@ -210,8 +211,10 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       }
 
       try {
-        // Execute the tool
-        const result = await (tool as any).execute(toolInput);
+        // Execute the tool with RunContext (SDK's dependency injection)
+        // The tool's execute function signature: (input, runContext?, details?)
+        const rawResult = await tool.execute(toolInput, runContext);
+        const result = String(rawResult);
 
         console.debug('[Momentum] Tool result', { toolName, result });
 
@@ -264,12 +267,13 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
   }, []);
 
   /**
-   * Run the agent loop with sequential tool execution
+   * Run the agent loop with sequential tool execution.
+   * Uses SDK's RunContext for tool dependency injection.
    */
   const runAgentLoop = useCallback(async (
-    agent: Agent,
+    agent: Agent<ToolExecutionContext>,
     initialMessage: string,
-    toolContext: ReturnType<typeof createToolExecutionContext>,
+    runContext: RunContext<ToolExecutionContext>,
     callbacks?: ExecutionCallbacks,
     existingHistory?: Array<{ role: string; content: string }>,
     existingThinkingSteps?: ThinkingStep[]
@@ -367,9 +371,10 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         arguments: JSON.parse(tc.function.arguments || '{}'),
       }));
 
-      // Execute tools sequentially
+      // Execute tools sequentially with RunContext
       const { results, paused, pausedQuestion } = await executeToolsSequentially(
         parsedToolCalls,
+        runContext,
         thinkingSteps,
         callbacks
       );
@@ -479,8 +484,6 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     const services = buildServices();
     const agentContext = buildContext(message);
 
-    let shouldClearContext = true;
-
     // Create tool execution context with delta tracking
     const toolContext = createToolExecutionContext(
       agentContext.projects,
@@ -489,8 +492,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       services
     );
 
-    // Set the global context for tools to access
-    setToolContext(toolContext);
+    // Create SDK RunContext wrapping our ToolExecutionContext
+    const runContext = new RunContext<ToolExecutionContext>(toolContext);
 
     try {
       // Create agent with current context
@@ -498,9 +501,9 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
 
       // Run the agent loop with sequential execution
       const result = await runAgentLoop(
-        agent,
+        agent as Agent<ToolExecutionContext>,
         message,
-        toolContext,
+        runContext,
         callbacks,
         conversationHistoryRef.current
       );
@@ -509,9 +512,9 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       if (result.paused && result.pausedQuestion) {
         // Save state for resumption
         pausedExecutionRef.current = {
-          agent,
+          agent: agent as Agent<ToolExecutionContext>,
           conversationHistory: result.conversationHistory,
-          toolContext,
+          runContext,
           thinkingSteps: result.thinkingSteps,
           callbacks,
         };
@@ -520,8 +523,6 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
 
         setIsAwaitingUser(true);
         setPendingQuestion(result.pausedQuestion);
-
-        shouldClearContext = false;
 
         // Return partial result
         const deltas = toolContext.getDeltas();
@@ -551,11 +552,9 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         actionResults: buildActionResults(deltas),
         thinkingSteps: result.thinkingSteps,
       };
-    } finally {
-      // Only clear context if not paused
-      if (shouldClearContext && !pausedExecutionRef.current) {
-        clearToolContext();
-      }
+    } catch (error) {
+      console.error('[Momentum] Agent execution error:', error);
+      throw error;
     }
   }, [buildContext, buildServices, runAgentLoop, buildActionResults]);
 
@@ -567,16 +566,12 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       throw new Error('No paused execution to continue');
     }
 
-    const { agent, conversationHistory, toolContext, thinkingSteps, callbacks } = pausedExecutionRef.current;
-
-    let shouldClearContext = true;
+    const { agent, conversationHistory, runContext, thinkingSteps, callbacks } = pausedExecutionRef.current;
+    const toolContext = runContext.context;
 
     // Clear paused state
     setIsAwaitingUser(false);
     setPendingQuestion(null);
-
-    // Set the tool context back
-    setToolContext(toolContext);
 
     try {
       // Add user response to thinking steps
@@ -601,7 +596,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       const result = await runAgentLoop(
         agent,
         '', // Empty message since we're continuing
-        toolContext,
+        runContext,
         callbacks,
         conversationHistory,
         thinkingSteps
@@ -612,7 +607,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         pausedExecutionRef.current = {
           agent,
           conversationHistory: result.conversationHistory,
-          toolContext,
+          runContext,
           thinkingSteps: result.thinkingSteps,
           callbacks,
         };
@@ -621,8 +616,6 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
 
         setIsAwaitingUser(true);
         setPendingQuestion(result.pausedQuestion);
-
-        shouldClearContext = false;
 
         const deltas = toolContext.getDeltas();
         return {
@@ -650,10 +643,9 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         actionResults: buildActionResults(deltas),
         thinkingSteps: result.thinkingSteps,
       };
-    } finally {
-      if (shouldClearContext && !pausedExecutionRef.current) {
-        clearToolContext();
-      }
+    } catch (error) {
+      console.error('[Momentum] Continue execution error:', error);
+      throw error;
     }
   }, [runAgentLoop, buildActionResults]);
 

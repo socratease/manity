@@ -5,8 +5,8 @@
  */
 
 import { z } from 'zod';
-import { tool } from '@openai/agents';
-import { getToolContext } from '../context';
+import { tool, RunContext } from '@openai/agents';
+import { getContextFromRunContext, ToolExecutionContext } from '../context';
 import type { RemoveSubtaskDelta } from '../../agent/types';
 
 export const AddSubtaskInput = z.object({
@@ -27,8 +27,8 @@ export const addSubtaskTool = tool({
   name: 'add_subtask',
   description: 'Add a new subtask to a task. Specify the project, parent task, and subtask title.',
   parameters: AddSubtaskInput,
-  execute: async (input: AddSubtaskInputType): Promise<string> => {
-    const ctx = getToolContext();
+  execute: async (input: AddSubtaskInputType, runContext?: RunContext<ToolExecutionContext>): Promise<string> => {
+    const ctx = getContextFromRunContext(runContext);
 
     // Resolve project
     const project = ctx.resolveProject(input.projectId || input.projectName);

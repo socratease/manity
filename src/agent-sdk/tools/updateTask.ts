@@ -5,8 +5,8 @@
  */
 
 import { z } from 'zod';
-import { tool } from '@openai/agents';
-import { getToolContext } from '../context';
+import { tool, RunContext } from '@openai/agents';
+import { getContextFromRunContext, ToolExecutionContext } from '../context';
 import type { RestoreTaskDelta } from '../../agent/types';
 
 export const UpdateTaskInput = z.object({
@@ -27,8 +27,8 @@ export const updateTaskTool = tool({
   name: 'update_task',
   description: 'Update an existing task in a project. Specify the project and task (by ID or title), then provide the fields to update.',
   parameters: UpdateTaskInput,
-  execute: async (input: UpdateTaskInputType): Promise<string> => {
-    const ctx = getToolContext();
+  execute: async (input: UpdateTaskInputType, runContext?: RunContext<ToolExecutionContext>): Promise<string> => {
+    const ctx = getContextFromRunContext(runContext);
 
     // Resolve project
     const project = ctx.resolveProject(input.projectId || input.projectName);
