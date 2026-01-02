@@ -562,35 +562,45 @@ Phase 6 (Types & Tests)             █████░░░░░  ONGOING
 
 After refactoring:
 
-- [ ] `ManityApp.jsx` < 1,500 lines
-- [ ] `main.py` < 200 lines (router/startup only)
+- [ ] `ManityApp.jsx` < 1,500 lines (IN PROGRESS - views extracted, needs integration)
+- [ ] `main.py` < 200 lines (IN PROGRESS - routers created, needs integration)
 - [ ] No file > 800 lines
 - [ ] Zero duplicate person resolution logic
-- [ ] Legacy `agent/` directory cleaned up (only UndoManager + types remain, moved)
-- [ ] Modular seasonal themes system with 5+ themes
+- [x] Legacy `agent/` directory cleaned up (UndoManager + types moved to new locations)
+- [x] Modular seasonal themes system with 5+ themes (6 themes: base, christmas, easter, halloween, valentine, st.patrick)
 - [ ] Test coverage > 60% on critical paths
 - [ ] Full TypeScript (no `.jsx` files)
-- [ ] Clear separation: views / hooks / components / store / themes
+- [x] Clear separation: views / hooks / components / store / themes
 
 ---
 
-## Files to Delete (After Migration)
+## Files Migrated
 
-| File/Directory | Delete After | Replacement |
-|----------------|--------------|-------------|
-| `src/agent/context/` | Phase 3 | `src/agent-sdk/` |
-| `src/agent/types.ts` | Phase 3 | `src/types/portfolio.ts` |
-| `src/agent/UndoManager.ts` | Phase 3 | `src/lib/UndoManager.ts` |
-| `src/lib/theme.js` | Phase 4 | `src/themes/colors/*.ts` |
-| `src/components/SnowEffect.jsx` | Phase 4 | `src/themes/effects/SnowEffect.tsx` |
-| `src/components/ChristmasConfetti.jsx` | Phase 4 | `src/themes/effects/ChristmasConfetti.tsx` |
-| `MIGRATION_PLAN_OPENAI_AGENTS_SDK.md` | Phase 3 | N/A (completed) |
+| File/Directory | Status | New Location |
+|----------------|--------|--------------|
+| `src/agent/context/` | ✅ DELETED | Logic moved to `src/lib/agentHelpers.ts` |
+| `src/agent/types.ts` | ✅ MIGRATED | `src/types/portfolio.ts` (re-exported for compat) |
+| `src/agent/UndoManager.ts` | ✅ MIGRATED | `src/lib/UndoManager.ts` (re-exported for compat) |
+| `src/lib/theme.js` | ✅ UPDATED | Now re-exports from `src/themes/colors/` |
+| `src/components/SnowEffect.jsx` | ✅ UPDATED | Now re-exports from `src/themes/effects/` |
+| `src/components/ChristmasConfetti.jsx` | ✅ UPDATED | Now re-exports from `src/themes/effects/` |
 
 ---
 
-## Next Steps
+## Implementation Status
 
-1. ✅ Plan reviewed and approved
-2. Begin Phase 1.1: Extract views from ManityApp.jsx
-3. Set up parallel work on Phase 2.1 (backend modules)
-4. Phase 4 (Seasonal Themes) can begin independently
+### Completed
+- ✅ Phase 1.1: View components created (PeopleView, TimelineView, MomentumView, SlidesView, DataView)
+- ✅ Phase 1.3: Zustand stores created (uiStore, projectStore, momentumStore)
+- ✅ Phase 2.1: Backend modules created (models/, routers/, config.py)
+- ✅ Phase 2.3: Environment-driven configuration
+- ✅ Phase 3: Agent migration complete (types and UndoManager moved)
+- ✅ Phase 4: Seasonal themes module with 6 themes and 3 effects
+- ✅ Phase 5: Legacy code updated with backward-compatible re-exports
+
+### Remaining Work
+- Phase 1.2: Split usePortfolioData into domain hooks
+- Phase 1.4: Decompose large components (PeopleGraph, MomentumChat, etc.)
+- Phase 2.2: Consolidate person resolution logic
+- Phase 6: Type safety & testing
+- Integration: Update ManityApp.jsx to use new views and stores
