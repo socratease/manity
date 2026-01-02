@@ -3,9 +3,13 @@
  *
  * This module is deprecated. Use agent-sdk instead.
  * Kept for backwards compatibility - exports types and UndoManager.
+ *
+ * Types have been moved to src/types/portfolio.ts
+ * UndoManager has been moved to src/lib/UndoManager.ts
+ * Helpers have been moved to src/lib/agentHelpers.ts
  */
 
-// Types - still used by agent-sdk and UI
+// Types - re-export from new location
 export type {
   // Delta types
   DeltaType,
@@ -33,19 +37,19 @@ export type {
   Person,
   PortfolioSummary,
   ConversationMessage,
-} from './types';
+} from '../types/portfolio';
 
-// Undo Manager - still used by agent-sdk
+// Undo Manager - re-export from new location
 export {
   UndoManager,
   applyDelta,
   rollbackDeltas,
   createUndoManager,
   getDefaultUndoManager,
-} from './UndoManager';
+} from '../lib/UndoManager';
 
-// Context helpers - some utilities still useful
+// Context helpers - re-export from new location
 export {
   cloneProjectDeep,
   buildProjectLookup,
-} from './context/helpers';
+} from '../lib/agentHelpers';
