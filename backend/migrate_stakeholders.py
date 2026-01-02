@@ -1,9 +1,18 @@
 import argparse
 import os
-from sqlmodel import Session, select, create_engine
-from .models.models import Project, Person, MigrationState
-from .services.person_service import normalize_project_stakeholders, upsert_person_from_details
-from .database import create_engine_from_env
+import sys
+
+from sqlmodel import Session, create_engine, select
+
+if __package__ in (None, ""):
+    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+    PARENT_DIR = os.path.dirname(CURRENT_DIR)
+    if PARENT_DIR not in sys.path:
+        sys.path.append(PARENT_DIR)
+
+from backend.database import create_engine_from_env
+from backend.models.models import MigrationState, Person, Project
+from backend.services.person_service import normalize_project_stakeholders, upsert_person_from_details
 
 def run_people_backfill_migration(session: Session) -> None:
     migration_key = "people-backfill-v1"

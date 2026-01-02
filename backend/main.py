@@ -1,38 +1,62 @@
+import argparse
 import logging
 import os
 import smtplib
-import argparse
-from typing import Optional, Sequence, List
+import sys
 from datetime import datetime
 from email.message import EmailMessage
+from typing import List, Optional, Sequence
+
+if __package__ in (None, ""):
+    CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
+    PARENT_DIR = os.path.dirname(CURRENT_DIR)
+    if PARENT_DIR not in sys.path:
+        sys.path.append(PARENT_DIR)
 
 import httpx
 from fastapi import Depends, FastAPI, HTTPException, Request, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 from sqlmodel import Session, select
 
-# Import new modules
-from .models.models import (
-    Person, Project, Task, Subtask, Activity, EmailSettings, AuditLog, MigrationState,
-    PersonReference, Stakeholder
+from backend.database import create_db_and_tables, engine, get_session
+from backend.models.models import (
+    Activity,
+    AuditLog,
+    EmailSettings,
+    MigrationState,
+    Person,
+    PersonReference,
+    Project,
+    Stakeholder,
+    Subtask,
+    Task,
 )
-from .schemas.schemas import (
-    PersonPayload, ProjectPayload, ImportPayload, EmailSettingsPayload,
-    EmailSettingsResponse, EmailSendPayload, ChatRequest, ChatProvider,
-    SlidesExportPayload, SlideData
+from backend.routers import projects as projects_router
+from backend.schemas.schemas import (
+    ChatProvider,
+    ChatRequest,
+    EmailSendPayload,
+    EmailSettingsPayload,
+    EmailSettingsResponse,
+    ImportPayload,
+    PersonPayload,
+    ProjectPayload,
+    SlideData,
+    SlidesExportPayload,
 )
-from .services.person_service import (
-    upsert_person_from_payload,
+from backend.services.person_service import (
+    build_person_index,
+    generate_id,
     get_person_by_name,
     resolve_person_reference,
-    build_person_index,
-    generate_id
+    upsert_person_from_payload,
 )
-from .database import engine, get_session, create_db_and_tables
-from .utils import log_action, get_logged_in_user, current_environment, PROTECTED_ENVIRONMENTS
-
-# Register router
-from .routers import projects as projects_router
+from backend.utils import (
+    PROTECTED_ENVIRONMENTS,
+    current_environment,
+    get_logged_in_user,
+    log_action,
+)
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(level=logging.INFO)
@@ -816,7 +840,7 @@ def main() -> None:
     args = parser.parse_args()
 
     if args.command == "run-people-backfill":
-        from .migrate_stakeholders import run_people_backfill_migration
+        from backend.migrate_stakeholders import run_people_backfill_migration
         create_db_and_tables()
         with Session(engine) as session:
             run_people_backfill_migration(session)
