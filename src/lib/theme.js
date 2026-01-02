@@ -1,31 +1,18 @@
-// Centralized theme configuration for Manity
-// Supports multiple seasonal themes
+/**
+ * Theme Configuration (Legacy)
+ *
+ * This module has been moved to src/themes/
+ * This file provides backward compatibility by delegating to the new theme system.
+ *
+ * @deprecated Use import { getActiveTheme, useSeasonalTheme } from '../themes' instead
+ */
 
-const baseTheme = {
-  earth: '#8B6F47',
-  sage: '#7A9B76',
-  coral: '#D67C5C',
-  amber: '#E8A75D',
-  cream: '#FAF8F3',
-  cloud: '#E8E3D8',
-  stone: '#6B6554',
-  charcoal: '#3A3631',
-};
+import { baseTheme, christmasTheme } from '../themes/colors';
 
-const santaTheme = {
-  earth: '#C41E3A',      // Classic Christmas red (replacing brown/burnt orange)
-  sage: '#165B33',       // Deep Christmas green
-  coral: '#FF6B6B',      // Bright festive red
-  amber: '#FFD700',      // Gold (replacing amber/burnt orange)
-  cream: '#FFFAF0',      // Warm ivory
-  cloud: '#F0E6E6',      // Light pink-tinted cloud
-  stone: '#8B4513',      // Warm brown
-  charcoal: '#2C1810',   // Deep brown
-};
-
+// Map old theme names to new themes
 const themes = {
-  base: baseTheme,
-  santa: santaTheme,
+  base: baseTheme.colors,
+  santa: christmasTheme.colors,
 };
 
 /**
@@ -45,7 +32,7 @@ export const getTheme = (mode = 'base') => {
  */
 export const getColor = (colorName, mode = 'base') => {
   const theme = getTheme(mode);
-  return theme[colorName] || baseTheme[colorName];
+  return theme[colorName] || baseTheme.colors[colorName];
 };
 
 /**

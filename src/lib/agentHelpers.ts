@@ -3,6 +3,8 @@
  *
  * Utility functions for resolving projects, tasks, people, and other entities.
  * These are shared across all tools.
+ *
+ * Migrated from src/agent/context/helpers.ts
  */
 
 import type {
@@ -13,7 +15,7 @@ import type {
   Stakeholder,
   StakeholderEntry,
   ToolContextHelpers,
-} from '../types';
+} from '../types/portfolio';
 
 /**
  * Resolve a project by ID or name from a list of projects.
