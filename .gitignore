@@ -35,4 +35,4 @@ wheels/
 .env.local
 .venv/
 venv/
-env/
+env/backend/.env
