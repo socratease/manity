@@ -36,6 +36,17 @@ export default function MomentumChatWithAgent({
   const colors = getColors(isSantafied);
   const styles = getStyles(colors);
 
+  const seededAgentHistory = useMemo(
+    () =>
+      messages
+        .filter(msg => msg.role === 'user' || msg.role === 'assistant')
+        .map(msg => ({
+          role: msg.role,
+          content: msg.note || msg.content || '',
+        })),
+    [messages]
+  );
+
   const getPriorityColor = (priority) => {
     const map = { high: colors.coral, medium: colors.amber, low: colors.sage };
     return map[priority] || colors.stone;
@@ -85,6 +96,7 @@ export default function MomentumChatWithAgent({
     loggedInUser,
     createPerson,
     sendEmail,
+    initialConversationHistory: seededAgentHistory,
   });
 
   // State for streaming thinking steps during execution

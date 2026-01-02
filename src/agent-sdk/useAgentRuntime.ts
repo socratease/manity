@@ -8,7 +8,7 @@
  * - Human-in-the-loop support via ask_user tool
  */
 
-import { useCallback, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Agent, setDefaultModelProvider } from '@openai/agents';
 import { createProjectManagementAgent, defaultAgentConfig, type AgentConfig } from './agent';
 import { EMPTY_RESPONSE_ERROR, getAssistantMessage } from './responseUtils';
@@ -53,6 +53,8 @@ export interface UseAgentRuntimeProps {
   onProjectsUpdate?: (projects: Project[]) => void;
   /** Agent configuration */
   config?: AgentConfig;
+  /** Optional starting conversation history */
+  initialConversationHistory?: Array<{ role: string; content: string }>;
 }
 
 /**
@@ -112,6 +114,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     createPerson,
     sendEmail,
     config = defaultAgentConfig,
+    initialConversationHistory = [],
   } = props;
 
   // Create undo manager
@@ -123,6 +126,16 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
 
   // Keep track of the full conversation history across runs
   const conversationHistoryRef = useRef<Array<{ role: string; content: string }>>([]);
+  const hasSeededHistoryRef = useRef(false);
+
+  // Seed conversation history from provided initial messages
+  useEffect(() => {
+    if (hasSeededHistoryRef.current) return;
+    if (initialConversationHistory.length > 0) {
+      conversationHistoryRef.current = [...initialConversationHistory];
+      hasSeededHistoryRef.current = true;
+    }
+  }, [initialConversationHistory]);
 
   // Refs for resumable execution
   const pausedExecutionRef = useRef<{
