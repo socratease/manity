@@ -424,12 +424,6 @@ export default function MomentumChatWithAgent({
         }}>
           {!isUser && <div style={styles.aiAvatar}>M</div>}
           <div style={styles.messageContent}>
-            <div style={{
-              ...styles.messageText,
-              ...(isUser ? styles.userText : styles.assistantText),
-            }}>
-              {message.note || message.content}
-            </div>
             {/* Thinking Process - shows agent's reasoning */}
             {message.thinkingSteps?.length > 0 && !(isTyping && inProgressAssistantMessage && message.id === inProgressAssistantMessage.id) && (
               <ThinkingProcess
@@ -454,6 +448,12 @@ export default function MomentumChatWithAgent({
                 colors={colors}
               />
             )}
+            <div style={{
+              ...styles.messageText,
+              ...(isUser ? styles.userText : styles.assistantText),
+            }}>
+              {message.note || message.content}
+            </div>
             {/* User Question Prompt - when agent needs clarification */}
             {message.pendingQuestion && (
               <UserQuestionPrompt
