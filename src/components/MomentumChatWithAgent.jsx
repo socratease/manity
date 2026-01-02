@@ -233,7 +233,8 @@ export default function MomentumChatWithAgent({
       }
 
       if (onApplyActions && result.actionResults.length > 0) {
-        onApplyActions(result.actionResults, result.updatedEntityIds);
+        onApplyActions(result.actionResults, result.updatedEntityIds, result.workingProjects);
+        onApplyActions(result.actionResults, result.updatedEntityIds, result.workingProjects);
       }
 
     } catch (error) {
