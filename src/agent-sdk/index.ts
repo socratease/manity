@@ -21,18 +21,25 @@ export {
 
 // Export context utilities
 export {
-  setToolContext,
-  getToolContext,
-  clearToolContext,
-  hasToolContext,
   createToolExecutionContext,
   buildProjectLookup,
   cloneProjectDeep,
+  getContextFromRunContext,
   type ToolExecutionContext,
 } from './context';
 
-// Export model provider
-export { backendModelProvider } from './modelProvider';
+// Export model provider and streaming functions
+export {
+  backendModelProvider,
+  createChatCompletion,
+  createStreamingChatCompletion,
+  type ChatMessage,
+  type ToolDefinition,
+  type ToolCall,
+  type LLMRequest,
+  type LLMResponse,
+  type StreamCallbacks,
+} from './modelProvider';
 
 // Export all tools
 export {
