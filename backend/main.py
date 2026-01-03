@@ -501,11 +501,26 @@ class ChatRole(str, Enum):
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
+class ToolCallFunction(BaseModel):
+    name: str
+    arguments: str
+
+
+class ToolCall(BaseModel):
+    id: str
+    type: str = "function"
+    function: ToolCallFunction
 
 
 class ChatMessage(BaseModel):
     role: ChatRole
-    content: str
+    content: Optional[str] = None
+    tool_calls: Optional[List[ToolCall]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None  # For tool messages
 
 
 class ChatProvider(str, Enum):
@@ -513,11 +528,18 @@ class ChatProvider(str, Enum):
     AZURE_OPENAI = "azure"
 
 
+class ToolDefinition(BaseModel):
+    type: str = "function"
+    function: dict
+
+
 class ChatRequest(BaseModel):
     model: str = os.getenv("LLM_MODEL", "gpt-5.1")
     provider: Optional[ChatProvider] = None
-    messages: List[ChatMessage] = PydanticField(..., min_items=1)
+    messages: List[ChatMessage] = PydanticField(..., min_length=1)
     response_format: Optional[dict] = None
+    tools: Optional[List[ToolDefinition]] = None
+    tool_choice: Optional[str] = None
 
 
 app = FastAPI(title="Manity Portfolio API")
@@ -1237,16 +1259,44 @@ def _resolve_provider(provider_override: ChatProvider | None) -> ChatProvider:
         ) from exc
 
 
-def _build_llm_request(payload: ChatRequest) -> tuple[str, dict, dict]:
+def _serialize_message(message: ChatMessage) -> dict:
+    """Serialize a ChatMessage to OpenAI API format, excluding None values."""
+    result = {"role": message.role.value}
+
+    if message.content is not None:
+        result["content"] = message.content
+
+    if message.tool_calls:
+        result["tool_calls"] = [tc.model_dump() for tc in message.tool_calls]
+
+    if message.tool_call_id:
+        result["tool_call_id"] = message.tool_call_id
+
+    if message.name:
+        result["name"] = message.name
+
+    return result
+
+
+def _build_llm_request(payload: ChatRequest, stream: bool = False) -> tuple[str, dict, dict]:
     provider = _resolve_provider(payload.provider)
 
     request_body = {
         "model": payload.model,
-        "messages": [message.model_dump() for message in payload.messages],
+        "messages": [_serialize_message(m) for m in payload.messages],
     }
+
+    if stream:
+        request_body["stream"] = True
 
     if payload.response_format is not None:
         request_body["response_format"] = payload.response_format
+
+    if payload.tools:
+        request_body["tools"] = [t.model_dump() for t in payload.tools]
+
+    if payload.tool_choice:
+        request_body["tool_choice"] = payload.tool_choice
 
     if provider is ChatProvider.OPENAI:
         api_key = os.getenv("OPENAI_API_KEY")
@@ -1324,6 +1374,106 @@ async def proxy_llm_chat(payload: ChatRequest, request: Request, session: Sessio
     log_action(session, "llm_chat", "llm", None, conversation_log, request)
 
     return {"content": content, "raw": data}
+
+
+@app.post("/api/llm/chat/stream")
+async def stream_llm_chat(payload: ChatRequest, request: Request, session: Session = Depends(get_session)):
+    """
+    Streaming LLM chat endpoint using Server-Sent Events (SSE).
+    Streams tokens as they arrive, including tool calls.
+    """
+    import json as json_module
+
+    url, headers, request_body = _build_llm_request(payload, stream=True)
+
+    async def generate_events():
+        accumulated_content = ""
+        accumulated_tool_calls = []
+        current_tool_call = None
+        finish_reason = None
+
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                async with client.stream("POST", url, headers=headers, json=request_body) as response:
+                    if response.status_code >= 400:
+                        error_text = ""
+                        async for chunk in response.aiter_text():
+                            error_text += chunk
+                        yield f"data: {json_module.dumps({'error': error_text, 'status': response.status_code})}\n\n"
+                        return
+
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+
+                            if data_str.strip() == "[DONE]":
+                                # Send final message with complete data
+                                final_event = {
+                                    "type": "done",
+                                    "content": accumulated_content,
+                                    "tool_calls": accumulated_tool_calls if accumulated_tool_calls else None,
+                                    "finish_reason": finish_reason,
+                                }
+                                yield f"data: {json_module.dumps(final_event)}\n\n"
+                                break
+
+                            try:
+                                chunk_data = json_module.loads(data_str)
+                                choice = chunk_data.get("choices", [{}])[0]
+                                delta = choice.get("delta", {})
+                                finish_reason = choice.get("finish_reason") or finish_reason
+
+                                # Handle content streaming
+                                if "content" in delta and delta["content"]:
+                                    content_chunk = delta["content"]
+                                    accumulated_content += content_chunk
+                                    yield f"data: {json_module.dumps({'type': 'content', 'content': content_chunk})}\n\n"
+
+                                # Handle tool call streaming
+                                if "tool_calls" in delta:
+                                    for tc_delta in delta["tool_calls"]:
+                                        tc_index = tc_delta.get("index", 0)
+
+                                        # Ensure we have enough tool calls
+                                        while len(accumulated_tool_calls) <= tc_index:
+                                            accumulated_tool_calls.append({
+                                                "id": "",
+                                                "type": "function",
+                                                "function": {"name": "", "arguments": ""}
+                                            })
+
+                                        current_tc = accumulated_tool_calls[tc_index]
+
+                                        if "id" in tc_delta:
+                                            current_tc["id"] = tc_delta["id"]
+
+                                        if "function" in tc_delta:
+                                            func_delta = tc_delta["function"]
+                                            if "name" in func_delta:
+                                                current_tc["function"]["name"] = func_delta["name"]
+                                                # Emit tool call start event
+                                                yield f"data: {json_module.dumps({'type': 'tool_call_start', 'index': tc_index, 'id': current_tc['id'], 'name': func_delta['name']})}\n\n"
+                                            if "arguments" in func_delta:
+                                                current_tc["function"]["arguments"] += func_delta["arguments"]
+
+                            except json_module.JSONDecodeError:
+                                continue
+
+        except httpx.HTTPError as exc:
+            yield f"data: {json_module.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 # PowerPoint Export Models and Endpoint
