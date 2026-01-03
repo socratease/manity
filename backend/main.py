@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import os
@@ -2520,6 +2521,12 @@ async def stream_llm_chat(payload: ChatRequest, request: Request, session: Sessi
                                 continue
 
         except httpx.HTTPError as exc:
+            yield f"data: {json_module.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+        except asyncio.CancelledError:
+            # Client disconnected - gracefully end the stream
+            yield f"data: {json_module.dumps({'type': 'error', 'error': 'Request cancelled'})}\n\n"
+        except Exception as exc:
+            # Catch all other exceptions to prevent TaskGroup errors
             yield f"data: {json_module.dumps({'type': 'error', 'error': str(exc)})}\n\n"
 
     return StreamingResponse(
