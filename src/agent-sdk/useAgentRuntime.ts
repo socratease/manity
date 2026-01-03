@@ -1,25 +1,30 @@
 /**
- * useAgentRuntime Hook - OpenAI Agents SDK
+ * useAgentRuntime Hook - Streaming Agent Execution
  *
- * React hook that provides a simple interface for running the agent.
- * Uses the SDK's context injection pattern for tools.
+ * React hook that provides a streaming interface for running the agent.
  * Features:
- * - Context passed via SDK's RunContext (no global singleton)
+ * - Real-time streaming of LLM responses
+ * - Proper OpenAI message format for tool calls
  * - Sequential tool execution (fixes task/subtask race condition)
- * - Thinking process capture and exposure
+ * - Thinking process capture from actual LLM reasoning
  * - Human-in-the-loop support via ask_user tool
  */
 
-import { Agent, RunContext, setDefaultModelProvider } from '@openai/agents';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { createProjectManagementAgent, defaultAgentConfig, type AgentConfig } from './agent';
-import { EMPTY_RESPONSE_ERROR, getAssistantMessage } from './responseUtils';
 import {
   createToolExecutionContext,
   cloneProjectDeep,
   ToolExecutionContext,
 } from './context';
-import { backendModelProvider } from './modelProvider';
+import {
+  createStreamingChatCompletion,
+  createChatCompletion,
+  type ChatMessage,
+  type ToolDefinition,
+  type ToolCall,
+  type LLMResponse,
+} from './modelProvider';
 import { UndoManager, rollbackDeltas } from '../agent/UndoManager';
 import { allTools, isAskUserResponse, parseAskUserResponse } from './tools';
 import type { Project, Person, Delta, ActionResult } from '../agent/types';
@@ -32,8 +37,7 @@ import type {
   AgentExecutionResultWithThinking,
 } from './types';
 
-// Set the model provider to use our backend proxy
-setDefaultModelProvider(backendModelProvider);
+const LLM_MODEL = import.meta.env.VITE_LLM_MODEL || 'gpt-4.1';
 
 /**
  * Props for the useAgentRuntime hook
@@ -54,7 +58,9 @@ export interface UseAgentRuntimeProps {
   /** Agent configuration */
   config?: AgentConfig;
   /** Optional starting conversation history */
-  initialConversationHistory?: Array<{ role: string; content: string }>;
+  initialConversationHistory?: ChatMessage[];
+  /** Enable streaming mode (default: true) */
+  enableStreaming?: boolean;
 }
 
 /**
@@ -103,8 +109,21 @@ function createThinkingStep(
 }
 
 /**
- * Hook for running the OpenAI Agents SDK-based agent
- * with SDK context injection and sequential tool execution
+ * Convert our tools to OpenAI format
+ */
+function getToolDefinitions(): ToolDefinition[] {
+  return allTools.map((t) => ({
+    type: 'function' as const,
+    function: {
+      name: t.name,
+      description: t.description,
+      parameters: t.parameters,
+    },
+  }));
+}
+
+/**
+ * Hook for running the agent with real-time streaming
  */
 export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeReturn {
   const {
@@ -115,6 +134,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     sendEmail,
     config = defaultAgentConfig,
     initialConversationHistory = [],
+    enableStreaming = true,
   } = props;
 
   // Create undo manager
@@ -125,7 +145,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
   const [pendingQuestion, setPendingQuestion] = useState<UserQuestion | null>(null);
 
   // Keep track of the full conversation history across runs
-  const conversationHistoryRef = useRef<Array<{ role: string; content: string }>>([]);
+  const conversationHistoryRef = useRef<ChatMessage[]>([]);
   const hasSeededHistoryRef = useRef(false);
 
   // Seed conversation history from provided initial messages
@@ -139,11 +159,11 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
 
   // Refs for resumable execution
   const pausedExecutionRef = useRef<{
-    agent: Agent<ToolExecutionContext>;
-    conversationHistory: Array<{ role: string; content: string }>;
-    runContext: RunContext<ToolExecutionContext>;
+    toolContext: ToolExecutionContext;
+    conversationHistory: ChatMessage[];
     thinkingSteps: ThinkingStep[];
     callbacks?: ExecutionCallbacks;
+    systemPrompt: string;
   } | null>(null);
 
   // Build services for tools
@@ -186,19 +206,18 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
 
   /**
    * Execute tools sequentially from a list of tool calls.
-   * Tools receive the RunContext for dependency injection.
    */
   const executeToolsSequentially = useCallback(async (
-    toolCalls: Array<{ id: string; name: string; arguments: Record<string, unknown> }>,
-    runContext: RunContext<ToolExecutionContext>,
+    toolCalls: ToolCall[],
+    toolContext: ToolExecutionContext,
     thinkingSteps: ThinkingStep[],
     callbacks?: ExecutionCallbacks
-  ): Promise<{ results: string[]; paused: boolean; pausedQuestion?: UserQuestion }> => {
-    const results: string[] = [];
+  ): Promise<{ results: Array<{ tool_call_id: string; content: string }>; paused: boolean; pausedQuestion?: UserQuestion }> => {
+    const results: Array<{ tool_call_id: string; content: string }> = [];
 
     for (const toolCall of toolCalls) {
-      const toolName = toolCall.name;
-      const toolInput = toolCall.arguments;
+      const toolName = toolCall.function.name;
+      const toolInput = JSON.parse(toolCall.function.arguments || '{}');
 
       console.debug('[Momentum] Starting tool', toolName, toolInput);
 
@@ -216,7 +235,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       const tool = allTools.find(t => t.name === toolName);
       if (!tool) {
         const errorResult = `Error: Tool ${toolName} not found`;
-        results.push(errorResult);
+        results.push({ tool_call_id: toolCall.id, content: errorResult });
         toolStep.status = 'failed';
         toolStep.toolResult = errorResult;
         callbacks?.onThinkingStep?.(toolStep);
@@ -224,9 +243,10 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       }
 
       try {
-        // Execute the tool with RunContext (SDK's dependency injection)
-        // The tool's execute function signature: (input, runContext?, details?)
-        const rawResult = await tool.execute(toolInput, runContext);
+        // Execute the tool - tools expect (input, runContext?)
+        // We pass a mock RunContext that has our toolContext
+        const mockRunContext = { context: toolContext };
+        const rawResult = await tool.execute(toolInput, mockRunContext as any);
         const result = String(rawResult);
 
         console.debug('[Momentum] Tool result', { toolName, result });
@@ -252,7 +272,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
           }
         }
 
-        results.push(result);
+        results.push({ tool_call_id: toolCall.id, content: result });
         toolStep.status = 'completed';
         toolStep.toolResult = result;
         callbacks?.onThinkingStep?.(toolStep);
@@ -269,7 +289,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         const errorResult = `Error executing ${toolName}: ${errorMessage}`;
-        results.push(errorResult);
+        results.push({ tool_call_id: toolCall.id, content: errorResult });
         toolStep.status = 'failed';
         toolStep.toolResult = errorResult;
         callbacks?.onThinkingStep?.(toolStep);
@@ -280,29 +300,32 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
   }, []);
 
   /**
-   * Run the agent loop with sequential tool execution.
-   * Uses SDK's RunContext for tool dependency injection.
+   * Run the agent loop with streaming.
    */
   const runAgentLoop = useCallback(async (
-    agent: Agent<ToolExecutionContext>,
-    initialMessage: string,
-    runContext: RunContext<ToolExecutionContext>,
+    systemPrompt: string,
+    userMessage: string,
+    toolContext: ToolExecutionContext,
     callbacks?: ExecutionCallbacks,
-    existingHistory?: Array<{ role: string; content: string }>,
+    existingHistory?: ChatMessage[],
     existingThinkingSteps?: ThinkingStep[]
   ): Promise<{
     response: string;
     thinkingSteps: ThinkingStep[];
     paused: boolean;
     pausedQuestion?: UserQuestion;
-    conversationHistory: Array<{ role: string; content: string }>;
+    conversationHistory: ChatMessage[];
   }> => {
     const thinkingSteps: ThinkingStep[] = existingThinkingSteps || [];
-    const seededHistory = existingHistory || [];
-    const conversationHistory: Array<{ role: string; content: string }> = [
-      ...seededHistory,
-      ...(initialMessage ? [{ role: 'user', content: initialMessage }] : []),
-    ];
+    const conversationHistory: ChatMessage[] = existingHistory ? [...existingHistory] : [];
+
+    // Add user message if provided
+    if (userMessage) {
+      conversationHistory.push({
+        role: 'user',
+        content: userMessage,
+      });
+    }
 
     let turns = 0;
     const maxTurns = config.maxToolCalls || 10;
@@ -310,65 +333,89 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     while (turns < maxTurns) {
       turns++;
 
-      // Add planning thinking step
-      const planningStep = createThinkingStep('planning', 'Analyzing request and deciding on actions...', {
+      // Build messages array with system prompt
+      const messages: ChatMessage[] = [
+        { role: 'system', content: systemPrompt },
+        ...conversationHistory,
+      ];
+
+      // Add reasoning step to show we're thinking
+      const reasoningStep = createThinkingStep('reasoning', '', {
         status: 'in_progress',
       });
-      thinkingSteps.push(planningStep);
-      callbacks?.onThinkingStep?.(planningStep);
+      thinkingSteps.push(reasoningStep);
+      callbacks?.onThinkingStep?.(reasoningStep);
 
-      // Call the LLM through our model provider
-      const response = await backendModelProvider.createChatCompletion({
-        model: agent.model,
-        messages: [
-          { role: 'system', content: agent.instructions },
-          ...conversationHistory,
-        ],
-        tools: allTools.map(t => ({
-          type: 'function' as const,
-          function: {
-            name: t.name,
-            description: t.description,
-            parameters: t.parameters,
+      let response: LLMResponse;
+      let streamedContent = '';
+
+      if (enableStreaming) {
+        // Streaming mode - show content as it arrives
+        response = await createStreamingChatCompletion(
+          {
+            model: LLM_MODEL,
+            messages,
+            tools: getToolDefinitions(),
+            tool_choice: 'auto',
           },
-        })),
-        tool_choice: 'auto',
-      });
-
-      console.debug('[Momentum] Agent completion response', {
-        choicesCount: response?.choices?.length,
-        contentPreview: response?.choices?.[0]?.message?.content || response?.content,
-        toolCallCount: response?.choices?.[0]?.message?.tool_calls?.length || response?.toolCalls?.length,
-      });
-
-      // Extract content and tool calls from response
-      const assistantMessage = getAssistantMessage(response);
-      if (!assistantMessage) {
-        planningStep.status = 'failed';
-        planningStep.content = EMPTY_RESPONSE_ERROR;
-        callbacks?.onThinkingStep?.(planningStep);
-        throw new Error(EMPTY_RESPONSE_ERROR);
-      }
-      const content = assistantMessage?.content || '';
-      const toolCalls = assistantMessage?.tool_calls || [];
-
-      // Update planning step
-      planningStep.status = 'completed';
-      planningStep.content = content || 'Processing...';
-      callbacks?.onThinkingStep?.(planningStep);
-
-      // Add reasoning step if there's content
-      if (content) {
-        const reasoningStep = createThinkingStep('reasoning', content, {
-          status: 'completed',
+          {
+            onContent: (chunk) => {
+              streamedContent += chunk;
+              // Update reasoning step with streamed content
+              reasoningStep.content = streamedContent;
+              callbacks?.onThinkingStep?.(reasoningStep);
+            },
+            onToolCallStart: (index, id, name) => {
+              // Could emit tool start events here
+              console.debug('[Momentum] Tool call starting:', { index, id, name });
+            },
+            onDone: (finalResponse) => {
+              reasoningStep.content = finalResponse.content || streamedContent;
+              reasoningStep.status = 'completed';
+              callbacks?.onThinkingStep?.(reasoningStep);
+            },
+            onError: (error) => {
+              reasoningStep.status = 'failed';
+              reasoningStep.content = error.message;
+              callbacks?.onThinkingStep?.(reasoningStep);
+            },
+          }
+        );
+      } else {
+        // Non-streaming mode
+        response = await createChatCompletion({
+          model: LLM_MODEL,
+          messages,
+          tools: getToolDefinitions(),
+          tool_choice: 'auto',
         });
-        thinkingSteps.push(reasoningStep);
+
+        // Update reasoning step with content
+        reasoningStep.content = response.content || 'Processing...';
+        reasoningStep.status = 'completed';
         callbacks?.onThinkingStep?.(reasoningStep);
+
+        // If we got thinking content from extended thinking, add it
+        if (response.thinking) {
+          const thinkingStep = createThinkingStep('reasoning', response.thinking, {
+            status: 'completed',
+          });
+          thinkingSteps.push(thinkingStep);
+          callbacks?.onThinkingStep?.(thinkingStep);
+        }
       }
+
+      const content = response.content || '';
+      const toolCalls = response.tool_calls || [];
 
       // If no tool calls, we're done
       if (!toolCalls || toolCalls.length === 0) {
-        conversationHistory.push({ role: 'assistant', content });
+        // Add assistant message to history
+        conversationHistory.push({
+          role: 'assistant',
+          content,
+        });
+
         return {
           response: content,
           thinkingSteps,
@@ -377,29 +424,32 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         };
       }
 
-      // Parse tool calls
-      const parsedToolCalls = toolCalls.map(tc => ({
-        id: tc.id,
-        name: tc.function.name,
-        arguments: JSON.parse(tc.function.arguments || '{}'),
-      }));
+      // Add assistant message with tool calls to history (proper OpenAI format)
+      conversationHistory.push({
+        role: 'assistant',
+        content: content || undefined,
+        tool_calls: toolCalls,
+      });
 
-      // Execute tools sequentially with RunContext
+      // Execute tools sequentially
       const { results, paused, pausedQuestion } = await executeToolsSequentially(
-        parsedToolCalls,
-        runContext,
+        toolCalls,
+        toolContext,
         thinkingSteps,
         callbacks
       );
 
+      // Add tool results to conversation history (proper OpenAI format)
+      for (const result of results) {
+        conversationHistory.push({
+          role: 'tool',
+          tool_call_id: result.tool_call_id,
+          content: result.content,
+        });
+      }
+
       // If execution was paused for user input
       if (paused) {
-        // Save the partial assistant message and tool calls to history
-        conversationHistory.push({
-          role: 'assistant',
-          content: JSON.stringify({ content, toolCalls: parsedToolCalls }),
-        });
-
         return {
           response: content,
           thinkingSteps,
@@ -407,24 +457,6 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
           pausedQuestion,
           conversationHistory,
         };
-      }
-
-      // Add assistant message and tool results to history
-      conversationHistory.push({
-        role: 'assistant',
-        content: JSON.stringify({ content, toolCalls: parsedToolCalls }),
-      });
-
-      // Add tool results
-      for (let i = 0; i < parsedToolCalls.length; i++) {
-        conversationHistory.push({
-          role: 'tool',
-          content: JSON.stringify({
-            tool_call_id: parsedToolCalls[i].id,
-            name: parsedToolCalls[i].name,
-            result: results[i],
-          }),
-        });
       }
     }
 
@@ -435,7 +467,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       paused: false,
       conversationHistory,
     };
-  }, [config.maxToolCalls, executeToolsSequentially]);
+  }, [config.maxToolCalls, executeToolsSequentially, enableStreaming]);
 
   /**
    * Build action results from deltas
@@ -505,18 +537,16 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       services
     );
 
-    // Create SDK RunContext wrapping our ToolExecutionContext
-    const runContext = new RunContext<ToolExecutionContext>(toolContext);
-
     try {
-      // Create agent with current context
+      // Create agent to get system prompt
       const agent = createProjectManagementAgent(agentContext);
+      const systemPrompt = agent.instructions;
 
-      // Run the agent loop with sequential execution
+      // Run the agent loop with streaming
       const result = await runAgentLoop(
-        agent as Agent<ToolExecutionContext>,
+        systemPrompt,
         message,
-        runContext,
+        toolContext,
         callbacks,
         conversationHistoryRef.current
       );
@@ -525,11 +555,11 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       if (result.paused && result.pausedQuestion) {
         // Save state for resumption
         pausedExecutionRef.current = {
-          agent: agent as Agent<ToolExecutionContext>,
+          toolContext,
           conversationHistory: result.conversationHistory,
-          runContext,
           thinkingSteps: result.thinkingSteps,
           callbacks,
+          systemPrompt,
         };
 
         conversationHistoryRef.current = result.conversationHistory;
@@ -579,8 +609,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       throw new Error('No paused execution to continue');
     }
 
-    const { agent, conversationHistory, runContext, thinkingSteps, callbacks } = pausedExecutionRef.current;
-    const toolContext = runContext.context;
+    const { toolContext, conversationHistory, thinkingSteps, callbacks, systemPrompt } = pausedExecutionRef.current;
 
     // Clear paused state
     setIsAwaitingUser(false);
@@ -595,21 +624,28 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       thinkingSteps.push(userResponseStep);
       callbacks?.onThinkingStep?.(userResponseStep);
 
-      // Add user response to conversation history
-      conversationHistory.push({
-        role: 'tool',
-        content: JSON.stringify({
-          tool_call_id: 'ask_user_response',
-          name: 'ask_user',
-          result: userResponse,
-        }),
-      });
+      // Add user response as tool result to conversation history
+      // Find the last ask_user tool call
+      const lastAssistantMsg = [...conversationHistory].reverse().find(
+        m => m.role === 'assistant' && m.tool_calls
+      );
+      const askUserToolCall = lastAssistantMsg?.tool_calls?.find(
+        tc => tc.function.name === 'ask_user'
+      );
+
+      if (askUserToolCall) {
+        conversationHistory.push({
+          role: 'tool',
+          tool_call_id: askUserToolCall.id,
+          content: userResponse,
+        });
+      }
 
       // Continue the agent loop
       const result = await runAgentLoop(
-        agent,
+        systemPrompt,
         '', // Empty message since we're continuing
-        runContext,
+        toolContext,
         callbacks,
         conversationHistory,
         thinkingSteps
@@ -618,11 +654,11 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       // If paused again for user input
       if (result.paused && result.pausedQuestion) {
         pausedExecutionRef.current = {
-          agent,
+          toolContext,
           conversationHistory: result.conversationHistory,
-          runContext,
           thinkingSteps: result.thinkingSteps,
           callbacks,
+          systemPrompt,
         };
 
         conversationHistoryRef.current = result.conversationHistory;
