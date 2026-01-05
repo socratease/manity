@@ -1,7 +1,10 @@
+import asyncio
 import io
 import logging
 import os
+import re
 import uuid
+import argparse
 from datetime import datetime
 from enum import Enum
 from email.message import EmailMessage
@@ -12,15 +15,21 @@ from typing import List, Optional, Sequence
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response, JSONResponse
-from pydantic import BaseModel, Field as PydanticField
+from pydantic import BaseModel, Field as PydanticField, field_validator
 import httpx
-from sqlalchemy import Column, String, delete, event, func
+from sqlalchemy import Column, ForeignKey, String, delete, event, func
 from sqlalchemy.dialects.sqlite import JSON
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.orm import selectinload
 from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, select
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
+
+DEV_DEMO_SEED_ENV = "MANITY_ENABLE_DEMO_SEED"
+ENVIRONMENT_ENV = "MANITY_ENV"
+ADMIN_TOKEN_ENV = "MANITY_ADMIN_TOKEN"
+PROTECTED_ENVIRONMENTS = {"prod", "production", "test", "testing"}
 
 # Configure database path with persistent storage
 # Default to persistent directory outside of application folder
@@ -95,37 +104,315 @@ def create_engine_from_env(database_url: str | None = None):
 
 
 engine = create_engine_from_env()
+_PRAGMA_CACHE: dict[str, set[str]] = {}
+
+
+def table_has_column(table_name: str, column_name: str) -> bool:
+    cache_key = f"{table_name}:{column_name}"
+    if cache_key in _PRAGMA_CACHE:
+        return True
+
+    with engine.connect() as connection:
+        result = connection.exec_driver_sql(f"PRAGMA table_info({table_name})").all()
+        for _, name, *_ in result:
+            if name == column_name:
+                _PRAGMA_CACHE[cache_key] = {column_name}
+                return True
+    return False
+
+
+def ensure_column(table_name: str, column_definition: str) -> None:
+    """
+    Add a column to an existing table if it does not exist.
+
+    SQLite does not support many ALTER operations, but adding nullable columns is safe.
+    """
+    column_name = column_definition.split()[0].strip('"')
+    if table_has_column(table_name, column_name):
+        return
+
+    with engine.begin() as connection:
+        connection.exec_driver_sql(f'ALTER TABLE "{table_name}" ADD COLUMN {column_definition}')
+    _PRAGMA_CACHE[f"{table_name}:{column_name}"] = {column_name}
+
+
+def column_has_unique_constraint(table_name: str, column_name: str) -> bool:
+    """Check if a column has a UNIQUE constraint."""
+    with engine.connect() as connection:
+        # Get the CREATE TABLE statement
+        result = connection.exec_driver_sql(
+            f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{table_name}'"
+        ).fetchone()
+
+        if not result:
+            return False
+
+        create_sql = result[0]
+        if not create_sql:
+            return False
+
+        # Check for UNIQUE constraint on the column
+        # Patterns: "column_name" UNIQUE, column_name UNIQUE, UNIQUE(column_name), etc.
+        import re
+        patterns = [
+            rf'["`]?{column_name}["`]?\s+[^,]*?\bUNIQUE\b',  # column definition with UNIQUE
+            rf'\bUNIQUE\s*\(\s*["`]?{column_name}["`]?\s*\)',  # UNIQUE(column)
+        ]
+
+        for pattern in patterns:
+            if re.search(pattern, create_sql, re.IGNORECASE):
+                return True
+
+        return False
+
+
+def migrate_add_unique_constraints(session: Session) -> None:
+    """
+    Add UNIQUE constraints to project.name and person.name.
+
+    This migration:
+    1. Checks if constraints already exist
+    2. Handles duplicate names by appending numeric suffixes
+    3. Recreates tables with UNIQUE constraints
+    4. Preserves all relationships and foreign keys
+    """
+    migration_key = "add-unique-constraints-v1"
+    if session.get(MigrationState, migration_key):
+        logger.info("Migration %s already applied, skipping", migration_key)
+        return
+
+    logger.info("Running migration: %s", migration_key)
+
+    # Check if constraints already exist
+    project_has_unique = column_has_unique_constraint("project", "name")
+    person_has_unique = column_has_unique_constraint("person", "name")
+
+    if project_has_unique and person_has_unique:
+        logger.info("UNIQUE constraints already exist, marking migration as complete")
+        session.add(MigrationState(key=migration_key))
+        session.commit()
+        return
+
+    with engine.begin() as connection:
+        # Temporarily disable foreign key constraints during migration
+        connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
+
+        # Migration for project.name
+        if not project_has_unique:
+            logger.info("Adding UNIQUE constraint to project.name")
+
+            # First, resolve any duplicate project names
+            result = connection.exec_driver_sql("""
+                SELECT name, COUNT(*) as count
+                FROM project
+                GROUP BY LOWER(name)
+                HAVING count > 1
+            """).fetchall()
+
+            if result:
+                logger.warning("Found %d duplicate project names, resolving...", len(result))
+                for name, count in result:
+                    # Get all projects with this name (case-insensitive)
+                    duplicates = connection.exec_driver_sql(
+                        "SELECT id, name FROM project WHERE LOWER(name) = LOWER(?)",
+                        [name]
+                    ).fetchall()
+
+                    # Keep the first one unchanged, rename the rest
+                    for idx, (project_id, project_name) in enumerate(duplicates[1:], start=2):
+                        new_name = f"{project_name} ({idx})"
+                        logger.info("Renaming duplicate project '%s' -> '%s'", project_name, new_name)
+                        connection.exec_driver_sql(
+                            "UPDATE project SET name = ? WHERE id = ?",
+                            [new_name, project_id]
+                        )
+
+            # Create new table with UNIQUE constraint
+            connection.exec_driver_sql("""
+                CREATE TABLE project_new (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    priority TEXT NOT NULL,
+                    progress INTEGER NOT NULL,
+                    lastUpdate TEXT,
+                    description TEXT NOT NULL,
+                    executiveUpdate TEXT,
+                    startDate TEXT,
+                    targetDate TEXT,
+                    stakeholders JSON
+                )
+            """)
+
+            # Copy data
+            connection.exec_driver_sql("""
+                INSERT INTO project_new
+                SELECT id, name, status, priority, progress, lastUpdate,
+                       description, executiveUpdate, startDate, targetDate, stakeholders
+                FROM project
+            """)
+
+            # Drop old table and rename new one
+            connection.exec_driver_sql("DROP TABLE project")
+            connection.exec_driver_sql("ALTER TABLE project_new RENAME TO project")
+
+            # Recreate indexes
+            connection.exec_driver_sql("CREATE INDEX ix_project_name ON project (name)")
+
+            logger.info("Successfully added UNIQUE constraint to project.name")
+
+        # Migration for person.name
+        if not person_has_unique:
+            logger.info("Adding UNIQUE constraint to person.name")
+
+            # First, resolve any duplicate person names
+            result = connection.exec_driver_sql("""
+                SELECT name, COUNT(*) as count
+                FROM person
+                GROUP BY LOWER(name)
+                HAVING count > 1
+            """).fetchall()
+
+            if result:
+                logger.warning("Found %d duplicate person names, resolving...", len(result))
+                for name, count in result:
+                    # Get all people with this name (case-insensitive)
+                    duplicates = connection.exec_driver_sql(
+                        "SELECT id, name, team, email FROM person WHERE LOWER(name) = LOWER(?)",
+                        [name]
+                    ).fetchall()
+
+                    # Merge logic: keep first one, update foreign keys from others
+                    primary_id = duplicates[0][0]
+                    duplicate_ids = [dup[0] for dup in duplicates[1:]]
+
+                    logger.info("Merging %d duplicate entries for person '%s'", len(duplicate_ids), name)
+
+                    # Update foreign keys to point to primary person
+                    for dup_id in duplicate_ids:
+                        connection.exec_driver_sql(
+                            "UPDATE task SET assignee_id = ? WHERE assignee_id = ?",
+                            [primary_id, dup_id]
+                        )
+                        connection.exec_driver_sql(
+                            "UPDATE subtask SET assignee_id = ? WHERE assignee_id = ?",
+                            [primary_id, dup_id]
+                        )
+                        connection.exec_driver_sql(
+                            "UPDATE activity SET author_id = ? WHERE author_id = ?",
+                            [primary_id, dup_id]
+                        )
+                        connection.exec_driver_sql(
+                            "UPDATE projectpersonlink SET person_id = ? WHERE person_id = ?",
+                            [primary_id, dup_id]
+                        )
+
+                        # Delete duplicate
+                        connection.exec_driver_sql("DELETE FROM person WHERE id = ?", [dup_id])
+
+            # Create new table with UNIQUE constraint
+            connection.exec_driver_sql("""
+                CREATE TABLE person_new (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    team TEXT NOT NULL,
+                    email TEXT
+                )
+            """)
+
+            # Copy data
+            connection.exec_driver_sql("""
+                INSERT INTO person_new
+                SELECT id, name, team, email
+                FROM person
+            """)
+
+            # Drop old table and rename new one
+            connection.exec_driver_sql("DROP TABLE person")
+            connection.exec_driver_sql("ALTER TABLE person_new RENAME TO person")
+
+            # Recreate indexes
+            connection.exec_driver_sql("CREATE INDEX ix_person_name ON person (name)")
+
+            logger.info("Successfully added UNIQUE constraint to person.name")
+
+        # Re-enable foreign key constraints
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+
+    # Mark migration as complete
+    session.add(MigrationState(key=migration_key))
+    session.commit()
+
+    logger.info("Migration %s completed successfully", migration_key)
 
 
 def generate_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
 
+def _normalize_env_value(value: str | None) -> str:
+    return (value or "").strip().lower()
+
+
+def current_environment() -> str:
+    return _normalize_env_value(os.getenv(ENVIRONMENT_ENV, os.getenv("ENVIRONMENT")))
+
+
+def is_dev_seeding_enabled() -> bool:
+    environment = current_environment()
+    if environment in PROTECTED_ENVIRONMENTS:
+        logger.info("Skipping demo seeding because environment is set to %s", environment)
+        return False
+
+    flag_value = _normalize_env_value(os.getenv(DEV_DEMO_SEED_ENV))
+    enabled = flag_value in {"1", "true", "yes", "on"}
+    if not enabled:
+        logger.info(
+            "Demo project seeding disabled; set %s=1 to seed defaults in local development",
+            DEV_DEMO_SEED_ENV,
+        )
+    return enabled
+
+
 class Stakeholder(BaseModel):
     id: str | None = None
     name: str
-    team: str
+    team: str = ""
+    email: str | None = None
+
+
+class PersonReference(SQLModel):
+    id: Optional[str] = None
+    name: Optional[str] = None
+    team: Optional[str] = None
+    email: Optional[str] = None
 
 
 def normalize_stakeholders(stakeholders: Optional[List[Stakeholder | dict]]) -> list[dict]:
     normalized: list[dict] = []
     for stakeholder in stakeholders or []:
         if isinstance(stakeholder, Stakeholder):
-            normalized.append(stakeholder.model_dump())
+            data = stakeholder.model_dump()
         elif isinstance(stakeholder, dict):
-            normalized.append(
-                {
-                    "id": stakeholder.get("id"),
-                    "name": stakeholder.get("name", ""),
-                    "team": stakeholder.get("team", ""),
-                }
-            )
+            data = {
+                "id": stakeholder.get("id"),
+                "name": stakeholder.get("name", ""),
+                "team": stakeholder.get("team", ""),
+                "email": stakeholder.get("email"),
+            }
         else:  # pragma: no cover - defensive
             raise TypeError("Unsupported stakeholder type")
+
+        data["name"] = (data.get("name") or "").strip()
+        data["team"] = data.get("team") or ""
+        data["email"] = (data.get("email") or None)
+        normalized.append(data)
     return normalized
 
 
-def serialize_person(person: "Person") -> dict:
+def serialize_person(person: Optional["Person"]) -> Optional[dict]:
+    if person is None:
+        return None
     return {
         "id": person.id,
         "name": person.name,
@@ -146,13 +433,91 @@ def get_person_by_name(session: Session, name: str) -> "Person | None":
     return session.exec(statement).first()
 
 
+def get_person_by_email(session: Session, email: str | None) -> "Person | None":
+    if not email:
+        return None
+
+    normalized_email = email.strip().lower()
+    if not normalized_email:
+        return None
+
+    statement = select(Person).where(func.lower(Person.email) == normalized_email)
+    return session.exec(statement).first()
+
+
+class PersonIndex:
+    def __init__(self, people: Sequence["Person"]):
+        self.by_id: dict[str, Person] = {}
+        self.by_name: dict[str, Person] = {}
+        self.by_email: dict[str, Person] = {}
+
+        for person in people:
+            if person.id:
+                self.by_id[person.id] = person
+            if person.name:
+                self.by_name[person.name.lower()] = person
+            if person.email:
+                self.by_email[person.email.lower()] = person
+
+    def resolve(self, *, name: str | None = None, email: str | None = None, person_id: str | None = None) -> "Person | None":
+        if person_id and person_id in self.by_id:
+            return self.by_id[person_id]
+
+        if email and (email.lower() in self.by_email):
+            return self.by_email[email.lower()]
+
+        if name and (name.lower() in self.by_name):
+            return self.by_name[name.lower()]
+
+        return None
+
+
+def build_person_index(session: Session) -> PersonIndex:
+    return PersonIndex(session.exec(select(Person)).all())
+
+
+def _normalize_person_identity(name: str, email: str | None = None) -> tuple[str, str | None]:
+    normalized_name = name.strip()
+    normalized_email = email.strip().lower() if email else None
+    return normalized_name, normalized_email
+
+
+def _resolve_existing_person(
+    session: Session,
+    *,
+    normalized_name: str,
+    normalized_email: str | None = None,
+    person_id: str | None = None,
+) -> "Person | None":
+    if person_id:
+        person = session.get(Person, person_id)
+        if person:
+            return person
+
+    person = get_person_by_email(session, normalized_email)
+    if person:
+        return person
+
+    return get_person_by_name(session, normalized_name)
+
+
 def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "Person":
-    normalized_name = payload.name.strip()
-    existing = get_person_by_name(session, normalized_name)
+    normalized_name, normalized_email = _normalize_person_identity(payload.name, payload.email)
+
+    existing = _resolve_existing_person(
+        session,
+        normalized_name=normalized_name,
+        normalized_email=normalized_email,
+        person_id=payload.id,
+    )
 
     if existing:
         existing.team = payload.team or existing.team
-        existing.email = payload.email
+        existing.email = normalized_email or existing.email
+        if normalized_name and existing.name.lower() != normalized_name.lower():
+            conflict = get_person_by_name(session, normalized_name)
+            if conflict is None or conflict.id == existing.id:
+                existing.name = normalized_name
         session.add(existing)
         session.commit()
         session.refresh(existing)
@@ -162,7 +527,7 @@ def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "P
         id=payload.id or generate_id("person"),
         name=normalized_name,
         team=payload.team,
-        email=payload.email,
+        email=normalized_email,
     )
     session.add(person)
     session.commit()
@@ -170,17 +535,154 @@ def upsert_person_from_payload(session: Session, payload: "PersonPayload") -> "P
     return person
 
 
+def upsert_person_from_details(
+    session: Session,
+    name: str,
+    team: str | None = None,
+    email: str | None = None,
+    person_id: str | None = None,
+) -> "Person":
+    normalized_name, normalized_email = _normalize_person_identity(name, email)
+    normalized_team = team.strip() if team else ""
+
+    existing = _resolve_existing_person(
+        session,
+        normalized_name=normalized_name,
+        normalized_email=normalized_email,
+        person_id=person_id,
+    )
+
+    if existing:
+        if normalized_team:
+            existing.team = normalized_team
+        if email is not None:
+            existing.email = normalized_email
+        if normalized_name and existing.name.lower() != normalized_name.lower():
+            conflict = get_person_by_name(session, normalized_name)
+            if conflict is None or conflict.id == existing.id:
+                existing.name = normalized_name
+        session.add(existing)
+        session.commit()
+        session.refresh(existing)
+        return existing
+
+    person = Person(
+        id=person_id or generate_id("person"),
+        name=normalized_name,
+        team=normalized_team,
+        email=normalized_email,
+    )
+    session.add(person)
+    session.commit()
+    session.refresh(person)
+    return person
+
+
+def resolve_person_reference(session: Session, reference) -> "Person | None":
+    """
+    Accepts a variety of person representations (id dict, PersonPayload, Stakeholder, or name string)
+    and returns a persisted Person instance, creating or updating as needed.
+    """
+    if reference is None:
+        return None
+
+    if isinstance(reference, Person):
+        return reference
+
+    if isinstance(reference, str):
+        normalized = reference.strip()
+        if not normalized:
+            return None
+        payload = PersonPayload(name=normalized, team="Contributor")
+        return upsert_person_from_payload(session, payload)
+
+    person_id = None
+    name = None
+    team = None
+    email = None
+
+    if isinstance(reference, Stakeholder):
+        person_id = reference.id
+        name = reference.name
+        team = reference.team
+    elif isinstance(reference, AssigneePayload):
+        person_id = reference.id
+        name = reference.name
+        team = reference.team
+    elif isinstance(reference, PersonPayload):
+        person_id = reference.id
+        name = reference.name
+        team = reference.team
+        email = reference.email
+    elif isinstance(reference, PersonReference):
+        person_id = reference.id
+        name = reference.name
+        team = reference.team
+        email = reference.email
+    elif isinstance(reference, dict):
+        person_id = reference.get("id")
+        name = reference.get("name")
+        team = reference.get("team")
+        email = reference.get("email")
+    else:  # pragma: no cover - defensive
+        return None
+
+    normalized_name = (name or "").strip()
+    normalized_team = (team or "").strip() or "Contributor"
+
+    if person_id:
+        person = session.get(Person, person_id)
+        if person:
+            if normalized_name:
+                person.name = normalized_name
+            person.team = normalized_team or person.team
+            if email is not None:
+                person.email = email
+            session.add(person)
+            session.commit()
+            session.refresh(person)
+            return person
+
+        if not normalized_name:
+            return None
+
+        person = Person(
+            id=person_id,
+            name=normalized_name,
+            team=normalized_team,
+            email=email,
+        )
+        session.add(person)
+        session.commit()
+        session.refresh(person)
+        return person
+
+    if not normalized_name:
+        return None
+
+    payload = PersonPayload(name=normalized_name, team=normalized_team, email=email)
+    return upsert_person_from_payload(session, payload)
+
+
 class SubtaskBase(SQLModel):
     title: str
     status: str = "todo"
     dueDate: Optional[str] = None
     completedDate: Optional[str] = None
+    assignee_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column("assignee_id", String, ForeignKey("person.id", ondelete="SET NULL"), nullable=True),
+        description="Person responsible for this subtask",
+        alias="assigneeId",
+    )
 
 
 class Subtask(SubtaskBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     task_id: Optional[str] = Field(default=None, foreign_key="task.id")
+    assignee_id: Optional[str] = Field(default=None, foreign_key="person.id")
     task: "Task" = Relationship(back_populates="subtasks")
+    assignee: Optional["Person"] = Relationship(sa_relationship_kwargs={"lazy": "joined"})
 
 
 class TaskBase(SQLModel):
@@ -188,12 +690,20 @@ class TaskBase(SQLModel):
     status: str = "todo"
     dueDate: Optional[str] = None
     completedDate: Optional[str] = None
+    assignee_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column("assignee_id", String, ForeignKey("person.id", ondelete="SET NULL"), nullable=True),
+        description="Person responsible for this task",
+        alias="assigneeId",
+    )
 
 
 class Task(TaskBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     project_id: Optional[str] = Field(default=None, foreign_key="project.id")
+    assignee_id: Optional[str] = Field(default=None, foreign_key="person.id")
     project: "Project" = Relationship(back_populates="plan")
+    assignee: Optional["Person"] = Relationship(sa_relationship_kwargs={"lazy": "joined"})
     subtasks: list[Subtask] = Relationship(
         back_populates="task",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
@@ -203,17 +713,34 @@ class Task(TaskBase, table=True):
 class ActivityBase(SQLModel):
     date: str
     note: str
-    author: str
+    author: Optional[str] = None
+    author_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column("author_id", String, ForeignKey("person.id", ondelete="SET NULL"), nullable=True),
+        alias="authorId",
+    )
 
 
 class Activity(ActivityBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
     project_id: Optional[str] = Field(default=None, foreign_key="project.id")
+    # Store task context as JSON for comments on tasks/subtasks
+    task_context: Optional[str] = Field(default=None, sa_column=Column(String))
     project: "Project" = Relationship(back_populates="recentActivity")
+    author_person: Optional["Person"] = Relationship(sa_relationship_kwargs={"lazy": "joined"})
+
+
+class ProjectPersonLink(SQLModel, table=True):
+    project_id: str = Field(
+        sa_column=Column("project_id", String, ForeignKey("project.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+    )
+    person_id: str = Field(
+        sa_column=Column("person_id", String, ForeignKey("person.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+    )
 
 
 class ProjectBase(SQLModel):
-    name: str
+    name: str = Field(sa_column=Column(String, unique=True, index=True))
     status: str = "planning"
     priority: str = "medium"
     progress: int = 0
@@ -222,7 +749,10 @@ class ProjectBase(SQLModel):
     executiveUpdate: Optional[str] = None
     startDate: Optional[str] = None
     targetDate: Optional[str] = None
-    stakeholders: List[Stakeholder] = Field(default_factory=list, sa_column=Column(JSON))
+    stakeholders_legacy: List[Stakeholder] = Field(
+        default_factory=list,
+        sa_column=Column("stakeholders", JSON, nullable=True),
+    )
 
 
 class Project(ProjectBase, table=True):
@@ -235,16 +765,24 @@ class Project(ProjectBase, table=True):
         back_populates="project",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
     )
+    stakeholders: list["Person"] = Relationship(
+        back_populates="projects",
+        link_model=ProjectPersonLink,
+    )
 
 
 class PersonBase(SQLModel):
     name: str = Field(sa_column=Column(String, unique=True, index=True))
-    team: str
+    team: str = ""
     email: Optional[str] = None
 
 
 class Person(PersonBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
+    projects: list["Project"] = Relationship(
+        back_populates="stakeholders",
+        link_model=ProjectPersonLink,
+    )
 
 
 class EmailSettings(SQLModel, table=True):
@@ -267,6 +805,13 @@ class AuditLog(SQLModel, table=True):
     details: Optional[str] = Field(default=None, sa_column=Column(String))  # JSON string with additional details
     user_agent: Optional[str] = None  # Client user agent
     ip_address: Optional[str] = None  # Client IP address
+
+
+class MigrationState(SQLModel, table=True):
+    """Track lightweight migrations run in-application."""
+
+    key: str = Field(primary_key=True)
+    applied_at: str = Field(default_factory=lambda: datetime.utcnow().isoformat())
 
 
 def log_action(
@@ -293,27 +838,89 @@ def log_action(
     logger.info(f"Action logged: {action} on {entity_type}:{entity_id}")
 
 
+def get_logged_in_user(request: Request | None) -> str | None:
+    if not request:
+        return None
+    for header_name in ("x-logged-in-user", "x-user-name", "x-user"):
+        header_value = request.headers.get(header_name)
+        if header_value and header_value.strip():
+            return header_value.strip()
+    return None
+
+
+def resolve_activity_author(
+    session: Session,
+    request: Request | None,
+    fallback: str | None = None
+) -> tuple[str, str | None]:
+    name = get_logged_in_user(request) or fallback
+    if name:
+        author_person = resolve_person_reference(session, name)
+        return author_person.name if author_person else name, author_person.id if author_person else None
+    return "Unknown", None
+
+
+class AssigneePayload(BaseModel):
+    """Assignee information - can include id, name, or both"""
+    id: Optional[str] = None
+    name: Optional[str] = None
+    team: Optional[str] = None
+
+
+class TaskContextPayload(BaseModel):
+    """Task context for comments on tasks/subtasks"""
+    taskId: str
+    subtaskId: Optional[str] = None
+    taskTitle: str
+    subtaskTitle: Optional[str] = None
+
+
 class SubtaskPayload(SubtaskBase):
     id: Optional[str] = None
+    assignee: Optional[AssigneePayload] = None
 
 
 class TaskPayload(TaskBase):
     id: Optional[str] = None
     subtasks: List[SubtaskPayload] = Field(default_factory=list)
+    assignee: Optional[AssigneePayload] = None
 
 
 class ActivityPayload(ActivityBase):
     id: Optional[str] = None
+    taskContext: Optional[TaskContextPayload] = None
+    authorEmail: Optional[str] = None
 
 
 class PersonPayload(PersonBase):
     id: Optional[str] = None
 
 
-class ProjectPayload(ProjectBase):
+class ProjectPayload(SQLModel):
+    name: str
+    status: str = "planning"
+    priority: str = "medium"
+    progress: int = 0
+    lastUpdate: Optional[str] = None
+    description: str = ""
+    executiveUpdate: Optional[str] = None
+    startDate: Optional[str] = None
+    targetDate: Optional[str] = None
+    stakeholders: List[PersonReference] = Field(default_factory=list)
     id: Optional[str] = None
     plan: List[TaskPayload] = Field(default_factory=list)
     recentActivity: List[ActivityPayload] = Field(default_factory=list)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, v):
+        if v is None:
+            raise ValueError("Project name cannot be null")
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("Project name cannot be empty")
+        return v
 
 
 class ImportPayload(BaseModel):
@@ -501,11 +1108,26 @@ class ChatRole(str, Enum):
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
+class ToolCallFunction(BaseModel):
+    name: str
+    arguments: str
+
+
+class ToolCall(BaseModel):
+    id: str
+    type: str = "function"
+    function: ToolCallFunction
 
 
 class ChatMessage(BaseModel):
     role: ChatRole
-    content: str
+    content: Optional[str] = None
+    tool_calls: Optional[List[ToolCall]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None  # For tool messages
 
 
 class ChatProvider(str, Enum):
@@ -513,31 +1135,127 @@ class ChatProvider(str, Enum):
     AZURE_OPENAI = "azure"
 
 
+class ToolDefinition(BaseModel):
+    type: str = "function"
+    function: dict
+
+
 class ChatRequest(BaseModel):
     model: str = os.getenv("LLM_MODEL", "gpt-5.1")
     provider: Optional[ChatProvider] = None
-    messages: List[ChatMessage] = PydanticField(..., min_items=1)
+    messages: List[ChatMessage] = PydanticField(..., min_length=1)
     response_format: Optional[dict] = None
+    tools: Optional[List[ToolDefinition]] = None
+    tool_choice: Optional[str] = None
+
+
+FRONTEND_ORIGINS_ENV = "FRONTEND_ORIGINS"
+FRONTEND_ORIGIN_REGEX_ENV = "FRONTEND_ORIGIN_REGEX"
+
+
+def parse_origins(value: str | None) -> list[str]:
+    return [origin.strip() for origin in (value or "").split(",") if origin.strip()]
+
+
+def configured_frontend_origins() -> tuple[list[str], str | None]:
+    origins = parse_origins(os.getenv(FRONTEND_ORIGINS_ENV))
+    origin_regex = os.getenv(FRONTEND_ORIGIN_REGEX_ENV) or None
+
+    if not origins and not origin_regex:
+        # Default: allow all localhost/127.0.0.1 origins for local development
+        # This covers common dev ports: 3000, 5173, 8113, 8114, etc.
+        origin_regex = r"^https?://(localhost|127\.0\.0\.1|rn000224)(:\d+)?$"
+
+    return origins, origin_regex
 
 
 app = FastAPI(title="Manity Portfolio API")
 
+# CORS configuration
+# Note: allow_credentials=True with allow_origins=["*"] violates CORS spec.
+# When credentials are needed, the server must echo the specific origin.
+# Setting allow_credentials=False allows the wildcard origin to work properly.
+# If cookie/auth credentials are needed, specify explicit origins in CORS_ORIGINS env var.
+
+# Echo the requesting origin when possible so browsers see a concrete value
+# instead of "*". When an explicit wildcard is requested, fall back to a
+# permissive regex that still mirrors the Origin header while keeping
+# allow_credentials disabled.
+allowed_origins, allowed_origin_regex = configured_frontend_origins()
+
+logger.info("CORS allowed_origins=%s", allowed_origins)
+logger.info("CORS allowed_origin_regex=%s", allowed_origin_regex)
+
+if "*" in allowed_origins and not allowed_origin_regex:
+    allowed_origin_regex = ".*"
+    allowed_origins = []
+
+logger.info("CORS allowed_origins=%s", allowed_origins)
+logger.info("CORS allowed_origin_regex=%s", allowed_origin_regex)
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=allowed_origins,
+    allow_origin_regex=allowed_origin_regex,
+    allow_credentials=False,   # ✅ no cookies, no sessions
     allow_methods=["*"],
-    allow_headers=["*"]
+    allow_headers=["*"],
+    expose_headers=["*"],
 )
-
 
 def create_db_and_tables() -> None:
     SQLModel.metadata.create_all(engine)
+    # Add new relationship columns for legacy databases
+    ensure_column("task", 'assignee_id TEXT REFERENCES person(id) ON DELETE SET NULL')
+    ensure_column("subtask", 'assignee_id TEXT REFERENCES person(id) ON DELETE SET NULL')
+    ensure_column("activity", 'author_id TEXT REFERENCES person(id) ON DELETE SET NULL')
+    ensure_column("activity", "task_context TEXT")
+    ensure_column("project", "stakeholders JSON")
+    ensure_column("project", "executiveUpdate TEXT")
+    ensure_column("project", "startDate TEXT")
+    ensure_column("project", "targetDate TEXT")
+    ensure_column("project", "lastUpdate TEXT")
+    ensure_column("project", "priority TEXT")
+    ensure_column("project", "progress INTEGER")
+    ensure_column("project", "status TEXT")
+    ensure_column("project", "description TEXT")
 
 
 def get_session():
     with Session(engine) as session:
         yield session
+
+
+def extract_bearer_token(auth_header: str | None) -> str | None:
+    if not auth_header:
+        return None
+    if not auth_header.lower().startswith("bearer "):
+        return None
+    return auth_header.split(None, 1)[1].strip() or None
+
+
+def ensure_admin(request: Request) -> None:
+    expected_token = os.getenv(ADMIN_TOKEN_ENV)
+    if not expected_token:
+        if current_environment() in PROTECTED_ENVIRONMENTS:
+            raise HTTPException(
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                detail="Admin token not configured for this environment",
+            )
+        logger.warning(
+            "Admin token not configured; allowing admin endpoints in non-protected environment"
+        )
+        return
+
+    provided_token = (
+        request.headers.get("x-admin-token")
+        or extract_bearer_token(request.headers.get("authorization"))
+    )
+    if not provided_token or provided_token != expected_token:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Invalid admin token",
+        )
 
 
 def serialize_subtask(subtask: Subtask) -> dict:
@@ -547,6 +1265,8 @@ def serialize_subtask(subtask: Subtask) -> dict:
         "status": subtask.status,
         "dueDate": subtask.dueDate,
         "completedDate": subtask.completedDate,
+        "assigneeId": subtask.assignee_id,
+        "assignee": serialize_person(subtask.assignee),
     }
 
 
@@ -557,22 +1277,67 @@ def serialize_task(task: Task) -> dict:
         "status": task.status,
         "dueDate": task.dueDate,
         "completedDate": task.completedDate,
+        "assigneeId": task.assignee_id,
+        "assignee": serialize_person(task.assignee),
         "subtasks": [serialize_subtask(st) for st in task.subtasks],
     }
 
 
-def serialize_activity(activity: Activity) -> dict:
+def serialize_activity(activity: Activity, person_index: PersonIndex | None = None) -> dict:
+    import json
+    task_context = None
+    if activity.task_context:
+        try:
+            task_context = json.loads(activity.task_context)
+        except (json.JSONDecodeError, TypeError):
+            task_context = None
+
+    resolved_person: Person | None = None
+    if activity.author_person:
+        resolved_person = activity.author_person
+    elif person_index:
+        resolved_person = person_index.resolve(
+            person_id=activity.author_id,
+            name=activity.author,
+        )
+
     return {
         "id": activity.id,
         "date": activity.date,
         "note": activity.note,
-        "author": activity.author,
+        "taskContext": task_context,
+        "author": (resolved_person.name if resolved_person else None) or activity.author,
+        "authorId": resolved_person.id if resolved_person else activity.author_id,
+        "authorPerson": serialize_person(resolved_person),
     }
+
+
+def serialize_stakeholder(raw_stakeholder: dict, person_index: PersonIndex | None = None) -> dict:
+    stakeholder = normalize_stakeholders([raw_stakeholder])[0]
+    person: Person | None = None
+    if person_index:
+        person = person_index.resolve(
+            name=stakeholder.get("name"),
+            email=stakeholder.get("email"),
+            person_id=stakeholder.get("id"),
+        )
+
+    if person:
+        stakeholder["id"] = person.id
+        stakeholder["name"] = person.name
+        stakeholder["team"] = stakeholder.get("team") or person.team or ""
+        stakeholder["email"] = person.email or stakeholder.get("email")
+
+    return stakeholder
 
 
 def normalize_project_activity(project: Project) -> Project:
     if project.recentActivity is None:
         project.recentActivity = []
+
+    for activity in project.recentActivity:
+        if not activity.author and activity.author_person:
+            activity.author = activity.author_person.name
 
     project.recentActivity.sort(key=lambda a: a.date or "", reverse=True)
 
@@ -582,7 +1347,60 @@ def normalize_project_activity(project: Project) -> Project:
     return project
 
 
-def serialize_project(project: Project) -> dict:
+def migrate_people_links(session: Session) -> None:
+    """
+    Convert legacy stakeholder/author data into normalized person relationships.
+    """
+    projects = session.exec(
+        select(Project).options(
+            selectinload(Project.stakeholders),
+            selectinload(Project.plan).selectinload(Task.subtasks),
+            selectinload(Project.plan).selectinload(Task.assignee),
+            selectinload(Project.recentActivity).selectinload(Activity.author_person),
+        )
+    ).all()
+    updated = False
+
+    for project in projects:
+        legacy_stakeholders = normalize_stakeholders(project.stakeholders_legacy)
+        if legacy_stakeholders:
+            for stakeholder in legacy_stakeholders:
+                person = resolve_person_reference(session, stakeholder)
+                if person and person not in project.stakeholders:
+                    project.stakeholders.append(person)
+                    updated = True
+            project.stakeholders_legacy = []
+
+        for activity in project.recentActivity or []:
+            if activity.author_id is None and activity.author:
+                person = resolve_person_reference(session, activity.author)
+                if person:
+                    activity.author_id = person.id
+                    activity.author = person.name
+                    updated = True
+
+        for task in project.plan or []:
+            if task.assignee_id and task.assignee is None:
+                person = session.get(Person, task.assignee_id)
+                if person:
+                    task.assignee = person
+                else:
+                    task.assignee_id = None
+                updated = True
+            for subtask in task.subtasks or []:
+                if subtask.assignee_id and subtask.assignee is None:
+                    person = session.get(Person, subtask.assignee_id)
+                    if person:
+                        subtask.assignee = person
+                    else:
+                        subtask.assignee_id = None
+                    updated = True
+
+    if updated:
+        session.commit()
+
+
+def serialize_project(project: Project, person_index: PersonIndex | None = None) -> dict:
     normalize_project_activity(project)
 
     return {
@@ -596,21 +1414,78 @@ def serialize_project(project: Project) -> dict:
         "executiveUpdate": project.executiveUpdate,
         "startDate": project.startDate,
         "targetDate": project.targetDate,
-        "stakeholders": normalize_stakeholders(project.stakeholders),
+        "stakeholders": [serialize_person(person) for person in project.stakeholders],
         "plan": [serialize_task(task) for task in project.plan],
-        "recentActivity": [serialize_activity(activity) for activity in project.recentActivity],
+        "recentActivity": [serialize_activity(activity, person_index) for activity in project.recentActivity],
     }
 
 
-def apply_task_payload(task: Task, payload: TaskPayload) -> Task:
+def resolve_assignee_id(session: Session, assignee_payload: Optional[AssigneePayload]) -> Optional[str]:
+    """Resolve an assignee payload to a person ID, looking up by id or name"""
+    if assignee_payload is None:
+        return None
+
+    # If ID is provided, verify it exists
+    if assignee_payload.id:
+        person = session.exec(select(Person).where(Person.id == assignee_payload.id)).first()
+        if person:
+            return person.id
+
+    # If name is provided, look up by name
+    if assignee_payload.name:
+        person = session.exec(select(Person).where(
+            func.lower(Person.name) == assignee_payload.name.lower()
+        )).first()
+        if person:
+            return person.id
+        # Create new person if not found
+        new_person = Person(
+            id=generate_id("person"),
+            name=assignee_payload.name,
+            team=assignee_payload.team or "Contributor"
+        )
+        session.add(new_person)
+        session.commit()
+        session.refresh(new_person)
+        return new_person.id
+
+    return None
+
+def serialize_project_with_people(session: Session, project: Project) -> dict:
+    person_index = build_person_index(session)
+    return serialize_project(project, person_index)
+
+
+def apply_task_payload(task: Task, payload: TaskPayload, session: Session | None = None) -> Task:
     task.title = payload.title
     task.status = payload.status
     task.dueDate = payload.dueDate
     task.completedDate = payload.completedDate
+
+    # --- Task assignee ---
+    if session is not None:
+        # If payload explicitly includes the assignee field and it is None, clear it.
+        if hasattr(payload, "assignee") and payload.assignee is None:
+            task.assignee = None
+            task.assignee_id = None
+        else:
+            ref = None
+            if hasattr(payload, "assignee") and payload.assignee:
+                ref = payload.assignee
+            elif hasattr(payload, "assignee_id") and payload.assignee_id:
+                ref = payload.assignee_id
+
+            if ref is not None:
+                assignee = resolve_person_reference(session, ref)
+                task.assignee = assignee
+                task.assignee_id = assignee.id if assignee else None
+
+    # --- Subtasks ---
     if task.subtasks is None:
         task.subtasks = []
     else:
         task.subtasks.clear()
+
     for subtask_payload in payload.subtasks:
         subtask = Subtask(
             id=subtask_payload.id or generate_id("subtask"),
@@ -618,18 +1493,88 @@ def apply_task_payload(task: Task, payload: TaskPayload) -> Task:
             status=subtask_payload.status,
             dueDate=subtask_payload.dueDate,
             completedDate=subtask_payload.completedDate,
+            assignee_id=subtask_payload.assignee_id,
         )
+
+        if session is not None:
+            # Same explicit-clear behavior for subtasks if 'assignee' exists
+            if hasattr(subtask_payload, "assignee") and subtask_payload.assignee is None:
+                subtask.assignee = None
+                subtask.assignee_id = None
+            else:
+                ref = None
+                if hasattr(subtask_payload, "assignee") and subtask_payload.assignee:
+                    ref = subtask_payload.assignee
+                elif hasattr(subtask_payload, "assignee_id") and subtask_payload.assignee_id:
+                    ref = subtask_payload.assignee_id
+
+                if ref is not None:
+                    assignee = resolve_person_reference(session, ref)
+                    subtask.assignee = assignee
+                    subtask.assignee_id = assignee.id if assignee else None
+
         task.subtasks.append(subtask)
+
     return task
 
 
+def normalize_project_stakeholders(session: Session, stakeholders: Optional[List[Stakeholder | dict]]) -> list[dict]:
+    normalized: list[dict] = []
+    for stakeholder in normalize_stakeholders(stakeholders):
+        if not stakeholder.get("name"):
+            continue
+
+        person = upsert_person_from_details(
+            session,
+            name=stakeholder.get("name", ""),
+            team=stakeholder.get("team", ""),
+            email=stakeholder.get("email"),
+            person_id=stakeholder.get("id"),
+        )
+
+        normalized.append(
+            {
+                "id": person.id,
+                "name": person.name,
+                "team": stakeholder.get("team") or person.team or "",
+                "email": person.email,
+            }
+        )
+
+    return normalized
+
+
 def upsert_project(session: Session, payload: ProjectPayload) -> Project:
-    project = session.exec(select(Project).where(Project.id == payload.id)).first() if payload.id else None
+    normalized_name = (payload.name or "").strip()
+
+    statement = (
+        select(Project)
+        .where(Project.id == payload.id)
+        .options(
+            selectinload(Project.stakeholders),
+            selectinload(Project.plan).selectinload(Task.subtasks),
+            selectinload(Project.plan).selectinload(Task.assignee),
+            selectinload(Project.recentActivity).selectinload(Activity.author_person),
+        )
+    )
+    project = session.exec(statement).first() if payload.id else None
     if project is None:
         project = Project(id=payload.id or generate_id("project"))
-        session.add(project)
 
-    project.name = payload.name
+    # Check for duplicate project name (case-insensitive)
+    existing_project = session.exec(
+        select(Project).where(
+            func.lower(Project.name) == func.lower(normalized_name),
+            Project.id != (project.id if project else "")
+        )
+    ).first()
+    if existing_project:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A project with the name '{normalized_name}' already exists. Please choose a different name."
+        )
+
+    project.name = normalized_name
     project.status = payload.status
     project.priority = payload.priority
     project.progress = payload.progress
@@ -638,7 +1583,18 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     project.executiveUpdate = payload.executiveUpdate
     project.startDate = payload.startDate
     project.targetDate = payload.targetDate
-    project.stakeholders = normalize_stakeholders(payload.stakeholders)
+    project.stakeholders_legacy = []
+
+    if project.stakeholders is None:
+        project.stakeholders = []
+    else:
+        project.stakeholders.clear()
+    seen_stakeholders: set[str] = set()
+    for stakeholder_payload in payload.stakeholders:
+        person = resolve_person_reference(session, stakeholder_payload)
+        if person and person.id not in seen_stakeholders:
+            project.stakeholders.append(person)
+            seen_stakeholders.add(person.id)
 
     if project.plan is None:
         project.plan = []
@@ -651,8 +1607,9 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
             status=task_payload.status,
             dueDate=task_payload.dueDate,
             completedDate=task_payload.completedDate,
+            assignee_id=task_payload.assignee_id,
         )
-        apply_task_payload(task, task_payload)
+        apply_task_payload(task, task_payload, session)
         project.plan.append(task)
 
     if project.recentActivity is None:
@@ -662,15 +1619,28 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     activity_payloads = sorted(
         payload.recentActivity,
         key=lambda activity: activity.date or "",
-        reverse=True,
     )
 
+    import json as json_module
     for activity_payload in activity_payloads:
+        # Serialize taskContext to JSON string if present
+        task_context_str = None
+        if activity_payload.taskContext is not None:
+            task_context_str = json_module.dumps({
+                "taskId": activity_payload.taskContext.taskId,
+                "subtaskId": activity_payload.taskContext.subtaskId,
+                "taskTitle": activity_payload.taskContext.taskTitle,
+                "subtaskTitle": activity_payload.taskContext.subtaskTitle,
+            })
+        author_person = resolve_person_reference(session, activity_payload.author_id or activity_payload.author)
+        author_name = (author_person.name if author_person else None) or activity_payload.author
         activity = Activity(
             id=activity_payload.id or generate_id("activity"),
             date=activity_payload.date,
             note=activity_payload.note,
-            author=activity_payload.author,
+            task_context=task_context_str,
+            author=author_name,
+            author_id=author_person.id if author_person else activity_payload.author_id,
         )
         project.recentActivity.append(activity)
 
@@ -682,10 +1652,106 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     return load_project(session, project.id)
 
 
+def add_data_change_activity(
+    session: Session,
+    project_id: str,
+    request: Request | None,
+    note: str,
+    author: str | None = None
+) -> Activity:
+    """Add an activity entry for a data change to the project's activity feed"""
+    author_name, author_id = resolve_activity_author(session, request, author)
+    activity = Activity(
+        id=generate_id("activity"),
+        date=datetime.utcnow().isoformat(),
+        note=note,
+        author=author_name,
+        author_id=author_id,
+        project_id=project_id,
+    )
+    session.add(activity)
+    session.commit()
+
+    # Normalize project activity to update lastUpdate
+    project = session.exec(select(Project).where(Project.id == project_id)).first()
+    if project:
+        normalize_project_activity(project)
+        session.add(project)
+        session.commit()
+
+    return activity
+def run_people_backfill(session: Session) -> None:
+    migration_key = "people-backfill-v1"
+    if session.get(MigrationState, migration_key):
+        return
+
+    projects = session.exec(
+        select(Project)
+        .options(
+            selectinload(Project.plan).selectinload(Task.subtasks),
+            selectinload(Project.recentActivity),
+        )
+    ).all()
+
+    for project in projects:
+        updated = False
+
+        legacy_stakeholders = [
+            stakeholder for stakeholder in project.stakeholders_legacy or [] if not isinstance(stakeholder, Person)
+        ]
+        normalized_stakeholders = normalize_project_stakeholders(session, legacy_stakeholders)
+        if normalized_stakeholders:
+            existing_person_ids = {person.id for person in project.stakeholders if person.id}
+            for stakeholder in normalized_stakeholders:
+                person_id = stakeholder.get("id")
+                if not person_id or person_id in existing_person_ids:
+                    continue
+
+                person = session.get(Person, person_id)
+                if person is None:
+                    continue
+
+                project.stakeholders.append(person)
+                existing_person_ids.add(person_id)
+                updated = True
+
+            project.stakeholders_legacy = []
+            updated = True
+
+        for activity in project.recentActivity or []:
+            if not activity.author:
+                continue
+            person = upsert_person_from_details(session, name=activity.author)
+            if person and activity.author != person.name:
+                activity.author = person.name
+                updated = True
+
+        if updated:
+            session.add(project)
+
+    session.add(MigrationState(key=migration_key))
+    session.commit()
+
+
+@app.post("/admin/people-backfill", dependencies=[Depends(ensure_admin)])
+def trigger_people_backfill(session: Session = Depends(get_session)) -> dict:
+    run_people_backfill(session)
+    return {"status": "ok", "message": "People backfill completed or already applied."}
+
+
 @app.on_event("startup")
 def on_startup() -> None:
     create_db_and_tables()
+
+    # Run database migrations
     with Session(engine) as session:
+        migrate_add_unique_constraints(session)
+
+    if not is_dev_seeding_enabled():
+        return
+
+    with Session(engine) as session:
+        migrate_people_links(session)
         existing = session.exec(select(Project)).first()
         if existing:
             return
@@ -701,7 +1767,7 @@ def on_startup() -> None:
                 executiveUpdate="Overhaul of company site for better UX.",
                 startDate="2025-10-15",
                 targetDate="2025-12-20",
-                stakeholders=[Stakeholder(name="Sarah Chen", team="Design"), Stakeholder(name="Marcus Rodriguez", team="Development")],
+                stakeholders=[PersonReference(name="Sarah Chen", team="Design"), PersonReference(name="Marcus Rodriguez", team="Development")],
                 plan=[
                     TaskPayload(
                         title="Discovery & Research",
@@ -724,8 +1790,8 @@ def on_startup() -> None:
                     ),
                 ],
                 recentActivity=[
-                    ActivityPayload(date="2025-11-29T14:30:00", note="Positive feedback on homepage direction", author="You"),
-                    ActivityPayload(date="2025-11-28T16:15:00", note="Completed homepage mockups", author="You"),
+                    ActivityPayload(date="2025-11-29T14:30:00", note="Positive feedback on homepage direction", author="Alex Morgan"),
+                    ActivityPayload(date="2025-11-28T16:15:00", note="Completed homepage mockups", author="Alex Morgan"),
                 ],
             ),
             ProjectPayload(
@@ -738,7 +1804,7 @@ def on_startup() -> None:
                 executiveUpdate="Multi-channel campaign for Q4.",
                 startDate="2025-11-01",
                 targetDate="2025-12-31",
-                stakeholders=[Stakeholder(name="Jennifer Liu", team="Marketing"), Stakeholder(name="Alex Thompson", team="Creative")],
+                stakeholders=[PersonReference(name="Jennifer Liu", team="Marketing"), PersonReference(name="Alex Thompson", team="Creative")],
                 plan=[
                     TaskPayload(
                         title="Campaign Strategy",
@@ -752,7 +1818,7 @@ def on_startup() -> None:
                     ),
                 ],
                 recentActivity=[
-                    ActivityPayload(date="2025-11-27T16:30:00", note="Met with marketing to discuss timeline", author="You"),
+                    ActivityPayload(date="2025-11-27T16:30:00", note="Met with marketing to discuss timeline", author="Alex Morgan"),
                 ],
             ),
         ]
@@ -767,7 +1833,11 @@ def load_project(session: Session, project_id: str) -> Project:
         .where(Project.id == project_id)
         .options(
             selectinload(Project.plan).selectinload(Task.subtasks),
+            selectinload(Project.plan).selectinload(Task.assignee),
+            selectinload(Project.plan).selectinload(Task.subtasks).selectinload(Subtask.assignee),
             selectinload(Project.recentActivity),
+            selectinload(Project.recentActivity).selectinload(Activity.author_person),
+            selectinload(Project.stakeholders),
         )
     )
     project = session.exec(statement).first()
@@ -782,20 +1852,39 @@ def list_people(session: Session = Depends(get_session)):
     people = session.exec(statement).all()
 
     unique_people: dict[str, Person] = {}
+    seen_people: set[str] = set()
     for person in people:
-        key = person.name.lower()
-        if key not in unique_people:
-            unique_people[key] = person
+        email_key = person.email.lower() if person.email else None
+        name_key = person.name.lower() if person.name else None
+
+        existing = None
+        if email_key and email_key in unique_people:
+            existing = unique_people[email_key]
+        elif name_key and name_key in unique_people:
+            existing = unique_people[name_key]
+
+        if existing is None:
+            if name_key:
+                unique_people[name_key] = person
+            if email_key:
+                unique_people[email_key] = person
             continue
 
         # Collapse legacy duplicates by preferring the first encountered record
-        legacy = unique_people[key]
-        legacy.team = legacy.team or person.team
-        legacy.email = legacy.email or person.email
+        existing.team = existing.team or person.team
+        existing.email = existing.email or person.email
         session.delete(person)
 
+    # Ensure each person appears only once even though we index by multiple keys
+    deduped_people: list[Person] = []
+    for person in unique_people.values():
+        if person.id in seen_people:
+            continue
+        seen_people.add(person.id)
+        deduped_people.append(person)
+
     session.commit()
-    return [serialize_person(person) for person in unique_people.values()]
+    return [serialize_person(person) for person in deduped_people]
 
 
 @app.post("/people", status_code=status.HTTP_201_CREATED)
@@ -928,35 +2017,83 @@ def send_email_action(payload: EmailSendPayload, request: Request, session: Sess
 
 @app.get("/projects")
 def list_projects(session: Session = Depends(get_session)):
+    person_index = build_person_index(session)
     statement = select(Project).options(
         selectinload(Project.plan).selectinload(Task.subtasks),
+        selectinload(Project.plan).selectinload(Task.assignee),
+        selectinload(Project.plan).selectinload(Task.subtasks).selectinload(Subtask.assignee),
         selectinload(Project.recentActivity),
+        selectinload(Project.recentActivity).selectinload(Activity.author_person),
+        selectinload(Project.stakeholders),
     )
     projects = session.exec(statement).all()
-    return [serialize_project(project) for project in projects]
+    return [serialize_project(project, person_index) for project in projects]
 
 
 @app.post("/projects", status_code=status.HTTP_201_CREATED)
 def create_project(payload: ProjectPayload, request: Request, session: Session = Depends(get_session)):
     project = upsert_project(session, payload)
     log_action(session, "create_project", "project", project.id, {"name": project.name, "status": project.status}, request)
-    return serialize_project(project)
+    return serialize_project_with_people(session, project)
 
 
 @app.get("/projects/{project_id}")
 def get_project(project_id: str, session: Session = Depends(get_session)):
     project = load_project(session, project_id)
-    return serialize_project(project)
+    return serialize_project_with_people(session, project)
 
 
 @app.put("/projects/{project_id}")
 def update_project(project_id: str, payload: ProjectPayload, request: Request, session: Session = Depends(get_session)):
     if payload.id and payload.id != project_id:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Project ID mismatch")
+
+    # Get existing project to track changes
+    existing = session.exec(select(Project).where(Project.id == project_id)).first()
+    old_values = {}
+    if existing:
+        old_values = {
+            "name": existing.name,
+            "status": existing.status,
+            "priority": existing.priority,
+            "progress": existing.progress,
+            "description": existing.description,
+            "executiveUpdate": existing.executiveUpdate,
+            "startDate": existing.startDate,
+            "targetDate": existing.targetDate,
+        }
+
     payload.id = project_id
     project = upsert_project(session, payload)
+
+    # Build activity description with specific changes
+    changes = []
+    if old_values:
+        if old_values["name"] != project.name:
+            changes.append(f"name to: {project.name}")
+        if old_values["status"] != project.status:
+            changes.append(f"status to: {project.status}")
+        if old_values["priority"] != project.priority:
+            changes.append(f"priority to: {project.priority}")
+        if old_values["progress"] != project.progress:
+            changes.append(f"progress to: {project.progress}%")
+        if old_values["description"] != project.description:
+            changes.append(f"description to: {project.description[:100]}{'...' if len(project.description or '') > 100 else ''}")
+        if old_values["executiveUpdate"] != project.executiveUpdate:
+            changes.append(f"executive update to: {(project.executiveUpdate or '')[:100]}{'...' if len(project.executiveUpdate or '') > 100 else ''}")
+        if old_values["startDate"] != project.startDate:
+            changes.append(f"start date to: {project.startDate or 'none'}")
+        if old_values["targetDate"] != project.targetDate:
+            changes.append(f"target date to: {project.targetDate or 'none'}")
+
+        if changes:
+            add_data_change_activity(
+                session, project_id, request,
+                f"Updated project: {', '.join(changes)}"
+            )
+
     log_action(session, "update_project", "project", project_id, {"name": project.name, "status": project.status}, request)
-    return serialize_project(project)
+    return serialize_project_with_people(session, project)
 
 
 @app.delete("/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -979,13 +2116,25 @@ def create_task(project_id: str, payload: TaskPayload, request: Request, session
         dueDate=payload.dueDate,
         completedDate=payload.completedDate,
         project_id=project.id,
+        assignee_id=payload.assignee_id,
     )
-    apply_task_payload(task, payload)
+    apply_task_payload(task, payload, session)
     session.add(task)
     session.commit()
     session.refresh(task)
+
+    # Add activity for task creation
+    assignee_name = None
+    if task.assignee_id:
+        assignee = session.exec(select(Person).where(Person.id == task.assignee_id)).first()
+        assignee_name = assignee.name if assignee else None
+    add_data_change_activity(
+        session, project_id, request,
+        f"Created task: {task.title}" + (f" (assigned to {assignee_name})" if assignee_name else "")
+    )
+
     log_action(session, "create_task", "task", task.id, {"project_id": project_id, "title": task.title}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/tasks/{task_id}")
@@ -994,12 +2143,39 @@ def update_task(project_id: str, task_id: str, payload: TaskPayload, request: Re
     task = session.exec(select(Task).where(Task.id == task_id, Task.project_id == project.id)).first()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+
+    # Track changes for activity feed
+    changes = []
     old_status = task.status
-    apply_task_payload(task, payload)
+    old_title = task.title
+    old_due_date = task.dueDate
+    old_assignee_id = task.assignee_id
+    apply_task_payload(task, payload, session)
     session.add(task)
     session.commit()
+
+    # Build activity description with specific changes
+    if old_title != task.title:
+        changes.append(f"title to: {task.title}")
+    if old_status != task.status:
+        changes.append(f"status from {old_status} to {task.status}")
+    if old_due_date != task.dueDate:
+        changes.append(f"due date to: {task.dueDate or 'none'}")
+    if old_assignee_id != task.assignee_id:
+        if task.assignee_id:
+            new_assignee = session.exec(select(Person).where(Person.id == task.assignee_id)).first()
+            changes.append(f"assigned to {new_assignee.name if new_assignee else 'unknown'}")
+        else:
+            changes.append("unassigned")
+
+    if changes:
+        add_data_change_activity(
+            session, project_id, request,
+            f"Updated task '{task.title}': {', '.join(changes)}"
+        )
+
     log_action(session, "update_task", "task", task_id, {"project_id": project_id, "title": task.title, "old_status": old_status, "new_status": task.status}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/tasks/{task_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1009,8 +2185,13 @@ def remove_task(project_id: str, task_id: str, request: Request, session: Sessio
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
     deleted_data = {"project_id": project_id, "title": task.title}
+    task_title = task.title
     session.delete(task)
     session.commit()
+
+    # Add activity for task deletion
+    add_data_change_activity(session, project_id, request, f"Deleted task: {task_title}")
+
     log_action(session, "delete_task", "task", task_id, deleted_data, request)
     return None
 
@@ -1021,6 +2202,7 @@ def create_subtask(project_id: str, task_id: str, payload: SubtaskPayload, reque
     task = session.exec(select(Task).where(Task.id == task_id, Task.project_id == project_id)).first()
     if not task:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Task not found")
+    assignee = resolve_person_reference(session, payload.assignee or payload.assignee_id)
     subtask = Subtask(
         id=payload.id or generate_id("subtask"),
         title=payload.title,
@@ -1028,11 +2210,25 @@ def create_subtask(project_id: str, task_id: str, payload: SubtaskPayload, reque
         dueDate=payload.dueDate,
         completedDate=payload.completedDate,
         task_id=task.id,
+        assignee_id=assignee.id if assignee else payload.assignee_id,
     )
+    if assignee:
+        subtask.assignee = assignee
     session.add(subtask)
     session.commit()
+
+    # Add activity for subtask creation
+    assignee_name = None
+    if subtask.assignee_id:
+        assignee = session.exec(select(Person).where(Person.id == subtask.assignee_id)).first()
+        assignee_name = assignee.name if assignee else None
+    add_data_change_activity(
+        session, project_id, request,
+        f"Created subtask '{subtask.title}' in task '{task.title}'" + (f" (assigned to {assignee_name})" if assignee_name else "")
+    )
+
     log_action(session, "create_subtask", "subtask", subtask.id, {"project_id": project_id, "task_id": task_id, "title": subtask.title}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/tasks/{task_id}/subtasks/{subtask_id}")
@@ -1041,15 +2237,55 @@ def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: Subt
     subtask = session.exec(select(Subtask).where(Subtask.id == subtask_id, Subtask.task_id == task_id)).first()
     if not subtask:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+
+    # Get parent task for activity message
+    task = session.exec(select(Task).where(Task.id == task_id)).first()
+    task_title = task.title if task else "Unknown Task"
+
+    # Track changes for activity feed
+    changes = []
     old_status = subtask.status
+    old_title = subtask.title
+    old_due_date = subtask.dueDate
+    old_assignee_id = subtask.assignee_id
+    assignee = resolve_person_reference(session, payload.assignee or payload.assignee_id)
     subtask.title = payload.title
     subtask.status = payload.status
     subtask.dueDate = payload.dueDate
     subtask.completedDate = payload.completedDate
+    # If caller explicitly provides assignee=None, treat that as "clear", regardless of assignee_id.
+    if hasattr(payload, "assignee") and payload.assignee is None:
+        subtask.assignee = None
+        subtask.assignee_id = None
+    else:
+        subtask.assignee = assignee
+        subtask.assignee_id = assignee.id if assignee else payload.assignee_id
+    
     session.add(subtask)
     session.commit()
+
+    # Build activity description with specific changes
+    if old_title != subtask.title:
+        changes.append(f"title to: {subtask.title}")
+    if old_status != subtask.status:
+        changes.append(f"status from {old_status} to {subtask.status}")
+    if old_due_date != subtask.dueDate:
+        changes.append(f"due date to: {subtask.dueDate or 'none'}")
+    if old_assignee_id != subtask.assignee_id:
+        if subtask.assignee_id:
+            new_assignee = session.exec(select(Person).where(Person.id == subtask.assignee_id)).first()
+            changes.append(f"assigned to {new_assignee.name if new_assignee else 'unknown'}")
+        else:
+            changes.append("unassigned")
+
+    if changes:
+        add_data_change_activity(
+            session, project_id, request,
+            f"Updated subtask '{subtask.title}' in task '{task_title}': {', '.join(changes)}"
+        )
+
     log_action(session, "update_subtask", "subtask", subtask_id, {"project_id": project_id, "task_id": task_id, "title": subtask.title, "old_status": old_status, "new_status": subtask.status}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/tasks/{task_id}/subtasks/{subtask_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1058,22 +2294,48 @@ def delete_subtask(project_id: str, task_id: str, subtask_id: str, request: Requ
     subtask = session.exec(select(Subtask).where(Subtask.id == subtask_id, Subtask.task_id == task_id)).first()
     if not subtask:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Subtask not found")
+
+    # Get parent task for activity message
+    task = session.exec(select(Task).where(Task.id == task_id)).first()
+    task_title = task.title if task else "Unknown Task"
+
     deleted_data = {"project_id": project_id, "task_id": task_id, "title": subtask.title}
+    subtask_title = subtask.title
     session.delete(subtask)
     session.commit()
+
+    # Add activity for subtask deletion
+    add_data_change_activity(session, project_id, request, f"Deleted subtask '{subtask_title}' from task '{task_title}'")
+
     log_action(session, "delete_subtask", "subtask", subtask_id, deleted_data, request)
     return None
 
 
 @app.post("/projects/{project_id}/activities")
 def create_activity(project_id: str, payload: ActivityPayload, request: Request, session: Session = Depends(get_session)):
+    import json as json_module
     project = load_project(session, project_id)
+
+    # Serialize taskContext to JSON string if present
+    task_context_str = None
+    if payload.taskContext is not None:
+        task_context_str = json_module.dumps({
+            "taskId": payload.taskContext.taskId,
+            "subtaskId": payload.taskContext.subtaskId,
+            "taskTitle": payload.taskContext.taskTitle,
+            "subtaskTitle": payload.taskContext.subtaskTitle,
+        })
+
+    author_person = resolve_person_reference(session, payload.author_id or payload.author)
+    author_name = (author_person.name if author_person else None) or payload.author or "Unknown"
     activity = Activity(
         id=payload.id or generate_id("activity"),
         date=payload.date,
         note=payload.note,
-        author=payload.author,
+        author=author_name,
+        author_id=author_person.id if author_person else payload.author_id,
         project_id=project.id,
+        task_context=task_context_str,
     )
     session.add(activity)
     session.commit()
@@ -1082,18 +2344,32 @@ def create_activity(project_id: str, payload: ActivityPayload, request: Request,
     session.add(project)
     session.commit()
     log_action(session, "create_activity", "activity", activity.id, {"project_id": project_id, "author": activity.author, "note_preview": activity.note[:100] if activity.note else None}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.put("/projects/{project_id}/activities/{activity_id}")
 def update_activity(project_id: str, activity_id: str, payload: ActivityPayload, request: Request, session: Session = Depends(get_session)):
+    import json as json_module
     load_project(session, project_id)
     activity = session.exec(select(Activity).where(Activity.id == activity_id, Activity.project_id == project_id)).first()
     if not activity:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
+    author_person = resolve_person_reference(session, payload.author_id or payload.author)
     activity.note = payload.note
     activity.date = payload.date
-    activity.author = payload.author
+    # Update taskContext if provided
+    fields_set = getattr(payload, "model_fields_set", None) or getattr(payload, "__fields_set__", set())
+    if payload.taskContext is not None:
+        activity.task_context = json_module.dumps({
+            "taskId": payload.taskContext.taskId,
+            "subtaskId": payload.taskContext.subtaskId,
+            "taskTitle": payload.taskContext.taskTitle,
+            "subtaskTitle": payload.taskContext.subtaskTitle,
+        })
+    elif "taskContext" in fields_set:
+        activity.task_context = None
+    activity.author = (author_person.name if author_person else None) or payload.author or "Unknown"
+    activity.author_id = author_person.id if author_person else payload.author_id
     session.add(activity)
     session.commit()
     project = load_project(session, project_id)
@@ -1101,7 +2377,7 @@ def update_activity(project_id: str, activity_id: str, payload: ActivityPayload,
     session.add(project)
     session.commit()
     log_action(session, "update_activity", "activity", activity_id, {"project_id": project_id, "author": activity.author}, request)
-    return serialize_project(load_project(session, project_id))
+    return serialize_project_with_people(session, load_project(session, project_id))
 
 
 @app.delete("/projects/{project_id}/activities/{activity_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -1125,7 +2401,7 @@ def delete_activity(project_id: str, activity_id: str, request: Request, session
 def export_portfolio(project_id: Optional[str] = None, session: Session = Depends(get_session)):
     projects = []
     if project_id:
-        projects.append(serialize_project(load_project(session, project_id)))
+        projects.append(serialize_project_with_people(session, load_project(session, project_id)))
     else:
         projects = list_projects(session)
 
@@ -1237,16 +2513,44 @@ def _resolve_provider(provider_override: ChatProvider | None) -> ChatProvider:
         ) from exc
 
 
-def _build_llm_request(payload: ChatRequest) -> tuple[str, dict, dict]:
+def _serialize_message(message: ChatMessage) -> dict:
+    """Serialize a ChatMessage to OpenAI API format, excluding None values."""
+    result = {"role": message.role.value}
+
+    if message.content is not None:
+        result["content"] = message.content
+
+    if message.tool_calls:
+        result["tool_calls"] = [tc.model_dump() for tc in message.tool_calls]
+
+    if message.tool_call_id:
+        result["tool_call_id"] = message.tool_call_id
+
+    if message.name:
+        result["name"] = message.name
+
+    return result
+
+
+def _build_llm_request(payload: ChatRequest, stream: bool = False) -> tuple[str, dict, dict]:
     provider = _resolve_provider(payload.provider)
 
     request_body = {
         "model": payload.model,
-        "messages": [message.model_dump() for message in payload.messages],
+        "messages": [_serialize_message(m) for m in payload.messages],
     }
+
+    if stream:
+        request_body["stream"] = True
 
     if payload.response_format is not None:
         request_body["response_format"] = payload.response_format
+
+    if payload.tools:
+        request_body["tools"] = [t.model_dump() for t in payload.tools]
+
+    if payload.tool_choice:
+        request_body["tool_choice"] = payload.tool_choice
 
     if provider is ChatProvider.OPENAI:
         api_key = os.getenv("OPENAI_API_KEY")
@@ -1311,7 +2615,29 @@ async def proxy_llm_chat(payload: ChatRequest, request: Request, session: Sessio
         )
 
     data = response.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    choices = data.get("choices") or []
+    if not choices:
+        log_action(session, "llm_chat_error", "llm", None, {"model": payload.model, "error": "Empty choices in response"}, request)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="LLM returned empty response")
+    message_content = choices[0].get("message", {}).get("content", "")
+
+    # Extract thinking and text content from OpenAI's extended thinking response format
+    # Content can be a string or an array of content blocks with types "thinking" and "text"
+    thinking = None
+    if isinstance(message_content, list):
+        # Extract thinking blocks and text blocks separately
+        thinking_parts = []
+        text_parts = []
+        for block in message_content:
+            if isinstance(block, dict):
+                if block.get("type") == "thinking":
+                    thinking_parts.append(block.get("thinking", ""))
+                elif block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+        thinking = "\n".join(thinking_parts) if thinking_parts else None
+        content = "\n".join(text_parts) if text_parts else ""
+    else:
+        content = message_content if message_content else ""
 
     # Log successful LLM conversation with full messages and response for auditing
     import json
@@ -1319,11 +2645,121 @@ async def proxy_llm_chat(payload: ChatRequest, request: Request, session: Sessio
         "model": payload.model,
         "messages": [{"role": m.role.value, "content": m.content} for m in payload.messages],
         "response": content,
+        "thinking": thinking,
         "usage": data.get("usage", {})
     }
     log_action(session, "llm_chat", "llm", None, conversation_log, request)
 
-    return {"content": content, "raw": data}
+    return {"content": content, "thinking": thinking, "raw": data}
+
+
+@app.post("/api/llm/chat/stream")
+async def stream_llm_chat(payload: ChatRequest, request: Request, session: Session = Depends(get_session)):
+    """
+    Streaming LLM chat endpoint using Server-Sent Events (SSE).
+    Streams tokens as they arrive, including tool calls.
+    """
+    import json as json_module
+
+    url, headers, request_body = _build_llm_request(payload, stream=True)
+
+    async def generate_events():
+        accumulated_content = ""
+        accumulated_tool_calls = []
+        current_tool_call = None
+        finish_reason = None
+
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                async with client.stream("POST", url, headers=headers, json=request_body) as response:
+                    if response.status_code >= 400:
+                        error_text = ""
+                        async for chunk in response.aiter_text():
+                            error_text += chunk
+                        yield f"data: {json_module.dumps({'error': error_text, 'status': response.status_code})}\n\n"
+                        return
+
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+
+                            if data_str.strip() == "[DONE]":
+                                # Send final message with complete data
+                                final_event = {
+                                    "type": "done",
+                                    "content": accumulated_content,
+                                    "tool_calls": accumulated_tool_calls if accumulated_tool_calls else None,
+                                    "finish_reason": finish_reason,
+                                }
+                                yield f"data: {json_module.dumps(final_event)}\n\n"
+                                break
+
+                            try:
+                                chunk_data = json_module.loads(data_str)
+                                choices = chunk_data.get("choices") or []
+                                if not choices:
+                                    continue  # Skip chunks without choices
+                                choice = choices[0]
+                                delta = choice.get("delta", {})
+                                finish_reason = choice.get("finish_reason") or finish_reason
+
+                                # Handle content streaming
+                                if "content" in delta and delta["content"]:
+                                    content_chunk = delta["content"]
+                                    accumulated_content += content_chunk
+                                    yield f"data: {json_module.dumps({'type': 'content', 'content': content_chunk})}\n\n"
+
+                                # Handle tool call streaming
+                                if "tool_calls" in delta:
+                                    for tc_delta in delta["tool_calls"]:
+                                        tc_index = tc_delta.get("index", 0)
+
+                                        # Ensure we have enough tool calls
+                                        while len(accumulated_tool_calls) <= tc_index:
+                                            accumulated_tool_calls.append({
+                                                "id": "",
+                                                "type": "function",
+                                                "function": {"name": "", "arguments": ""}
+                                            })
+
+                                        current_tc = accumulated_tool_calls[tc_index]
+
+                                        if "id" in tc_delta:
+                                            current_tc["id"] = tc_delta["id"]
+
+                                        if "function" in tc_delta:
+                                            func_delta = tc_delta["function"]
+                                            if "name" in func_delta:
+                                                current_tc["function"]["name"] = func_delta["name"]
+                                                # Emit tool call start event
+                                                yield f"data: {json_module.dumps({'type': 'tool_call_start', 'index': tc_index, 'id': current_tc['id'], 'name': func_delta['name']})}\n\n"
+                                            if "arguments" in func_delta:
+                                                current_tc["function"]["arguments"] += func_delta["arguments"]
+
+                            except json_module.JSONDecodeError:
+                                continue
+
+        except httpx.HTTPError as exc:
+            yield f"data: {json_module.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+        except asyncio.CancelledError:
+            # Client disconnected - gracefully end the stream
+            yield f"data: {json_module.dumps({'type': 'error', 'error': 'Request cancelled'})}\n\n"
+        except Exception as exc:
+            # Catch all other exceptions to prevent TaskGroup errors
+            yield f"data: {json_module.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 # PowerPoint Export Models and Endpoint
@@ -1384,6 +2820,12 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
     EARTH = RGBColor(139, 111, 71)       # --earth: #8b6f47
     WHITE = RGBColor(255, 255, 255)
 
+    def sanitize_text(value: str) -> str:
+        """Remove control characters that can corrupt the PPTX XML."""
+        if not value:
+            return ""
+        return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", value)
+
     def get_priority_color(priority: str) -> RGBColor:
         colors = {
             'high': CORAL,
@@ -1420,7 +2862,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         tf.word_wrap = True
         tf.auto_size = None
         p = tf.paragraphs[0]
-        p.text = text
+        p.text = sanitize_text(text)
         p.font.size = Pt(font_size)
         p.font.color.rgb = font_color
         p.font.bold = bold
@@ -1461,14 +2903,14 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         # Project name
         title_box = add_text_box(
             slide, MARGIN, MARGIN, prs.slide_width - MARGIN * 2, Inches(0.5),
-            slide_data.name, font_size=24, font_color=CHARCOAL, bold=True
+            sanitize_text(slide_data.name), font_size=24, font_color=CHARCOAL, bold=True
         )
 
         # Project description (subtitle)
         if slide_data.description:
             add_text_box(
                 slide, MARGIN, MARGIN + Inches(0.45), prs.slide_width - MARGIN * 2, Inches(0.3),
-                slide_data.description, font_size=12, font_color=CHARCOAL
+                sanitize_text(slide_data.description), font_size=12, font_color=CHARCOAL
             )
 
         # Metadata row
@@ -1476,7 +2918,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         meta_x = MARGIN
 
         # Target date
-        target_text = f"Target: {slide_data.targetDate if slide_data.targetDate else 'TBD'}"
+        target_text = sanitize_text(f"Target: {slide_data.targetDate if slide_data.targetDate else 'TBD'}")
         target_box = add_text_box(slide, meta_x, meta_y, Inches(1.5), Inches(0.25), target_text, font_size=10, font_color=STONE)
         meta_x += Inches(1.6)
 
@@ -1484,7 +2926,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         priority_color = get_priority_color(slide_data.priority)
         priority_shape = add_rounded_rectangle(slide, meta_x, meta_y, Inches(1.1), Inches(0.25), fill_color=CREAM, line_color=priority_color)
         priority_tf = priority_shape.text_frame
-        priority_tf.paragraphs[0].text = f"{slide_data.priority} priority"
+        priority_tf.paragraphs[0].text = sanitize_text(f"{slide_data.priority} priority")
         priority_tf.paragraphs[0].font.size = Pt(9)
         priority_tf.paragraphs[0].font.color.rgb = priority_color
         priority_tf.paragraphs[0].font.bold = True
@@ -1495,7 +2937,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         # Status badge
         status_shape = add_rounded_rectangle(slide, meta_x, meta_y, Inches(0.9), Inches(0.25), fill_color=CLOUD)
         status_tf = status_shape.text_frame
-        status_tf.paragraphs[0].text = slide_data.status
+        status_tf.paragraphs[0].text = sanitize_text(slide_data.status)
         status_tf.paragraphs[0].font.size = Pt(9)
         status_tf.paragraphs[0].font.color.rgb = CHARCOAL
         status_tf.paragraphs[0].font.bold = True
@@ -1506,10 +2948,10 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         # Stakeholders
         if slide_data.stakeholders:
             stakeholder_names = [s.name for s in slide_data.stakeholders[:5]]
-            stakeholder_text = ", ".join(stakeholder_names)
+            stakeholder_text = sanitize_text(", ".join(stakeholder_names))
             if len(slide_data.stakeholders) > 5:
-                stakeholder_text += f" +{len(slide_data.stakeholders) - 5}"
-            add_text_box(slide, meta_x, meta_y, Inches(4), Inches(0.25), f"Team: {stakeholder_text}", font_size=10, font_color=STONE)
+                stakeholder_text += sanitize_text(f" +{len(slide_data.stakeholders) - 5}")
+            add_text_box(slide, meta_x, meta_y, Inches(4), Inches(0.25), sanitize_text(f"Team: {stakeholder_text}"), font_size=10, font_color=STONE)
 
         # Header divider line
         line = slide.shapes.add_shape(
@@ -1534,7 +2976,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
                     "EXECUTIVE UPDATE", font_size=9, font_color=STONE, bold=True)
 
         # Executive Update content
-        exec_content = slide_data.executiveUpdate or slide_data.description or "No executive update yet."
+        exec_content = sanitize_text(slide_data.executiveUpdate or slide_data.description or "No executive update yet.")
         exec_text_box = slide.shapes.add_textbox(
             left_x + Inches(0.15), CONTENT_TOP + Inches(0.35),
             panel_width - Inches(0.3), exec_height - Inches(0.5)
@@ -1561,15 +3003,15 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
                 break
             # Author and date
             add_text_box(slide, left_x + Inches(0.15), updates_y, Inches(1.5), Inches(0.2),
-                        update.author, font_size=10, font_color=CHARCOAL, bold=True)
+                        sanitize_text(update.author), font_size=10, font_color=CHARCOAL, bold=True)
             add_text_box(slide, left_x + panel_width - Inches(1.5), updates_y, Inches(1.35), Inches(0.2),
-                        format_datetime_simple(update.date), font_size=9, font_color=STONE, alignment=PP_ALIGN.RIGHT)
+                        sanitize_text(format_datetime_simple(update.date)), font_size=9, font_color=STONE, alignment=PP_ALIGN.RIGHT)
             updates_y += Inches(0.2)
             # Note text
             note_box = slide.shapes.add_textbox(left_x + Inches(0.15), updates_y, panel_width - Inches(0.3), Inches(0.4))
             note_tf = note_box.text_frame
             note_tf.word_wrap = True
-            note_tf.paragraphs[0].text = update.note[:150]
+            note_tf.paragraphs[0].text = sanitize_text(update.note)[:150]
             note_tf.paragraphs[0].font.size = Pt(9)
             note_tf.paragraphs[0].font.color.rgb = STONE
             note_tf.paragraphs[0].font.name = "Arial"
@@ -1599,14 +3041,14 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
             task_box = slide.shapes.add_textbox(right_x + Inches(0.15), completed_y, panel_width - Inches(1.2), Inches(0.25))
             task_tf = task_box.text_frame
             task_tf.word_wrap = True
-            task_tf.paragraphs[0].text = task.title[:60]
+            task_tf.paragraphs[0].text = sanitize_text(task.title)[:60]
             task_tf.paragraphs[0].font.size = Pt(10)
             task_tf.paragraphs[0].font.color.rgb = CHARCOAL
             task_tf.paragraphs[0].font.bold = True
             task_tf.paragraphs[0].font.name = "Arial"
             # Date
             add_text_box(slide, right_x + panel_width - Inches(1), completed_y, Inches(0.85), Inches(0.2),
-                        task.date, font_size=9, font_color=SAGE, alignment=PP_ALIGN.RIGHT)
+                        sanitize_text(task.date), font_size=9, font_color=SAGE, alignment=PP_ALIGN.RIGHT)
             completed_y += Inches(0.35)
 
         if not slide_data.recentlyCompleted:
@@ -1630,15 +3072,16 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
             task_box = slide.shapes.add_textbox(right_x + Inches(0.15), nextup_y, panel_width - Inches(1.2), Inches(0.25))
             task_tf = task_box.text_frame
             task_tf.word_wrap = True
-            task_tf.paragraphs[0].text = task.title[:60]
+            task_tf.paragraphs[0].text = sanitize_text(task.title)[:60]
             task_tf.paragraphs[0].font.size = Pt(10)
             task_tf.paragraphs[0].font.color.rgb = CHARCOAL
             task_tf.paragraphs[0].font.bold = True
             task_tf.paragraphs[0].font.name = "Arial"
             # Date - color based on content (overdue = coral, otherwise stone)
-            date_color = CORAL if 'overdue' in task.date.lower() else (AMBER if 'today' in task.date.lower() or 'tomorrow' in task.date.lower() else STONE)
+            date_text = sanitize_text(task.date)
+            date_color = CORAL if 'overdue' in date_text.lower() else (AMBER if 'today' in date_text.lower() or 'tomorrow' in date_text.lower() else STONE)
             add_text_box(slide, right_x + panel_width - Inches(1), nextup_y, Inches(0.85), Inches(0.2),
-                        task.date, font_size=9, font_color=date_color, alignment=PP_ALIGN.RIGHT)
+                        date_text, font_size=9, font_color=date_color, alignment=PP_ALIGN.RIGHT)
             nextup_y += Inches(0.35)
 
         if not slide_data.nextUp:
@@ -1702,3 +3145,72 @@ def export_slides_to_powerpoint(payload: SlidesExportPayload, request: Request, 
 @app.get("/")
 def root():
     return {"status": "ok"}
+
+
+def validate_admin_token_for_cli(admin_token: str | None) -> None:
+    expected_token = os.getenv(ADMIN_TOKEN_ENV)
+    if not expected_token:
+        if current_environment() in PROTECTED_ENVIRONMENTS:
+            raise RuntimeError("Admin token not configured for this environment")
+        logger.warning(
+            "Admin token not configured; allowing admin CLI command in non-protected environment"
+        )
+        return
+    if not admin_token:
+        raise RuntimeError("Admin token required for this operation")
+    if admin_token != expected_token:
+        raise RuntimeError("Invalid admin token")
+
+
+def run_people_backfill_cli(admin_token: str | None) -> None:
+    validate_admin_token_for_cli(admin_token)
+    create_db_and_tables()
+    with Session(engine) as session:
+        run_people_backfill(session)
+    logger.info("People backfill completed or already applied.")
+
+
+def run_unique_constraints_migration_cli(admin_token: str | None) -> None:
+    validate_admin_token_for_cli(admin_token)
+    create_db_and_tables()
+    with Session(engine) as session:
+        migrate_add_unique_constraints(session)
+    logger.info("UNIQUE constraints migration completed or already applied.")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Manity Portfolio API utilities")
+    subparsers = parser.add_subparsers(dest="command")
+
+    backfill_parser = subparsers.add_parser(
+        "run-people-backfill",
+        help="Run the people backfill migration before starting the API server",
+    )
+    backfill_parser.add_argument(
+        "--admin-token",
+        default=os.getenv(ADMIN_TOKEN_ENV),
+        help="Admin token for protected environments (defaults to MANITY_ADMIN_TOKEN)",
+    )
+
+    migration_parser = subparsers.add_parser(
+        "run-unique-constraints-migration",
+        help="Add UNIQUE constraints to project.name and person.name",
+    )
+    migration_parser.add_argument(
+        "--admin-token",
+        default=os.getenv(ADMIN_TOKEN_ENV),
+        help="Admin token for protected environments (defaults to MANITY_ADMIN_TOKEN)",
+    )
+
+    args = parser.parse_args()
+
+    if args.command == "run-people-backfill":
+        run_people_backfill_cli(args.admin_token)
+    elif args.command == "run-unique-constraints-migration":
+        run_unique_constraints_migration_cli(args.admin_token)
+    else:
+        parser.print_help()
+
+
+if __name__ == "__main__":
+    main()
