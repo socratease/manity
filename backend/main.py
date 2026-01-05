@@ -2400,7 +2400,11 @@ async def proxy_llm_chat(payload: ChatRequest, request: Request, session: Sessio
         )
 
     data = response.json()
-    message_content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    choices = data.get("choices") or []
+    if not choices:
+        log_action(session, "llm_chat_error", "llm", None, {"model": payload.model, "error": "Empty choices in response"}, request)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="LLM returned empty response")
+    message_content = choices[0].get("message", {}).get("content", "")
 
     # Extract thinking and text content from OpenAI's extended thinking response format
     # Content can be a string or an array of content blocks with types "thinking" and "text"
@@ -2480,7 +2484,10 @@ async def stream_llm_chat(payload: ChatRequest, request: Request, session: Sessi
 
                             try:
                                 chunk_data = json_module.loads(data_str)
-                                choice = chunk_data.get("choices", [{}])[0]
+                                choices = chunk_data.get("choices") or []
+                                if not choices:
+                                    continue  # Skip chunks without choices
+                                choice = choices[0]
                                 delta = choice.get("delta", {})
                                 finish_reason = choice.get("finish_reason") or finish_reason
 
