@@ -36,6 +36,7 @@ import type {
   ExecutionCallbacks,
   AgentExecutionResultWithThinking,
 } from './types';
+import type { FunctionTool } from '@openai/agents';
 
 const LLM_MODEL = import.meta.env.VITE_LLM_MODEL || 'gpt-4.1';
 
@@ -111,8 +112,8 @@ function createThinkingStep(
 /**
  * Convert our tools to OpenAI format
  */
-function getToolDefinitions(): ToolDefinition[] {
-  return allTools.map((t) => ({
+function getToolDefinitions(tools: FunctionTool[]): ToolDefinition[] {
+  return tools.map((t) => ({
     type: 'function' as const,
     function: {
       name: t.name,
@@ -164,6 +165,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     thinkingSteps: ThinkingStep[];
     callbacks?: ExecutionCallbacks;
     systemPrompt: string;
+    tools: FunctionTool[];
   } | null>(null);
 
   // Build services for tools
@@ -211,13 +213,22 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     toolCalls: ToolCall[],
     toolContext: ToolExecutionContext,
     thinkingSteps: ThinkingStep[],
-    callbacks?: ExecutionCallbacks
+    callbacks?: ExecutionCallbacks,
+    tools?: FunctionTool[]
   ): Promise<{ results: Array<{ tool_call_id: string; content: string }>; paused: boolean; pausedQuestion?: UserQuestion }> => {
     const results: Array<{ tool_call_id: string; content: string }> = [];
+    const toolsToUse = tools || allTools;
 
     for (const toolCall of toolCalls) {
       const toolName = toolCall.function.name;
-      const toolInput = JSON.parse(toolCall.function.arguments || '{}');
+      const toolInputStr = toolCall.function.arguments || '{}';
+
+      let toolInput: Record<string, unknown>;
+      try {
+        toolInput = JSON.parse(toolInputStr);
+      } catch {
+        toolInput = {};
+      }
 
       console.debug('[Momentum] Starting tool', toolName, toolInput);
 
@@ -232,7 +243,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       callbacks?.onToolStart?.(toolName, toolInput as Record<string, unknown>);
 
       // Find the tool
-      const tool = allTools.find(t => t.name === toolName);
+      const tool = toolsToUse.find(t => t.name === toolName);
       if (!tool) {
         const errorResult = `Error: Tool ${toolName} not found`;
         results.push({ tool_call_id: toolCall.id, content: errorResult });
@@ -246,8 +257,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         // Execute the tool - tools expect (input, runContext?)
         // We pass a mock RunContext that has our toolContext
         const mockRunContext = { context: toolContext };
-        const rawResult = await tool.execute(toolInput, mockRunContext as any);
-        const result = String(rawResult);
+        const rawResult = await tool.invoke(mockRunContext as any, toolInputStr);
+        const result = typeof rawResult === 'string' ? rawResult : JSON.stringify(rawResult);
 
         console.debug('[Momentum] Tool result', { toolName, result });
 
@@ -307,6 +318,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     userMessage: string,
     toolContext: ToolExecutionContext,
     callbacks?: ExecutionCallbacks,
+    tools?: FunctionTool[],
     existingHistory?: ChatMessage[],
     existingThinkingSteps?: ThinkingStep[]
   ): Promise<{
@@ -355,7 +367,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
           {
             model: LLM_MODEL,
             messages,
-            tools: getToolDefinitions(),
+            tools: getToolDefinitions(tools || allTools),
             tool_choice: 'auto',
           },
           {
@@ -386,7 +398,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         response = await createChatCompletion({
           model: LLM_MODEL,
           messages,
-          tools: getToolDefinitions(),
+          tools: getToolDefinitions(tools || allTools),
           tool_choice: 'auto',
         });
 
@@ -436,7 +448,8 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         toolCalls,
         toolContext,
         thinkingSteps,
-        callbacks
+        callbacks,
+        tools
       );
 
       // Add tool results to conversation history (proper OpenAI format)
@@ -548,6 +561,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         message,
         toolContext,
         callbacks,
+        agent.tools,
         conversationHistoryRef.current
       );
 
@@ -560,6 +574,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
           thinkingSteps: result.thinkingSteps,
           callbacks,
           systemPrompt,
+          tools: agent.tools,
         };
 
         conversationHistoryRef.current = result.conversationHistory;
@@ -609,7 +624,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
       throw new Error('No paused execution to continue');
     }
 
-    const { toolContext, conversationHistory, thinkingSteps, callbacks, systemPrompt } = pausedExecutionRef.current;
+    const { toolContext, conversationHistory, thinkingSteps, callbacks, systemPrompt, tools } = pausedExecutionRef.current;
 
     // Clear paused state
     setIsAwaitingUser(false);
@@ -647,6 +662,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         '', // Empty message since we're continuing
         toolContext,
         callbacks,
+        tools,
         conversationHistory,
         thinkingSteps
       );
@@ -659,6 +675,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
           thinkingSteps: result.thinkingSteps,
           callbacks,
           systemPrompt,
+          tools,
         };
 
         conversationHistoryRef.current = result.conversationHistory;
