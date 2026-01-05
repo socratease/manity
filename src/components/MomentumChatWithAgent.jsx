@@ -103,6 +103,85 @@ export default function MomentumChatWithAgent({
   const [streamingThinkingSteps, setStreamingThinkingSteps] = useState([]);
   const [inProgressAssistantMessage, setInProgressAssistantMessage] = useState(null);
 
+  // Persist agent deltas to the backend (projects, tasks, subtasks, comments)
+  const persistAgentResults = useCallback(
+    async (result) => {
+      const { deltas, workingProjects } = result || {};
+      if (!deltas || deltas.length === 0 || !workingProjects) return;
+
+      const findProject = (projectId) =>
+        workingProjects.find((project) => `${project.id}` === `${projectId}`);
+
+      for (const delta of deltas) {
+        try {
+          switch (delta.type) {
+            case 'remove_project': {
+              const project = findProject(delta.projectId);
+              if (project) {
+                await createProject(project);
+              }
+              break;
+            }
+            case 'remove_activity': {
+              const project = findProject(delta.projectId);
+              const activity = project?.recentActivity?.find((a) => a.id === delta.activityId);
+              if (project && activity) {
+                await addActivity(project.id, activity);
+              }
+              break;
+            }
+            case 'remove_task': {
+              const project = findProject(delta.projectId);
+              const task = project?.plan?.find((t) => t.id === delta.taskId);
+              if (project && task) {
+                await addTask(project.id, task);
+              }
+              break;
+            }
+            case 'restore_task': {
+              const project = findProject(delta.projectId);
+              const task = project?.plan?.find((t) => t.id === delta.taskId);
+              if (project && task) {
+                await updateTask(project.id, task.id, task);
+              }
+              break;
+            }
+            case 'remove_subtask': {
+              const project = findProject(delta.projectId);
+              const task = project?.plan?.find((t) => t.id === delta.taskId);
+              const subtask = task?.subtasks?.find((st) => st.id === delta.subtaskId);
+              if (project && task && subtask) {
+                await addSubtask(project.id, task.id, subtask);
+              }
+              break;
+            }
+            case 'restore_subtask': {
+              const project = findProject(delta.projectId);
+              const task = project?.plan?.find((t) => t.id === delta.taskId);
+              const subtask = task?.subtasks?.find((st) => st.id === delta.subtaskId);
+              if (project && task && subtask) {
+                await updateSubtask(project.id, task.id, subtask.id, subtask);
+              }
+              break;
+            }
+            case 'restore_project': {
+              const project = findProject(delta.projectId);
+              if (project) {
+                await updateProject(project.id, project);
+              }
+              break;
+            }
+            default:
+              break;
+          }
+        } catch (error) {
+          console.error('Failed to persist agent delta', delta, error);
+        }
+      }
+    },
+    [addActivity, addSubtask, addTask, createProject, updateProject, updateSubtask, updateTask]
+  );
+
   // Update project positions for link visualization
   const updateProjectPositions = useCallback(() => {
     const newPositions = {};
@@ -232,6 +311,9 @@ export default function MomentumChatWithAgent({
       // Execute message through the SDK agent with callbacks
       const result = await executeMessage(inputValue, thinkingCallbacks);
 
+      // Persist the agent's changes to the backend so created tasks/projects are stored
+      await persistAgentResults(result);
+
       const assistantMessage = {
         id: assistantId,
         role: 'assistant',
@@ -311,6 +393,9 @@ export default function MomentumChatWithAgent({
 
     try {
       const result = await continueWithUserResponse(response);
+
+      // Persist follow-up actions (e.g., tasks/subtasks) to the backend
+      await persistAgentResults(result);
 
       // Update the last message with continued results
       const assistantMessage = {
