@@ -4,7 +4,7 @@ import SettingsModal from "./components/SettingsModal";
 import { PortfolioProvider, usePortfolioData } from "./hooks/usePortfolioData";
 
 function AppContent() {
-  const { projects, handleExport, handleImport, emailSettings, refreshEmailSettings, saveEmailSettings } = usePortfolioData();
+  const { projects, projectsError, handleExport, handleImport, emailSettings, refreshEmailSettings, saveEmailSettings } = usePortfolioData();
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settingsData, setSettingsData] = useState({});
 
@@ -42,6 +42,19 @@ function AppContent() {
 
   return (
     <>
+      {projectsError && (
+        <div
+          style={{
+            backgroundColor: '#FEF2F2',
+            color: '#B91C1C',
+            padding: '12px 16px',
+            borderRadius: '12px',
+            margin: '12px 16px'
+          }}
+        >
+          {projectsError}
+        </div>
+      )}
       <ManityApp onOpenSettings={openSettings} />
       <SettingsModal
         isOpen={isSettingsOpen}
