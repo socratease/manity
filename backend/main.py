@@ -136,6 +136,216 @@ def ensure_column(table_name: str, column_definition: str) -> None:
     _PRAGMA_CACHE[f"{table_name}:{column_name}"] = {column_name}
 
 
+def column_has_unique_constraint(table_name: str, column_name: str) -> bool:
+    """Check if a column has a UNIQUE constraint."""
+    with engine.connect() as connection:
+        # Get the CREATE TABLE statement
+        result = connection.exec_driver_sql(
+            f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{table_name}'"
+        ).fetchone()
+
+        if not result:
+            return False
+
+        create_sql = result[0]
+        if not create_sql:
+            return False
+
+        # Check for UNIQUE constraint on the column
+        # Patterns: "column_name" UNIQUE, column_name UNIQUE, UNIQUE(column_name), etc.
+        import re
+        patterns = [
+            rf'["`]?{column_name}["`]?\s+[^,]*?\bUNIQUE\b',  # column definition with UNIQUE
+            rf'\bUNIQUE\s*\(\s*["`]?{column_name}["`]?\s*\)',  # UNIQUE(column)
+        ]
+
+        for pattern in patterns:
+            if re.search(pattern, create_sql, re.IGNORECASE):
+                return True
+
+        return False
+
+
+def migrate_add_unique_constraints(session: Session) -> None:
+    """
+    Add UNIQUE constraints to project.name and person.name.
+
+    This migration:
+    1. Checks if constraints already exist
+    2. Handles duplicate names by appending numeric suffixes
+    3. Recreates tables with UNIQUE constraints
+    4. Preserves all relationships and foreign keys
+    """
+    migration_key = "add-unique-constraints-v1"
+    if session.get(MigrationState, migration_key):
+        logger.info("Migration %s already applied, skipping", migration_key)
+        return
+
+    logger.info("Running migration: %s", migration_key)
+
+    # Check if constraints already exist
+    project_has_unique = column_has_unique_constraint("project", "name")
+    person_has_unique = column_has_unique_constraint("person", "name")
+
+    if project_has_unique and person_has_unique:
+        logger.info("UNIQUE constraints already exist, marking migration as complete")
+        session.add(MigrationState(key=migration_key))
+        session.commit()
+        return
+
+    with engine.begin() as connection:
+        # Temporarily disable foreign key constraints during migration
+        connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
+
+        # Migration for project.name
+        if not project_has_unique:
+            logger.info("Adding UNIQUE constraint to project.name")
+
+            # First, resolve any duplicate project names
+            result = connection.exec_driver_sql("""
+                SELECT name, COUNT(*) as count
+                FROM project
+                GROUP BY LOWER(name)
+                HAVING count > 1
+            """).fetchall()
+
+            if result:
+                logger.warning("Found %d duplicate project names, resolving...", len(result))
+                for name, count in result:
+                    # Get all projects with this name (case-insensitive)
+                    duplicates = connection.exec_driver_sql(
+                        "SELECT id, name FROM project WHERE LOWER(name) = LOWER(?)",
+                        [name]
+                    ).fetchall()
+
+                    # Keep the first one unchanged, rename the rest
+                    for idx, (project_id, project_name) in enumerate(duplicates[1:], start=2):
+                        new_name = f"{project_name} ({idx})"
+                        logger.info("Renaming duplicate project '%s' -> '%s'", project_name, new_name)
+                        connection.exec_driver_sql(
+                            "UPDATE project SET name = ? WHERE id = ?",
+                            [new_name, project_id]
+                        )
+
+            # Create new table with UNIQUE constraint
+            connection.exec_driver_sql("""
+                CREATE TABLE project_new (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    priority TEXT NOT NULL,
+                    progress INTEGER NOT NULL,
+                    lastUpdate TEXT,
+                    description TEXT NOT NULL,
+                    executiveUpdate TEXT,
+                    startDate TEXT,
+                    targetDate TEXT,
+                    stakeholders JSON
+                )
+            """)
+
+            # Copy data
+            connection.exec_driver_sql("""
+                INSERT INTO project_new
+                SELECT id, name, status, priority, progress, lastUpdate,
+                       description, executiveUpdate, startDate, targetDate, stakeholders
+                FROM project
+            """)
+
+            # Drop old table and rename new one
+            connection.exec_driver_sql("DROP TABLE project")
+            connection.exec_driver_sql("ALTER TABLE project_new RENAME TO project")
+
+            # Recreate indexes
+            connection.exec_driver_sql("CREATE INDEX ix_project_name ON project (name)")
+
+            logger.info("Successfully added UNIQUE constraint to project.name")
+
+        # Migration for person.name
+        if not person_has_unique:
+            logger.info("Adding UNIQUE constraint to person.name")
+
+            # First, resolve any duplicate person names
+            result = connection.exec_driver_sql("""
+                SELECT name, COUNT(*) as count
+                FROM person
+                GROUP BY LOWER(name)
+                HAVING count > 1
+            """).fetchall()
+
+            if result:
+                logger.warning("Found %d duplicate person names, resolving...", len(result))
+                for name, count in result:
+                    # Get all people with this name (case-insensitive)
+                    duplicates = connection.exec_driver_sql(
+                        "SELECT id, name, team, email FROM person WHERE LOWER(name) = LOWER(?)",
+                        [name]
+                    ).fetchall()
+
+                    # Merge logic: keep first one, update foreign keys from others
+                    primary_id = duplicates[0][0]
+                    duplicate_ids = [dup[0] for dup in duplicates[1:]]
+
+                    logger.info("Merging %d duplicate entries for person '%s'", len(duplicate_ids), name)
+
+                    # Update foreign keys to point to primary person
+                    for dup_id in duplicate_ids:
+                        connection.exec_driver_sql(
+                            "UPDATE task SET assignee_id = ? WHERE assignee_id = ?",
+                            [primary_id, dup_id]
+                        )
+                        connection.exec_driver_sql(
+                            "UPDATE subtask SET assignee_id = ? WHERE assignee_id = ?",
+                            [primary_id, dup_id]
+                        )
+                        connection.exec_driver_sql(
+                            "UPDATE activity SET author_id = ? WHERE author_id = ?",
+                            [primary_id, dup_id]
+                        )
+                        connection.exec_driver_sql(
+                            "UPDATE projectpersonlink SET person_id = ? WHERE person_id = ?",
+                            [primary_id, dup_id]
+                        )
+
+                        # Delete duplicate
+                        connection.exec_driver_sql("DELETE FROM person WHERE id = ?", [dup_id])
+
+            # Create new table with UNIQUE constraint
+            connection.exec_driver_sql("""
+                CREATE TABLE person_new (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    team TEXT NOT NULL,
+                    email TEXT
+                )
+            """)
+
+            # Copy data
+            connection.exec_driver_sql("""
+                INSERT INTO person_new
+                SELECT id, name, team, email
+                FROM person
+            """)
+
+            # Drop old table and rename new one
+            connection.exec_driver_sql("DROP TABLE person")
+            connection.exec_driver_sql("ALTER TABLE person_new RENAME TO person")
+
+            # Recreate indexes
+            connection.exec_driver_sql("CREATE INDEX ix_person_name ON person (name)")
+
+            logger.info("Successfully added UNIQUE constraint to person.name")
+
+        # Re-enable foreign key constraints
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+
+    # Mark migration as complete
+    session.add(MigrationState(key=migration_key))
+    session.commit()
+
+    logger.info("Migration %s completed successfully", migration_key)
+
+
 def generate_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
@@ -1532,6 +1742,11 @@ def trigger_people_backfill(session: Session = Depends(get_session)) -> dict:
 @app.on_event("startup")
 def on_startup() -> None:
     create_db_and_tables()
+
+    # Run database migrations
+    with Session(engine) as session:
+        migrate_add_unique_constraints(session)
+
     if not is_dev_seeding_enabled():
         return
 
@@ -2955,9 +3170,18 @@ def run_people_backfill_cli(admin_token: str | None) -> None:
     logger.info("People backfill completed or already applied.")
 
 
+def run_unique_constraints_migration_cli(admin_token: str | None) -> None:
+    validate_admin_token_for_cli(admin_token)
+    create_db_and_tables()
+    with Session(engine) as session:
+        migrate_add_unique_constraints(session)
+    logger.info("UNIQUE constraints migration completed or already applied.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Manity Portfolio API utilities")
     subparsers = parser.add_subparsers(dest="command")
+
     backfill_parser = subparsers.add_parser(
         "run-people-backfill",
         help="Run the people backfill migration before starting the API server",
@@ -2968,10 +3192,22 @@ def main() -> None:
         help="Admin token for protected environments (defaults to MANITY_ADMIN_TOKEN)",
     )
 
+    migration_parser = subparsers.add_parser(
+        "run-unique-constraints-migration",
+        help="Add UNIQUE constraints to project.name and person.name",
+    )
+    migration_parser.add_argument(
+        "--admin-token",
+        default=os.getenv(ADMIN_TOKEN_ENV),
+        help="Admin token for protected environments (defaults to MANITY_ADMIN_TOKEN)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "run-people-backfill":
         run_people_backfill_cli(args.admin_token)
+    elif args.command == "run-unique-constraints-migration":
+        run_unique_constraints_migration_cli(args.admin_token)
     else:
         parser.print_help()
 
