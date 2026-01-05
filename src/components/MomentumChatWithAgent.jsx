@@ -515,6 +515,25 @@ export default function MomentumChatWithAgent({
     const isUser = message.role === 'user';
     const isLinked = (message.linkedProjectIds?.length > 0) || (message.updatedProjectIds?.length > 0);
 
+    const isActiveAssistantStream =
+      !isUser &&
+      isTyping &&
+      inProgressAssistantMessage?.id === message.id;
+
+    const thinkingStepsToShow = isActiveAssistantStream ? [] : message.thinkingSteps;
+
+    const hasRenderableContent = Boolean(
+      message.note?.trim() ||
+      message.content?.trim() ||
+      (thinkingStepsToShow?.length ?? 0) > 0 ||
+      message.pendingQuestion ||
+      (message.actionResults?.length ?? 0) > 0
+    );
+
+    if (isActiveAssistantStream && !hasRenderableContent) {
+      return null;
+    }
+
     return (
       <div
         key={message.id}
@@ -531,18 +550,20 @@ export default function MomentumChatWithAgent({
           {!isUser && <div style={styles.aiAvatar}>M</div>}
           <div style={styles.messageContent}>
             {/* Thinking Process - shows agent's reasoning */}
-            {message.thinkingSteps?.length > 0 && (
+            {thinkingStepsToShow?.length > 0 && (
               <ThinkingProcess
-                steps={message.thinkingSteps}
+                steps={thinkingStepsToShow}
                 colors={colors}
               />
             )}
             {(message.note || message.content) && (
-              <div style={{
-                ...styles.messageText,
-                ...(isUser ? styles.userText : styles.assistantText),
-              }}>
-                {message.note || message.content}
+              <div
+                style={{
+                  ...styles.messageText,
+                  ...(isUser ? styles.userText : styles.assistantText),
+                }}
+              >
+                {renderMarkdownBlocks(message.note || message.content)}
               </div>
             )}
             {/* User Question Prompt - when agent needs clarification */}
@@ -791,6 +812,92 @@ export default function MomentumChatWithAgent({
       </div>
     </div>
   );
+}
+
+function renderInlineMarkdown(text, keyPrefix) {
+  const segments = [];
+  const boldRegex = /\*\*(.+?)\*\*/g;
+  let lastIndex = 0;
+  let match;
+
+  while ((match = boldRegex.exec(text)) !== null) {
+    if (match.index > lastIndex) {
+      segments.push(text.slice(lastIndex, match.index));
+    }
+
+    segments.push(<strong key={`${keyPrefix}-bold-${segments.length}`}>{match[1]}</strong>);
+    lastIndex = boldRegex.lastIndex;
+  }
+
+  if (lastIndex < text.length) {
+    segments.push(text.slice(lastIndex));
+  }
+
+  return segments;
+}
+
+function renderMarkdownBlocks(text) {
+  const lines = text.split(/\r?\n/);
+  const blocks = [];
+  let currentList = null;
+
+  const flushList = () => {
+    if (!currentList) return;
+
+    const ListTag = currentList.type === 'ol' ? 'ol' : 'ul';
+    blocks.push(
+      <ListTag
+        key={`list-${blocks.length}`}
+        style={{ paddingLeft: 20, margin: '8px 0' }}
+      >
+        {currentList.items.map((item, idx) => (
+          <li key={`${currentList.type}-${idx}`} style={{ marginBottom: 4 }}>
+            {renderInlineMarkdown(item, `${currentList.type}-${idx}`)}
+          </li>
+        ))}
+      </ListTag>
+    );
+
+    currentList = null;
+  };
+
+  lines.forEach((line, idx) => {
+    const trimmed = line.trim();
+    const unorderedMatch = /^[-*]\s+(.*)/.exec(trimmed);
+    const orderedMatch = /^\d+\.\s+(.*)/.exec(trimmed);
+
+    if (unorderedMatch) {
+      if (!currentList || currentList.type !== 'ul') {
+        flushList();
+        currentList = { type: 'ul', items: [] };
+      }
+      currentList.items.push(unorderedMatch[1]);
+      return;
+    }
+
+    if (orderedMatch) {
+      if (!currentList || currentList.type !== 'ol') {
+        flushList();
+        currentList = { type: 'ol', items: [] };
+      }
+      currentList.items.push(orderedMatch[1]);
+      return;
+    }
+
+    flushList();
+
+    if (trimmed.length > 0) {
+      blocks.push(
+        <p key={`p-${idx}`} style={{ margin: '8px 0' }}>
+          {renderInlineMarkdown(trimmed, `p-${idx}`)}
+        </p>
+      );
+    }
+  });
+
+  flushList();
+
+  return blocks.length > 0 ? blocks : [text];
 }
 
 // Styles (same as original MomentumChat)
