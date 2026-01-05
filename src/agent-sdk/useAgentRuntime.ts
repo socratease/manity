@@ -289,14 +289,6 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         callbacks?.onThinkingStep?.(toolStep);
         callbacks?.onToolComplete?.(toolName, result);
 
-        // Add result thinking step
-        const resultStep = createThinkingStep('tool_result', result, {
-          toolName,
-          status: 'completed',
-        });
-        thinkingSteps.push(resultStep);
-        callbacks?.onThinkingStep?.(resultStep);
-
       } catch (error) {
         const errorMessage = error instanceof Error ? error.message : 'Unknown error';
         const errorResult = `Error executing ${toolName}: ${errorMessage}`;
