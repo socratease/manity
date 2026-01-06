@@ -2196,11 +2196,15 @@ Write a professional executive summary that highlights the project's current sta
       projectLookup.set(project.name.toLowerCase(), project.id);
     });
 
-    const appendActionResult = (label, detail, deltas = []) => {
+    const appendActionResult = (label, detail, deltas = [], metadata = {}) => {
+      const { fallbackLabel, fallbackDetail, ...rest } = metadata;
+      const normalizedLabel = (label || '').trim();
+      const normalizedDetail = (detail || '').trim();
+
       result.actionResults.push({
-        label: label || 'Action processed',
-        detail: detail || 'No additional details provided.',
-        deltas
+        ...rest,
+        label: normalizedLabel || fallbackLabel || 'Action processed',
+        detail: normalizedDetail || fallbackDetail || 'No additional details provided.',
       });
       result.deltas.push(...deltas);
     };
@@ -2228,6 +2232,9 @@ Write a professional executive summary that highlights the project's current sta
       const actionDeltas = [];
       let label = '';
       let detail = '';
+      const providedLabel = (action.label || '').trim();
+      const providedDetail = (action.detail || '').trim();
+      let appendedActionResult = false;
 
       if (action.type === 'query_portfolio') {
         const scope = ['portfolio', 'project', 'people'].includes(action.scope)
@@ -2421,10 +2428,24 @@ Write a professional executive summary that highlights the project's current sta
           };
           project.plan = [...project.plan, newTask];
           actionDeltas.push({ type: 'remove_task', projectId: project.id, taskId });
-          label = `Added task "${newTask.title}" to ${project.name}`;
-          detail = `Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)})${taskAssignee ? ` assigned to ${taskAssignee.name}` : ''} to ${project.name}`;
+          const synthesizedLabel = `Added task "${newTask.title}" to ${project.name}`;
+          const synthesizedDetail = `Task "${newTask.title}" in ${project.name} (${describeDueDate(newTask.dueDate)})${taskAssignee ? ` assigned to ${taskAssignee.name}` : ''}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId,
+            taskTitle: newTask.title,
+            assigneeName: taskAssignee?.name,
+            dueDate: newTask.dueDate,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'update_task': {
@@ -2475,10 +2496,26 @@ Write a professional executive summary that highlights the project's current sta
           }
 
           actionDeltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
-          label = `Updated task "${task.title}" in ${project.name}`;
-          detail = `Updated task "${task.title}" in ${project.name}: ${changes.join('; ') || 'no tracked changes'}`;
+          const diffSummary = changes.join('; ');
+          const synthesizedLabel = `Updated task "${task.title}" in ${project.name}`;
+          const synthesizedDetail = `${task.title} in ${project.name}: ${diffSummary || 'no tracked changes'}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId: task.id,
+            taskTitle: task.title,
+            assigneeName: task.assignee?.name,
+            dueDate: task.dueDate,
+            diffSummary,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'add_subtask': {
@@ -2508,10 +2545,26 @@ Write a professional executive summary that highlights the project's current sta
           };
           task.subtasks = [...(task.subtasks || []), newSubtask];
           actionDeltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
-          label = `Added subtask "${newSubtask.title}" to ${task.title}`;
-          detail = `Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)})${subtaskAssignee ? ` assigned to ${subtaskAssignee.name}` : ''} under ${task.title} in ${project.name}`;
+          const synthesizedLabel = `Added subtask "${newSubtask.title}" to ${task.title}`;
+          const synthesizedDetail = `Subtask "${newSubtask.title}" under ${task.title} in ${project.name} (${describeDueDate(newSubtask.dueDate)})${subtaskAssignee ? ` assigned to ${subtaskAssignee.name}` : ''}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId: task.id,
+            taskTitle: task.title,
+            subtaskId,
+            subtaskTitle: newSubtask.title,
+            assigneeName: subtaskAssignee?.name,
+            dueDate: newSubtask.dueDate,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'update_subtask': {
@@ -2569,10 +2622,28 @@ Write a professional executive summary that highlights the project's current sta
           }
 
           actionDeltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
-          label = `Updated subtask "${subtask.title}" in ${task.title}`;
-          detail = `Updated subtask "${subtask.title}" in ${task.title}: ${changes.join('; ') || 'no tracked changes'}`;
+          const diffSummary = changes.join('; ');
+          const synthesizedLabel = `Updated subtask "${subtask.title}" in ${task.title}`;
+          const synthesizedDetail = `${subtask.title} under ${task.title} in ${project.name}: ${diffSummary || 'no tracked changes'}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId: task.id,
+            taskTitle: task.title,
+            subtaskId: subtask.id,
+            subtaskTitle: subtask.title,
+            assigneeName: subtask.assignee?.name,
+            dueDate: subtask.dueDate,
+            diffSummary,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'update_project': {
@@ -2627,10 +2698,22 @@ Write a professional executive summary that highlights the project's current sta
           }
 
           actionDeltas.push({ type: 'restore_project', projectId: project.id, previous });
-          label = `Updated ${project.name}`;
-          detail = `Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`;
+          const diffSummary = changes.join('; ');
+          const synthesizedLabel = `Updated project ${project.name}`;
+          const synthesizedDetail = `${project.name}: ${diffSummary || 'no tracked changes noted'}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            diffSummary,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'send_email': {
@@ -2674,7 +2757,12 @@ Write a professional executive summary that highlights the project's current sta
             });
             label = `Email sent to ${normalizedRecipients.join(', ')}`;
             detail = `Sent email "${action.subject}"`;
-            appendActionResult(label, detail, actionDeltas);
+            appendActionResult(label, detail, actionDeltas, {
+              type: action.type,
+              fallbackLabel: label,
+              fallbackDetail: detail,
+            });
+            appendedActionResult = true;
           } catch (error) {
             appendActionResult('Failed to send email', error?.message || 'Email service returned an error.', actionDeltas);
             continue;
@@ -2687,7 +2775,24 @@ Write a professional executive summary that highlights the project's current sta
           detail = `Skipped unsupported action type: ${action.type}`;
       }
 
-      appendActionResult(label, detail, actionDeltas);
+      if (!appendedActionResult) {
+        const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
+        const resolvedLabel = providedLabel || label;
+        const resolvedDetail = providedDetail || detail;
+        appendActionResult(resolvedLabel, resolvedDetail, actionDeltas, {
+          type: action.type,
+          projectId: project?.id,
+          projectName: project?.name,
+          taskId: action.taskId,
+          taskTitle: action.taskTitle || action.title,
+          subtaskId: action.subtaskId,
+          subtaskTitle: action.subtaskTitle,
+          assigneeName,
+          dueDate: action.dueDate,
+          fallbackLabel: resolvedLabel,
+          fallbackDetail: resolvedDetail,
+        });
+      }
     }
 
     if (projectsChanged) {

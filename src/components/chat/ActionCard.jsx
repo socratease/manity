@@ -41,6 +41,27 @@ const ActionCard = ({
     ? colors.coral + '25'
     : colors.sage + '25';
 
+  const formatDueDate = (date) => {
+    if (!date) return null;
+    const parsed = new Date(date);
+    if (Number.isNaN(parsed.getTime())) return date;
+    return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
+
+  const summaryParts = [];
+  if (action.projectName) summaryParts.push(action.projectName);
+  if (action.taskTitle) summaryParts.push(action.taskTitle);
+  if (action.subtaskTitle) summaryParts.push(`Subtask: ${action.subtaskTitle}`);
+  if (action.assigneeName) summaryParts.push(`Assignee: ${action.assigneeName}`);
+  const dueDate = formatDueDate(action.dueDate);
+  if (dueDate) summaryParts.push(`Due ${dueDate}`);
+  const structuredSummary = summaryParts.filter(Boolean).join(' • ');
+  const secondaryLine = action.diffSummary
+    ? structuredSummary
+      ? `${structuredSummary} • ${action.diffSummary}`
+      : action.diffSummary
+    : structuredSummary;
+
   return (
     <div style={styles.card}>
       <div style={styles.header}>
@@ -60,6 +81,9 @@ const ActionCard = ({
           </button>
         )}
       </div>
+      {secondaryLine && (
+        <div style={styles.secondary}>{secondaryLine}</div>
+      )}
       {action.error && (
         <div style={styles.content}>{action.error}</div>
       )}
@@ -143,6 +167,12 @@ const styles = {
     paddingLeft: '8px',
     borderLeft: '2px solid #E8A75D',
     fontStyle: 'italic',
+  },
+  secondary: {
+    marginTop: '2px',
+    fontSize: '11px',
+    color: '#3A3631',
+    paddingLeft: '28px',
   },
 };
 
