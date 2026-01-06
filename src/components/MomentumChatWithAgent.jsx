@@ -478,6 +478,27 @@ export default function MomentumChatWithAgent({
     const icons = { update_project: '↻', update_task: '✓', comment: '💬', create_project: '✦', add_task: '➕' };
     const labels = { update_project: 'Updated', update_task: 'Task updated', comment: 'Commented', create_project: 'Created', add_task: 'Added task' };
 
+    const formatDueDate = (date) => {
+      if (!date) return null;
+      const parsed = new Date(date);
+      if (Number.isNaN(parsed.getTime())) return date;
+      return parsed.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    };
+
+    const summaryParts = [];
+    if (action.projectName) summaryParts.push(action.projectName);
+    if (action.taskTitle) summaryParts.push(action.taskTitle);
+    if (action.subtaskTitle) summaryParts.push(`Subtask: ${action.subtaskTitle}`);
+    if (action.assigneeName) summaryParts.push(`Assignee: ${action.assigneeName}`);
+    const dueDate = formatDueDate(action.dueDate);
+    if (dueDate) summaryParts.push(`Due ${dueDate}`);
+    const structuredSummary = summaryParts.filter(Boolean).join(' • ');
+    const secondaryLine = action.diffSummary
+      ? structuredSummary
+        ? `${structuredSummary} • ${action.diffSummary}`
+        : action.diffSummary
+      : structuredSummary;
+
     return (
       <div key={index} style={styles.actionCard}>
         <div style={styles.actionHeader}>
@@ -501,6 +522,9 @@ export default function MomentumChatWithAgent({
             </button>
           )}
         </div>
+        {secondaryLine && (
+          <div style={styles.actionSecondary}>{secondaryLine}</div>
+        )}
         {action.error && (
           <div style={styles.actionContent}>{action.error}</div>
         )}
@@ -1059,6 +1083,12 @@ const getStyles = (colors) => ({
     color: '#D67C5C',
     paddingLeft: '8px',
     borderLeft: '2px solid #E8E3D8',
+  },
+  actionSecondary: {
+    marginTop: '2px',
+    fontSize: '11px',
+    color: '#3A3631',
+    paddingLeft: '28px',
   },
   actionDetail: {
     marginTop: '6px',
