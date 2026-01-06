@@ -81,6 +81,8 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     dotRepulsion: 6000, // Reduced repulsion force
     dotRepulsionRadius: 50,
     dotComfortRadius: 35,
+    positionTolerance: 2.5,
+    velocityTolerance: 0.05,
   };
 
   const getTimelineX = useCallback((date) => {
@@ -121,6 +123,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         vy: (Math.random() - 0.5) * 10,
         width: estimatedWidth,
         height: 28,
+        settled: false,
       };
     });
     setNodes(initialNodes);
@@ -131,6 +134,8 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     if (nodes.length === 0) return;
 
     const simulate = () => {
+      let allSettled = true;
+
       setNodes(prevNodes => {
         const applyCappedRepulsion = (distX, distY, strength, comfortRadius, maxForce, maxRange) => {
           const dist = Math.sqrt(distX * distX + distY * distY);
@@ -149,7 +154,12 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         const newNodes = prevNodes.map((node, i) => {
           // Skip physics for dragged node
           if (draggedNode === node.id) {
-            return { ...node, vx: 0, vy: 0 };
+            allSettled = false;
+            return { ...node, vx: 0, vy: 0, settled: false };
+          }
+
+          if (node.settled) {
+            return node;
           }
 
           let fx = 0;
@@ -249,17 +259,29 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
             newVy = 0;
           }
 
+          const positionDelta = Math.abs(dx) + Math.abs(dy);
+          const isSettled = positionDelta < physics.positionTolerance && speed < physics.velocityTolerance;
+          if (!isSettled) {
+            allSettled = false;
+          }
+
           return {
             ...node,
             x: node.x + newVx,
             y: node.y + newVy,
             vx: newVx,
             vy: newVy,
+            settled: isSettled,
           };
         });
 
         return newNodes;
       });
+
+      if (allSettled) {
+        animationRef.current = null;
+        return;
+      }
 
       animationRef.current = requestAnimationFrame(simulate);
     };
