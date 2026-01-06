@@ -69,20 +69,18 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
 
   const physics = {
     springStrength: 0.012,
-    repulsion: 4000,
+    repulsion: 4000, // Reduced to allow smoother settling
     maxRepulsionForce: 35,
-    damping: 0.85, // Increased damping for faster energy dissipation
+    damping: 0.88, // Increased damping to reduce jitter
     verticalSpring: 0.015,
-    verticalRepulsion: 2500,
+    verticalRepulsion: 2500, // Reduced for smoother separation
     verticalComfortRadius: 120,
-    settleThreshold: 0.15,
+    settleThreshold: 0.15, // Increased to catch micro-movements and stop jitter
     boundaryForce: 0.8,
-    dotTug: 0.006,
-    dotRepulsion: 6000,
+    dotTug: 0.006, // Further reduced pull toward dots
+    dotRepulsion: 6000, // Reduced repulsion force
     dotRepulsionRadius: 50,
     dotComfortRadius: 35,
-    dotTransitionStart: 35, // Distance where pure repulsion ends
-    dotTransitionEnd: 70, // Distance where pure tug begins
     positionTolerance: 2.5,
     velocityTolerance: 0.05,
   };
@@ -174,51 +172,30 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
           const dy = node.targetY - node.y;
           fy += dy * physics.verticalSpring;
 
-          // Unified dot force with smooth transition (prevents tug/repulsion conflict)
+          // Tug force toward the connected dot on timeline (reduced)
           const dotX = node.targetX;
           const dotY = timelineConfig.lineY;
           const dotDx = dotX - node.x;
           const dotDy = dotY - node.y;
-          const dotDist = Math.sqrt(dotDx * dotDx + dotDy * dotDy);
+          fx += dotDx * physics.dotTug;
+          fy += dotDy * physics.dotTug;
 
-          if (dotDist > 0) {
-            if (dotDist < physics.dotTransitionStart) {
-              // Pure repulsion zone - use capped repulsion
-              const { fx: dotFx, fy: dotFy } = applyCappedRepulsion(
-                -dotDx, // Negate to push away
-                -dotDy,
-                physics.dotRepulsion,
-                physics.dotComfortRadius,
-                physics.maxRepulsionForce,
-                physics.dotRepulsionRadius,
-              );
-              fx += dotFx;
-              fy += dotFy;
-            } else if (dotDist > physics.dotTransitionEnd) {
-              // Pure tug zone - only pull toward dot
-              fx += dotDx * physics.dotTug;
-              fy += dotDy * physics.dotTug;
-            } else {
-              // Blend zone - smooth interpolation between repulsion and tug
-              const t = (dotDist - physics.dotTransitionStart) / (physics.dotTransitionEnd - physics.dotTransitionStart);
+          // Repulsion from the dot to prevent overlap
+          const dotDistX = node.x - dotX;
+          const dotDistY = node.y - dotY;
+          const dotDist = Math.sqrt(dotDistX * dotDistX + dotDistY * dotDistY);
 
-              // Repulsion component (fades out as t increases)
-              const { fx: repFx, fy: repFy } = applyCappedRepulsion(
-                -dotDx,
-                -dotDy,
-                physics.dotRepulsion * (1 - t),
-                physics.dotComfortRadius,
-                physics.maxRepulsionForce * (1 - t),
-                physics.dotRepulsionRadius,
-              );
-
-              // Tug component (fades in as t increases)
-              const tugFx = dotDx * physics.dotTug * t;
-              const tugFy = dotDy * physics.dotTug * t;
-
-              fx += repFx + tugFx;
-              fy += repFy + tugFy;
-            }
+          if (dotDist > 0 && dotDist < physics.dotRepulsionRadius) {
+            const { fx: dotFx, fy: dotFy } = applyCappedRepulsion(
+              dotDistX,
+              dotDistY,
+              physics.dotRepulsion,
+              physics.dotComfortRadius,
+              physics.maxRepulsionForce,
+              physics.dotRepulsionRadius,
+            );
+            fx += dotFx;
+            fy += dotFy;
           }
 
           prevNodes.forEach((other, j) => {
@@ -275,23 +252,9 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
           let newVx = (node.vx + fx) * physics.damping;
           let newVy = (node.vy + fy) * physics.damping;
 
-          // Track velocity history for oscillation detection
-          const vxHistory = [...(node.vxHistory || []), newVx].slice(-4);
-          const vyHistory = [...(node.vyHistory || []), newVy].slice(-4);
-
-          // Detect oscillation: sign changes in last 4 frames with small velocity
-          let isOscillating = false;
-          if (vxHistory.length === 4) {
-            const signsX = vxHistory.map(v => Math.sign(v));
-            const signsY = vyHistory.map(v => Math.sign(v));
-            const xOscillating = signsX[0] !== signsX[1] && signsX[1] !== signsX[2] && signsX[2] !== signsX[3];
-            const yOscillating = signsY[0] !== signsY[1] && signsY[1] !== signsY[2] && signsY[2] !== signsY[3];
-            isOscillating = (xOscillating || yOscillating) && Math.abs(newVx) < 0.5 && Math.abs(newVy) < 0.5;
-          }
-
-          // Stop jittering: if velocity is very small or oscillating, set to zero
+          // Stop jittering: if velocity is very small, set to zero
           const speed = Math.sqrt(newVx * newVx + newVy * newVy);
-          if (speed < physics.settleThreshold || isOscillating) {
+          if (speed < physics.settleThreshold) {
             newVx = 0;
             newVy = 0;
           }
@@ -308,8 +271,6 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
             y: node.y + newVy,
             vx: newVx,
             vy: newVy,
-            vxHistory,
-            vyHistory,
             settled: isSettled,
           };
         });
