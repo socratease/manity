@@ -11,6 +11,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
   const [draggedNode, setDraggedNode] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [timelineZoom, setTimelineZoom] = useState(3);
+  const [simulationVersion, setSimulationVersion] = useState(0);
 
   // Fallback sample data if no tasks provided - memoized to prevent re-renders
   const sampleTasks = useMemo(() => tasks.length > 0 ? tasks : [
@@ -130,6 +131,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
       };
     });
     setNodes(initialNodes);
+    setSimulationVersion(version => version + 1);
   }, [getTimelineX, getTimelineRange, sampleTasks]);
 
   useEffect(() => {
@@ -343,7 +345,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [nodes.length, dimensions.width, draggedNode]);
+  }, [nodes.length, dimensions.width, draggedNode, simulationVersion]);
 
   // Handle resize - use full container width
   useEffect(() => {
