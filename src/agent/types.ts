@@ -67,6 +67,7 @@ export interface RestoreProjectDelta extends BaseDelta {
     targetDate?: string;
     startDate?: string;
     lastUpdate?: string;
+    stakeholders?: Stakeholder[];
   };
 }
 
@@ -91,6 +92,7 @@ export type ToolName =
   | 'add_subtask'
   | 'update_subtask'
   | 'update_project'
+  | 'add_stakeholders'
   | 'add_person'
   | 'query_portfolio'
   | 'send_email';

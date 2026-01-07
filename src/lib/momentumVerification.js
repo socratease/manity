@@ -111,6 +111,30 @@ function verifySendEmail(actionResult) {
   return [];
 }
 
+function normalizeStakeholderNames(action) {
+  const raw = Array.isArray(action.stakeholders)
+    ? action.stakeholders
+    : typeof action.stakeholders === 'string'
+      ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean)
+      : [];
+
+  return raw
+    .map(entry => typeof entry === 'string' ? entry : entry?.name)
+    .filter(Boolean)
+    .map(name => name.toLowerCase());
+}
+
+function verifyStakeholderAdditions(action, project) {
+  if (!project) return ['Project not found after action.'];
+  const expectedNames = normalizeStakeholderNames(action);
+  if (expectedNames.length === 0) return ['No stakeholder names provided for verification.'];
+  const projectNames = (project.stakeholders || []).map(s => s.name.toLowerCase());
+  const missing = expectedNames.filter(name => !projectNames.includes(name));
+  return missing.length > 0
+    ? [`Missing stakeholders on project: ${missing.join(', ')}.`]
+    : [];
+}
+
 function buildVerificationResult(discrepancies) {
   if (!discrepancies || discrepancies.length === 0) {
     return { status: 'passed', discrepancies: [] };
@@ -137,6 +161,9 @@ export function verifyThrustActions(actions = [], previousProjects = [], updated
       }
       case 'update_project': {
         return buildVerificationResult(verifyProjectFields(action, project));
+      }
+      case 'add_stakeholders': {
+        return buildVerificationResult(verifyStakeholderAdditions(action, project));
       }
       case 'add_task': {
         if (!project) return buildVerificationResult(['Project not found after action.']);
