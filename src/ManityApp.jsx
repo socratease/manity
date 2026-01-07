@@ -2646,6 +2646,60 @@ Write a professional executive summary that highlights the project's current sta
           appendedActionResult = true;
           break;
         }
+        case 'add_stakeholders': {
+          const rawStakeholders = Array.isArray(action.stakeholders)
+            ? action.stakeholders
+            : typeof action.stakeholders === 'string'
+              ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean)
+              : [];
+
+          const stakeholderEntries = rawStakeholders
+            .map(entry => {
+              if (!entry) return null;
+              if (typeof entry === 'string') {
+                return { name: entry };
+              }
+              return {
+                name: entry.name || entry.personName || '',
+                team: entry.team
+              };
+            })
+            .filter(entry => entry?.name)
+            .map(entry => ({ ...entry, name: entry.name.trim() }));
+
+          if (!stakeholderEntries.length) {
+            label = `Skipped action: missing stakeholders for ${project.name}`;
+            detail = `Skipped adding stakeholders because no stakeholder names were provided for ${project.name}.`;
+            break;
+          }
+
+          const normalizedStakeholders = normalizeStakeholderList(stakeholderEntries);
+          const existingStakeholders = project.stakeholders || [];
+          const existingNames = new Set(existingStakeholders.map(s => s.name.toLowerCase()));
+          const addedStakeholders = normalizedStakeholders.filter(s => !existingNames.has(s.name.toLowerCase()));
+
+          if (addedStakeholders.length === 0) {
+            label = `No new stakeholders to add for ${project.name}`;
+            detail = `No changes made because all provided stakeholders already exist on ${project.name}.`;
+            break;
+          }
+
+          const previous = {
+            stakeholders: [...existingStakeholders],
+            lastUpdate: project.lastUpdate
+          };
+
+          project.stakeholders = [...existingStakeholders, ...addedStakeholders];
+          project.lastUpdate = `Added stakeholders: ${addedStakeholders.map(s => s.name).join(', ')}`;
+
+          actionDeltas.push({ type: 'restore_project', projectId: project.id, previous });
+          label = `Added stakeholders to ${project.name}`;
+          detail = `Added ${addedStakeholders.map(s => s.name).join(', ')} to ${project.name}.`;
+          projectsChanged = true;
+          result.updatedProjectIds.add(project.id);
+          await syncStakeholdersToPeople(addedStakeholders);
+          break;
+        }
         case 'update_project': {
           const previous = {
             name: project.name,
@@ -2857,6 +2911,15 @@ Write a professional executive summary that highlights the project's current sta
         return `Update subtask "${action.subtaskTitle || action.title || action.subtaskId || ''}" in ${projectName}`;
       case 'update_project':
         return `Update project ${projectName}: status/progress/date tweaks`;
+      case 'add_stakeholders': {
+        const stakeholders = Array.isArray(action.stakeholders)
+          ? action.stakeholders
+          : typeof action.stakeholders === 'string'
+            ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean)
+            : [];
+        const stakeholderNames = stakeholders.map(entry => typeof entry === 'string' ? entry : entry?.name).filter(Boolean);
+        return `Add stakeholders ${stakeholderNames.join(', ') || 'to add'} to ${projectName}`;
+      }
       case 'add_person':
         return `Add ${action.name || action.personName || 'a new person'} to People`;
       case 'send_email':

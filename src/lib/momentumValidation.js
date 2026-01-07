@@ -11,6 +11,7 @@ export const supportedMomentumActions = [
   'add_subtask',
   'update_subtask',
   'update_project',
+  'add_stakeholders',
   'create_project',
   'add_person',
   'send_email',
@@ -263,6 +264,35 @@ export function validateThrustActions(actions = [], projects = []) {
       validActions.push({
         ...action,
         note,
+        projectId: resolvedProject.id,
+        projectName: resolvedProject.name
+      });
+      return;
+    }
+
+    if (action.type === 'add_stakeholders') {
+      const stakeholders = Array.isArray(action.stakeholders)
+        ? action.stakeholders
+            .map(entry => {
+              if (typeof entry === 'string') return entry.trim();
+              if (entry && typeof entry === 'object' && entry.name) {
+                return { ...entry, name: `${entry.name}`.trim() };
+              }
+              return null;
+            })
+            .filter(Boolean)
+        : typeof action.stakeholders === 'string'
+          ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean)
+          : [];
+
+      if (!stakeholders.length) {
+        errors.push(`Action ${idx + 1} (add_stakeholders) is missing stakeholder names.`);
+        return;
+      }
+
+      validActions.push({
+        ...action,
+        stakeholders,
         projectId: resolvedProject.id,
         projectName: resolvedProject.name
       });
