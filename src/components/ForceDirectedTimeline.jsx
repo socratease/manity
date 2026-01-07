@@ -293,7 +293,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [nodes.length, dimensions.width, draggedNode]);
+  }, [nodes.length, dimensions.width, draggedNode, timelineZoom]);
 
   // Handle resize - use full container width
   useEffect(() => {
