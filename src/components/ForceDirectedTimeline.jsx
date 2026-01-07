@@ -98,15 +98,14 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     return padding.left + (dateMs / totalMs) * timelineWidth;
   }, [dimensions.width, getTimelineRange]);
 
-  // Initialize nodes
-  useEffect(() => {
+  const seededNodes = useMemo(() => {
     const { startDate: rangeStart, endDate: rangeEnd } = getTimelineRange();
     const visibleTasks = sampleTasks.filter(task => {
       const date = new Date(task.dueDate);
       return date >= rangeStart && date <= rangeEnd;
     });
 
-    const initialNodes = visibleTasks.map((task, index) => {
+    return visibleTasks.map((task, index) => {
       const targetX = getTimelineX(task.dueDate);
       const isAbove = index % 2 === 0;
       const baseOffset = 35;
@@ -130,9 +129,13 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         settled: false,
       };
     });
-    setNodes(initialNodes);
+  }, [getTimelineRange, getTimelineX, sampleTasks, timelineZoom, startDate, dimensions.width]);
+
+  // Initialize nodes
+  useEffect(() => {
+    setNodes(seededNodes);
     setSimulationVersion(version => version + 1);
-  }, [getTimelineX, getTimelineRange, sampleTasks]);
+  }, [seededNodes, timelineZoom]);
 
   useEffect(() => {
     nodesRef.current = nodes;
