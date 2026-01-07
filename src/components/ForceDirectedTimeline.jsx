@@ -348,7 +348,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [nodes.length, dimensions.width, draggedNode, simulationVersion]);
+  }, [nodes.length, dimensions.width, draggedNode, simulationVersion, timelineZoom]);
 
   // Handle resize - use full container width
   useEffect(() => {
