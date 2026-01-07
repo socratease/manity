@@ -1,6 +1,8 @@
+import asyncio
 import io
 import logging
 import os
+import re
 import uuid
 import argparse
 from datetime import datetime
@@ -13,7 +15,7 @@ from typing import List, Optional, Sequence
 from fastapi import Body, Depends, FastAPI, File, HTTPException, Request, UploadFile, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse, Response, JSONResponse
-from pydantic import BaseModel, Field as PydanticField
+from pydantic import BaseModel, Field as PydanticField, field_validator
 import httpx
 from sqlalchemy import Column, ForeignKey, String, delete, event, func
 from sqlalchemy.dialects.sqlite import JSON
@@ -22,6 +24,7 @@ from sqlalchemy.orm import selectinload
 from sqlmodel import Field, Relationship, SQLModel, Session, create_engine, select
 
 logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO)
 
 DEV_DEMO_SEED_ENV = "MANITY_ENABLE_DEMO_SEED"
 ENVIRONMENT_ENV = "MANITY_ENV"
@@ -131,6 +134,216 @@ def ensure_column(table_name: str, column_definition: str) -> None:
     with engine.begin() as connection:
         connection.exec_driver_sql(f'ALTER TABLE "{table_name}" ADD COLUMN {column_definition}')
     _PRAGMA_CACHE[f"{table_name}:{column_name}"] = {column_name}
+
+
+def column_has_unique_constraint(table_name: str, column_name: str) -> bool:
+    """Check if a column has a UNIQUE constraint."""
+    with engine.connect() as connection:
+        # Get the CREATE TABLE statement
+        result = connection.exec_driver_sql(
+            f"SELECT sql FROM sqlite_master WHERE type='table' AND name='{table_name}'"
+        ).fetchone()
+
+        if not result:
+            return False
+
+        create_sql = result[0]
+        if not create_sql:
+            return False
+
+        # Check for UNIQUE constraint on the column
+        # Patterns: "column_name" UNIQUE, column_name UNIQUE, UNIQUE(column_name), etc.
+        import re
+        patterns = [
+            rf'["`]?{column_name}["`]?\s+[^,]*?\bUNIQUE\b',  # column definition with UNIQUE
+            rf'\bUNIQUE\s*\(\s*["`]?{column_name}["`]?\s*\)',  # UNIQUE(column)
+        ]
+
+        for pattern in patterns:
+            if re.search(pattern, create_sql, re.IGNORECASE):
+                return True
+
+        return False
+
+
+def migrate_add_unique_constraints(session: Session) -> None:
+    """
+    Add UNIQUE constraints to project.name and person.name.
+
+    This migration:
+    1. Checks if constraints already exist
+    2. Handles duplicate names by appending numeric suffixes
+    3. Recreates tables with UNIQUE constraints
+    4. Preserves all relationships and foreign keys
+    """
+    migration_key = "add-unique-constraints-v1"
+    if session.get(MigrationState, migration_key):
+        logger.info("Migration %s already applied, skipping", migration_key)
+        return
+
+    logger.info("Running migration: %s", migration_key)
+
+    # Check if constraints already exist
+    project_has_unique = column_has_unique_constraint("project", "name")
+    person_has_unique = column_has_unique_constraint("person", "name")
+
+    if project_has_unique and person_has_unique:
+        logger.info("UNIQUE constraints already exist, marking migration as complete")
+        session.add(MigrationState(key=migration_key))
+        session.commit()
+        return
+
+    with engine.begin() as connection:
+        # Temporarily disable foreign key constraints during migration
+        connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
+
+        # Migration for project.name
+        if not project_has_unique:
+            logger.info("Adding UNIQUE constraint to project.name")
+
+            # First, resolve any duplicate project names
+            result = connection.exec_driver_sql("""
+                SELECT name, COUNT(*) as count
+                FROM project
+                GROUP BY LOWER(name)
+                HAVING count > 1
+            """).fetchall()
+
+            if result:
+                logger.warning("Found %d duplicate project names, resolving...", len(result))
+                for name, count in result:
+                    # Get all projects with this name (case-insensitive)
+                    duplicates = connection.exec_driver_sql(
+                        "SELECT id, name FROM project WHERE LOWER(name) = LOWER(?)",
+                        [name]
+                    ).fetchall()
+
+                    # Keep the first one unchanged, rename the rest
+                    for idx, (project_id, project_name) in enumerate(duplicates[1:], start=2):
+                        new_name = f"{project_name} ({idx})"
+                        logger.info("Renaming duplicate project '%s' -> '%s'", project_name, new_name)
+                        connection.exec_driver_sql(
+                            "UPDATE project SET name = ? WHERE id = ?",
+                            [new_name, project_id]
+                        )
+
+            # Create new table with UNIQUE constraint
+            connection.exec_driver_sql("""
+                CREATE TABLE project_new (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    status TEXT NOT NULL,
+                    priority TEXT NOT NULL,
+                    progress INTEGER NOT NULL,
+                    lastUpdate TEXT,
+                    description TEXT NOT NULL,
+                    executiveUpdate TEXT,
+                    startDate TEXT,
+                    targetDate TEXT,
+                    stakeholders JSON
+                )
+            """)
+
+            # Copy data
+            connection.exec_driver_sql("""
+                INSERT INTO project_new
+                SELECT id, name, status, priority, progress, lastUpdate,
+                       description, executiveUpdate, startDate, targetDate, stakeholders
+                FROM project
+            """)
+
+            # Drop old table and rename new one
+            connection.exec_driver_sql("DROP TABLE project")
+            connection.exec_driver_sql("ALTER TABLE project_new RENAME TO project")
+
+            # Recreate indexes
+            connection.exec_driver_sql("CREATE INDEX ix_project_name ON project (name)")
+
+            logger.info("Successfully added UNIQUE constraint to project.name")
+
+        # Migration for person.name
+        if not person_has_unique:
+            logger.info("Adding UNIQUE constraint to person.name")
+
+            # First, resolve any duplicate person names
+            result = connection.exec_driver_sql("""
+                SELECT name, COUNT(*) as count
+                FROM person
+                GROUP BY LOWER(name)
+                HAVING count > 1
+            """).fetchall()
+
+            if result:
+                logger.warning("Found %d duplicate person names, resolving...", len(result))
+                for name, count in result:
+                    # Get all people with this name (case-insensitive)
+                    duplicates = connection.exec_driver_sql(
+                        "SELECT id, name, team, email FROM person WHERE LOWER(name) = LOWER(?)",
+                        [name]
+                    ).fetchall()
+
+                    # Merge logic: keep first one, update foreign keys from others
+                    primary_id = duplicates[0][0]
+                    duplicate_ids = [dup[0] for dup in duplicates[1:]]
+
+                    logger.info("Merging %d duplicate entries for person '%s'", len(duplicate_ids), name)
+
+                    # Update foreign keys to point to primary person
+                    for dup_id in duplicate_ids:
+                        connection.exec_driver_sql(
+                            "UPDATE task SET assignee_id = ? WHERE assignee_id = ?",
+                            [primary_id, dup_id]
+                        )
+                        connection.exec_driver_sql(
+                            "UPDATE subtask SET assignee_id = ? WHERE assignee_id = ?",
+                            [primary_id, dup_id]
+                        )
+                        connection.exec_driver_sql(
+                            "UPDATE activity SET author_id = ? WHERE author_id = ?",
+                            [primary_id, dup_id]
+                        )
+                        connection.exec_driver_sql(
+                            "UPDATE projectpersonlink SET person_id = ? WHERE person_id = ?",
+                            [primary_id, dup_id]
+                        )
+
+                        # Delete duplicate
+                        connection.exec_driver_sql("DELETE FROM person WHERE id = ?", [dup_id])
+
+            # Create new table with UNIQUE constraint
+            connection.exec_driver_sql("""
+                CREATE TABLE person_new (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL UNIQUE,
+                    team TEXT NOT NULL,
+                    email TEXT
+                )
+            """)
+
+            # Copy data
+            connection.exec_driver_sql("""
+                INSERT INTO person_new
+                SELECT id, name, team, email
+                FROM person
+            """)
+
+            # Drop old table and rename new one
+            connection.exec_driver_sql("DROP TABLE person")
+            connection.exec_driver_sql("ALTER TABLE person_new RENAME TO person")
+
+            # Recreate indexes
+            connection.exec_driver_sql("CREATE INDEX ix_person_name ON person (name)")
+
+            logger.info("Successfully added UNIQUE constraint to person.name")
+
+        # Re-enable foreign key constraints
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+
+    # Mark migration as complete
+    session.add(MigrationState(key=migration_key))
+    session.commit()
+
+    logger.info("Migration %s completed successfully", migration_key)
 
 
 def generate_id(prefix: str) -> str:
@@ -527,7 +740,7 @@ class ProjectPersonLink(SQLModel, table=True):
 
 
 class ProjectBase(SQLModel):
-    name: str
+    name: str = Field(sa_column=Column(String, unique=True, index=True))
     status: str = "planning"
     priority: str = "medium"
     progress: int = 0
@@ -697,6 +910,17 @@ class ProjectPayload(SQLModel):
     id: Optional[str] = None
     plan: List[TaskPayload] = Field(default_factory=list)
     recentActivity: List[ActivityPayload] = Field(default_factory=list)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, v):
+        if v is None:
+            raise ValueError("Project name cannot be null")
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("Project name cannot be empty")
+        return v
 
 
 class ImportPayload(BaseModel):
@@ -884,11 +1108,26 @@ class ChatRole(str, Enum):
     SYSTEM = "system"
     USER = "user"
     ASSISTANT = "assistant"
+    TOOL = "tool"
+
+
+class ToolCallFunction(BaseModel):
+    name: str
+    arguments: str
+
+
+class ToolCall(BaseModel):
+    id: str
+    type: str = "function"
+    function: ToolCallFunction
 
 
 class ChatMessage(BaseModel):
     role: ChatRole
-    content: str
+    content: Optional[str] = None
+    tool_calls: Optional[List[ToolCall]] = None
+    tool_call_id: Optional[str] = None
+    name: Optional[str] = None  # For tool messages
 
 
 class ChatProvider(str, Enum):
@@ -896,11 +1135,18 @@ class ChatProvider(str, Enum):
     AZURE_OPENAI = "azure"
 
 
+class ToolDefinition(BaseModel):
+    type: str = "function"
+    function: dict
+
+
 class ChatRequest(BaseModel):
     model: str = os.getenv("LLM_MODEL", "gpt-5.1")
     provider: Optional[ChatProvider] = None
-    messages: List[ChatMessage] = PydanticField(..., min_items=1)
+    messages: List[ChatMessage] = PydanticField(..., min_length=1)
     response_format: Optional[dict] = None
+    tools: Optional[List[ToolDefinition]] = None
+    tool_choice: Optional[str] = None
 
 
 FRONTEND_ORIGINS_ENV = "FRONTEND_ORIGINS"
@@ -918,7 +1164,7 @@ def configured_frontend_origins() -> tuple[list[str], str | None]:
     if not origins and not origin_regex:
         # Default: allow all localhost/127.0.0.1 origins for local development
         # This covers common dev ports: 3000, 5173, 8113, 8114, etc.
-        origin_regex = r"^https?://(localhost|127\.0\.0\.1)(:\d+)?$"
+        origin_regex = r"^https?://(localhost|127\.0\.0\.1|rn000224)(:\d+)?$"
 
     return origins, origin_regex
 
@@ -937,9 +1183,15 @@ app = FastAPI(title="Manity Portfolio API")
 # allow_credentials disabled.
 allowed_origins, allowed_origin_regex = configured_frontend_origins()
 
+logger.info("CORS allowed_origins=%s", allowed_origins)
+logger.info("CORS allowed_origin_regex=%s", allowed_origin_regex)
+
 if "*" in allowed_origins and not allowed_origin_regex:
     allowed_origin_regex = ".*"
     allowed_origins = []
+
+logger.info("CORS allowed_origins=%s", allowed_origins)
+logger.info("CORS allowed_origin_regex=%s", allowed_origin_regex)
 
 app.add_middleware(
     CORSMiddleware,
@@ -1293,6 +1545,8 @@ def normalize_project_stakeholders(session: Session, stakeholders: Optional[List
 
 
 def upsert_project(session: Session, payload: ProjectPayload) -> Project:
+    normalized_name = (payload.name or "").strip()
+
     statement = (
         select(Project)
         .where(Project.id == payload.id)
@@ -1306,9 +1560,21 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
     project = session.exec(statement).first() if payload.id else None
     if project is None:
         project = Project(id=payload.id or generate_id("project"))
-        session.add(project)
 
-    project.name = payload.name
+    # Check for duplicate project name (case-insensitive)
+    existing_project = session.exec(
+        select(Project).where(
+            func.lower(Project.name) == func.lower(normalized_name),
+            Project.id != (project.id if project else "")
+        )
+    ).first()
+    if existing_project:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"A project with the name '{normalized_name}' already exists. Please choose a different name."
+        )
+
+    project.name = normalized_name
     project.status = payload.status
     project.priority = payload.priority
     project.progress = payload.progress
@@ -1476,6 +1742,11 @@ def trigger_people_backfill(session: Session = Depends(get_session)) -> dict:
 @app.on_event("startup")
 def on_startup() -> None:
     create_db_and_tables()
+
+    # Run database migrations
+    with Session(engine) as session:
+        migrate_add_unique_constraints(session)
+
     if not is_dev_seeding_enabled():
         return
 
@@ -2242,16 +2513,44 @@ def _resolve_provider(provider_override: ChatProvider | None) -> ChatProvider:
         ) from exc
 
 
-def _build_llm_request(payload: ChatRequest) -> tuple[str, dict, dict]:
+def _serialize_message(message: ChatMessage) -> dict:
+    """Serialize a ChatMessage to OpenAI API format, excluding None values."""
+    result = {"role": message.role.value}
+
+    if message.content is not None:
+        result["content"] = message.content
+
+    if message.tool_calls:
+        result["tool_calls"] = [tc.model_dump() for tc in message.tool_calls]
+
+    if message.tool_call_id:
+        result["tool_call_id"] = message.tool_call_id
+
+    if message.name:
+        result["name"] = message.name
+
+    return result
+
+
+def _build_llm_request(payload: ChatRequest, stream: bool = False) -> tuple[str, dict, dict]:
     provider = _resolve_provider(payload.provider)
 
     request_body = {
         "model": payload.model,
-        "messages": [message.model_dump() for message in payload.messages],
+        "messages": [_serialize_message(m) for m in payload.messages],
     }
+
+    if stream:
+        request_body["stream"] = True
 
     if payload.response_format is not None:
         request_body["response_format"] = payload.response_format
+
+    if payload.tools:
+        request_body["tools"] = [t.model_dump() for t in payload.tools]
+
+    if payload.tool_choice:
+        request_body["tool_choice"] = payload.tool_choice
 
     if provider is ChatProvider.OPENAI:
         api_key = os.getenv("OPENAI_API_KEY")
@@ -2316,7 +2615,29 @@ async def proxy_llm_chat(payload: ChatRequest, request: Request, session: Sessio
         )
 
     data = response.json()
-    content = data.get("choices", [{}])[0].get("message", {}).get("content", "")
+    choices = data.get("choices") or []
+    if not choices:
+        log_action(session, "llm_chat_error", "llm", None, {"model": payload.model, "error": "Empty choices in response"}, request)
+        raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail="LLM returned empty response")
+    message_content = choices[0].get("message", {}).get("content", "")
+
+    # Extract thinking and text content from OpenAI's extended thinking response format
+    # Content can be a string or an array of content blocks with types "thinking" and "text"
+    thinking = None
+    if isinstance(message_content, list):
+        # Extract thinking blocks and text blocks separately
+        thinking_parts = []
+        text_parts = []
+        for block in message_content:
+            if isinstance(block, dict):
+                if block.get("type") == "thinking":
+                    thinking_parts.append(block.get("thinking", ""))
+                elif block.get("type") == "text":
+                    text_parts.append(block.get("text", ""))
+        thinking = "\n".join(thinking_parts) if thinking_parts else None
+        content = "\n".join(text_parts) if text_parts else ""
+    else:
+        content = message_content if message_content else ""
 
     # Log successful LLM conversation with full messages and response for auditing
     import json
@@ -2324,11 +2645,121 @@ async def proxy_llm_chat(payload: ChatRequest, request: Request, session: Sessio
         "model": payload.model,
         "messages": [{"role": m.role.value, "content": m.content} for m in payload.messages],
         "response": content,
+        "thinking": thinking,
         "usage": data.get("usage", {})
     }
     log_action(session, "llm_chat", "llm", None, conversation_log, request)
 
-    return {"content": content, "raw": data}
+    return {"content": content, "thinking": thinking, "raw": data}
+
+
+@app.post("/api/llm/chat/stream")
+async def stream_llm_chat(payload: ChatRequest, request: Request, session: Session = Depends(get_session)):
+    """
+    Streaming LLM chat endpoint using Server-Sent Events (SSE).
+    Streams tokens as they arrive, including tool calls.
+    """
+    import json as json_module
+
+    url, headers, request_body = _build_llm_request(payload, stream=True)
+
+    async def generate_events():
+        accumulated_content = ""
+        accumulated_tool_calls = []
+        current_tool_call = None
+        finish_reason = None
+
+        try:
+            async with httpx.AsyncClient(timeout=120) as client:
+                async with client.stream("POST", url, headers=headers, json=request_body) as response:
+                    if response.status_code >= 400:
+                        error_text = ""
+                        async for chunk in response.aiter_text():
+                            error_text += chunk
+                        yield f"data: {json_module.dumps({'error': error_text, 'status': response.status_code})}\n\n"
+                        return
+
+                    async for line in response.aiter_lines():
+                        if not line:
+                            continue
+
+                        if line.startswith("data: "):
+                            data_str = line[6:]
+
+                            if data_str.strip() == "[DONE]":
+                                # Send final message with complete data
+                                final_event = {
+                                    "type": "done",
+                                    "content": accumulated_content,
+                                    "tool_calls": accumulated_tool_calls if accumulated_tool_calls else None,
+                                    "finish_reason": finish_reason,
+                                }
+                                yield f"data: {json_module.dumps(final_event)}\n\n"
+                                break
+
+                            try:
+                                chunk_data = json_module.loads(data_str)
+                                choices = chunk_data.get("choices") or []
+                                if not choices:
+                                    continue  # Skip chunks without choices
+                                choice = choices[0]
+                                delta = choice.get("delta", {})
+                                finish_reason = choice.get("finish_reason") or finish_reason
+
+                                # Handle content streaming
+                                if "content" in delta and delta["content"]:
+                                    content_chunk = delta["content"]
+                                    accumulated_content += content_chunk
+                                    yield f"data: {json_module.dumps({'type': 'content', 'content': content_chunk})}\n\n"
+
+                                # Handle tool call streaming
+                                if "tool_calls" in delta:
+                                    for tc_delta in delta["tool_calls"]:
+                                        tc_index = tc_delta.get("index", 0)
+
+                                        # Ensure we have enough tool calls
+                                        while len(accumulated_tool_calls) <= tc_index:
+                                            accumulated_tool_calls.append({
+                                                "id": "",
+                                                "type": "function",
+                                                "function": {"name": "", "arguments": ""}
+                                            })
+
+                                        current_tc = accumulated_tool_calls[tc_index]
+
+                                        if "id" in tc_delta:
+                                            current_tc["id"] = tc_delta["id"]
+
+                                        if "function" in tc_delta:
+                                            func_delta = tc_delta["function"]
+                                            if "name" in func_delta:
+                                                current_tc["function"]["name"] = func_delta["name"]
+                                                # Emit tool call start event
+                                                yield f"data: {json_module.dumps({'type': 'tool_call_start', 'index': tc_index, 'id': current_tc['id'], 'name': func_delta['name']})}\n\n"
+                                            if "arguments" in func_delta:
+                                                current_tc["function"]["arguments"] += func_delta["arguments"]
+
+                            except json_module.JSONDecodeError:
+                                continue
+
+        except httpx.HTTPError as exc:
+            yield f"data: {json_module.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+        except asyncio.CancelledError:
+            # Client disconnected - gracefully end the stream
+            yield f"data: {json_module.dumps({'type': 'error', 'error': 'Request cancelled'})}\n\n"
+        except Exception as exc:
+            # Catch all other exceptions to prevent TaskGroup errors
+            yield f"data: {json_module.dumps({'type': 'error', 'error': str(exc)})}\n\n"
+
+    return StreamingResponse(
+        generate_events(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        }
+    )
 
 
 # PowerPoint Export Models and Endpoint
@@ -2389,6 +2820,12 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
     EARTH = RGBColor(139, 111, 71)       # --earth: #8b6f47
     WHITE = RGBColor(255, 255, 255)
 
+    def sanitize_text(value: str) -> str:
+        """Remove control characters that can corrupt the PPTX XML."""
+        if not value:
+            return ""
+        return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", "", value)
+
     def get_priority_color(priority: str) -> RGBColor:
         colors = {
             'high': CORAL,
@@ -2425,7 +2862,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         tf.word_wrap = True
         tf.auto_size = None
         p = tf.paragraphs[0]
-        p.text = text
+        p.text = sanitize_text(text)
         p.font.size = Pt(font_size)
         p.font.color.rgb = font_color
         p.font.bold = bold
@@ -2466,14 +2903,14 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         # Project name
         title_box = add_text_box(
             slide, MARGIN, MARGIN, prs.slide_width - MARGIN * 2, Inches(0.5),
-            slide_data.name, font_size=24, font_color=CHARCOAL, bold=True
+            sanitize_text(slide_data.name), font_size=24, font_color=CHARCOAL, bold=True
         )
 
         # Project description (subtitle)
         if slide_data.description:
             add_text_box(
                 slide, MARGIN, MARGIN + Inches(0.45), prs.slide_width - MARGIN * 2, Inches(0.3),
-                slide_data.description, font_size=12, font_color=CHARCOAL
+                sanitize_text(slide_data.description), font_size=12, font_color=CHARCOAL
             )
 
         # Metadata row
@@ -2481,7 +2918,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         meta_x = MARGIN
 
         # Target date
-        target_text = f"Target: {slide_data.targetDate if slide_data.targetDate else 'TBD'}"
+        target_text = sanitize_text(f"Target: {slide_data.targetDate if slide_data.targetDate else 'TBD'}")
         target_box = add_text_box(slide, meta_x, meta_y, Inches(1.5), Inches(0.25), target_text, font_size=10, font_color=STONE)
         meta_x += Inches(1.6)
 
@@ -2489,7 +2926,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         priority_color = get_priority_color(slide_data.priority)
         priority_shape = add_rounded_rectangle(slide, meta_x, meta_y, Inches(1.1), Inches(0.25), fill_color=CREAM, line_color=priority_color)
         priority_tf = priority_shape.text_frame
-        priority_tf.paragraphs[0].text = f"{slide_data.priority} priority"
+        priority_tf.paragraphs[0].text = sanitize_text(f"{slide_data.priority} priority")
         priority_tf.paragraphs[0].font.size = Pt(9)
         priority_tf.paragraphs[0].font.color.rgb = priority_color
         priority_tf.paragraphs[0].font.bold = True
@@ -2500,7 +2937,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         # Status badge
         status_shape = add_rounded_rectangle(slide, meta_x, meta_y, Inches(0.9), Inches(0.25), fill_color=CLOUD)
         status_tf = status_shape.text_frame
-        status_tf.paragraphs[0].text = slide_data.status
+        status_tf.paragraphs[0].text = sanitize_text(slide_data.status)
         status_tf.paragraphs[0].font.size = Pt(9)
         status_tf.paragraphs[0].font.color.rgb = CHARCOAL
         status_tf.paragraphs[0].font.bold = True
@@ -2511,10 +2948,10 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
         # Stakeholders
         if slide_data.stakeholders:
             stakeholder_names = [s.name for s in slide_data.stakeholders[:5]]
-            stakeholder_text = ", ".join(stakeholder_names)
+            stakeholder_text = sanitize_text(", ".join(stakeholder_names))
             if len(slide_data.stakeholders) > 5:
-                stakeholder_text += f" +{len(slide_data.stakeholders) - 5}"
-            add_text_box(slide, meta_x, meta_y, Inches(4), Inches(0.25), f"Team: {stakeholder_text}", font_size=10, font_color=STONE)
+                stakeholder_text += sanitize_text(f" +{len(slide_data.stakeholders) - 5}")
+            add_text_box(slide, meta_x, meta_y, Inches(4), Inches(0.25), sanitize_text(f"Team: {stakeholder_text}"), font_size=10, font_color=STONE)
 
         # Header divider line
         line = slide.shapes.add_shape(
@@ -2539,7 +2976,7 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
                     "EXECUTIVE UPDATE", font_size=9, font_color=STONE, bold=True)
 
         # Executive Update content
-        exec_content = slide_data.executiveUpdate or slide_data.description or "No executive update yet."
+        exec_content = sanitize_text(slide_data.executiveUpdate or slide_data.description or "No executive update yet.")
         exec_text_box = slide.shapes.add_textbox(
             left_x + Inches(0.15), CONTENT_TOP + Inches(0.35),
             panel_width - Inches(0.3), exec_height - Inches(0.5)
@@ -2566,15 +3003,15 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
                 break
             # Author and date
             add_text_box(slide, left_x + Inches(0.15), updates_y, Inches(1.5), Inches(0.2),
-                        update.author, font_size=10, font_color=CHARCOAL, bold=True)
+                        sanitize_text(update.author), font_size=10, font_color=CHARCOAL, bold=True)
             add_text_box(slide, left_x + panel_width - Inches(1.5), updates_y, Inches(1.35), Inches(0.2),
-                        format_datetime_simple(update.date), font_size=9, font_color=STONE, alignment=PP_ALIGN.RIGHT)
+                        sanitize_text(format_datetime_simple(update.date)), font_size=9, font_color=STONE, alignment=PP_ALIGN.RIGHT)
             updates_y += Inches(0.2)
             # Note text
             note_box = slide.shapes.add_textbox(left_x + Inches(0.15), updates_y, panel_width - Inches(0.3), Inches(0.4))
             note_tf = note_box.text_frame
             note_tf.word_wrap = True
-            note_tf.paragraphs[0].text = update.note[:150]
+            note_tf.paragraphs[0].text = sanitize_text(update.note)[:150]
             note_tf.paragraphs[0].font.size = Pt(9)
             note_tf.paragraphs[0].font.color.rgb = STONE
             note_tf.paragraphs[0].font.name = "Arial"
@@ -2604,14 +3041,14 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
             task_box = slide.shapes.add_textbox(right_x + Inches(0.15), completed_y, panel_width - Inches(1.2), Inches(0.25))
             task_tf = task_box.text_frame
             task_tf.word_wrap = True
-            task_tf.paragraphs[0].text = task.title[:60]
+            task_tf.paragraphs[0].text = sanitize_text(task.title)[:60]
             task_tf.paragraphs[0].font.size = Pt(10)
             task_tf.paragraphs[0].font.color.rgb = CHARCOAL
             task_tf.paragraphs[0].font.bold = True
             task_tf.paragraphs[0].font.name = "Arial"
             # Date
             add_text_box(slide, right_x + panel_width - Inches(1), completed_y, Inches(0.85), Inches(0.2),
-                        task.date, font_size=9, font_color=SAGE, alignment=PP_ALIGN.RIGHT)
+                        sanitize_text(task.date), font_size=9, font_color=SAGE, alignment=PP_ALIGN.RIGHT)
             completed_y += Inches(0.35)
 
         if not slide_data.recentlyCompleted:
@@ -2635,15 +3072,16 @@ def create_powerpoint_presentation(slides: List[SlideData]) -> bytes:
             task_box = slide.shapes.add_textbox(right_x + Inches(0.15), nextup_y, panel_width - Inches(1.2), Inches(0.25))
             task_tf = task_box.text_frame
             task_tf.word_wrap = True
-            task_tf.paragraphs[0].text = task.title[:60]
+            task_tf.paragraphs[0].text = sanitize_text(task.title)[:60]
             task_tf.paragraphs[0].font.size = Pt(10)
             task_tf.paragraphs[0].font.color.rgb = CHARCOAL
             task_tf.paragraphs[0].font.bold = True
             task_tf.paragraphs[0].font.name = "Arial"
             # Date - color based on content (overdue = coral, otherwise stone)
-            date_color = CORAL if 'overdue' in task.date.lower() else (AMBER if 'today' in task.date.lower() or 'tomorrow' in task.date.lower() else STONE)
+            date_text = sanitize_text(task.date)
+            date_color = CORAL if 'overdue' in date_text.lower() else (AMBER if 'today' in date_text.lower() or 'tomorrow' in date_text.lower() else STONE)
             add_text_box(slide, right_x + panel_width - Inches(1), nextup_y, Inches(0.85), Inches(0.2),
-                        task.date, font_size=9, font_color=date_color, alignment=PP_ALIGN.RIGHT)
+                        date_text, font_size=9, font_color=date_color, alignment=PP_ALIGN.RIGHT)
             nextup_y += Inches(0.35)
 
         if not slide_data.nextUp:
@@ -2732,9 +3170,18 @@ def run_people_backfill_cli(admin_token: str | None) -> None:
     logger.info("People backfill completed or already applied.")
 
 
+def run_unique_constraints_migration_cli(admin_token: str | None) -> None:
+    validate_admin_token_for_cli(admin_token)
+    create_db_and_tables()
+    with Session(engine) as session:
+        migrate_add_unique_constraints(session)
+    logger.info("UNIQUE constraints migration completed or already applied.")
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description="Manity Portfolio API utilities")
     subparsers = parser.add_subparsers(dest="command")
+
     backfill_parser = subparsers.add_parser(
         "run-people-backfill",
         help="Run the people backfill migration before starting the API server",
@@ -2745,10 +3192,22 @@ def main() -> None:
         help="Admin token for protected environments (defaults to MANITY_ADMIN_TOKEN)",
     )
 
+    migration_parser = subparsers.add_parser(
+        "run-unique-constraints-migration",
+        help="Add UNIQUE constraints to project.name and person.name",
+    )
+    migration_parser.add_argument(
+        "--admin-token",
+        default=os.getenv(ADMIN_TOKEN_ENV),
+        help="Admin token for protected environments (defaults to MANITY_ADMIN_TOKEN)",
+    )
+
     args = parser.parse_args()
 
     if args.command == "run-people-backfill":
         run_people_backfill_cli(args.admin_token)
+    elif args.command == "run-unique-constraints-migration":
+        run_unique_constraints_migration_cli(args.admin_token)
     else:
         parser.print_help()
 

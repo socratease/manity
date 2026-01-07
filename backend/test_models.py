@@ -72,6 +72,28 @@ def test_stakeholders_are_mapped_to_people(tmp_path):
         assert len(refreshed_project.stakeholders) == 2
 
 
+def test_upsert_project_does_not_autoflush_null_name(tmp_path):
+    db_path = tmp_path / "autoflush.db"
+    main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
+
+    SQLModel.metadata.create_all(main.engine)
+
+    payload = main.ProjectPayload(
+        name="Autoflush Safety",
+        status="active",
+        priority="medium",
+        progress=0,
+        description="",
+        plan=[],
+        recentActivity=[],
+        stakeholders=[],
+    )
+
+    with Session(main.engine) as session:
+        project = main.upsert_project(session, payload)
+        assert project.name == "Autoflush Safety"
+
+
 def test_people_created_from_project_relations(tmp_path):
     db_path = tmp_path / "test.db"
     main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
@@ -181,8 +203,8 @@ def test_upsert_project_loads_relationships(tmp_path):
         assert project.recentActivity is not None
         assert len(project.recentActivity) == 2
         activity_notes = [activity.note for activity in project.recentActivity]
-        assert activity_notes == ["Started project", "Made progress"]
-        assert activity_notes[1] == "Made progress"
+        assert activity_notes == ["Made progress", "Started project"]
+        assert activity_notes[0] == "Made progress"
 
         # Verify serialization includes all relationships
         serialized = main.serialize_project(project)

@@ -12,7 +12,7 @@ import { MOMENTUM_THRUST_SYSTEM_PROMPT } from './lib/momentumPrompts';
 import { verifyThrustActions } from './lib/momentumVerification';
 import SnowEffect from './components/SnowEffect';
 import ChristmasConfetti from './components/ChristmasConfetti';
-import MomentumChat from './components/MomentumChat';
+import MomentumChatWithAgent from './components/MomentumChatWithAgent';
 import Slides from './components/Slides';
 import DataPage from './components/DataPage';
 
@@ -498,6 +498,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         if (view === 'portfolio' || view === 'overview') {
           setActiveView(view);
           setViewingProjectId(projectId);
+        } else if (view === 'project') {
+          setActiveView('overview');
+          setViewingProjectId(projectId);
         } else if (view === 'thrust') {
           setActiveView('thrust');
           setActiveProjectInChat(projectId);
@@ -979,6 +982,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     const project = projects.find(p => p.id === viewingProjectId);
     if (project) {
       setEditValues({
+        name: project.name,
         status: project.status,
         priority: project.priority,
         stakeholders: project.stakeholders, // Keep full objects for PersonPicker
@@ -1004,6 +1008,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     // Use updateProject API to persist all edited values
     try {
       await updateProject(viewingProjectId, {
+        name: editValues.name,
         status: editValues.status,
         priority: editValues.priority,
         progress: editValues.progress || 0,
@@ -1020,6 +1025,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       });
     } catch (error) {
       console.error('Failed to save project edits:', error);
+      // Show error to user if it's a duplicate name error
+      if (error.message && error.message.includes('already exists')) {
+        alert(error.message);
+      }
     }
 
     setEditMode(false);
@@ -2187,11 +2196,15 @@ Write a professional executive summary that highlights the project's current sta
       projectLookup.set(project.name.toLowerCase(), project.id);
     });
 
-    const appendActionResult = (label, detail, deltas = []) => {
+    const appendActionResult = (label, detail, deltas = [], metadata = {}) => {
+      const { fallbackLabel, fallbackDetail, ...rest } = metadata;
+      const normalizedLabel = (label || '').trim();
+      const normalizedDetail = (detail || '').trim();
+
       result.actionResults.push({
-        label: label || 'Action processed',
-        detail: detail || 'No additional details provided.',
-        deltas
+        ...rest,
+        label: normalizedLabel || fallbackLabel || 'Action processed',
+        detail: normalizedDetail || fallbackDetail || 'No additional details provided.',
       });
       result.deltas.push(...deltas);
     };
@@ -2219,6 +2232,9 @@ Write a professional executive summary that highlights the project's current sta
       const actionDeltas = [];
       let label = '';
       let detail = '';
+      const providedLabel = (action.label || '').trim();
+      const providedDetail = (action.detail || '').trim();
+      let appendedActionResult = false;
 
       if (action.type === 'query_portfolio') {
         const scope = ['portfolio', 'project', 'people'].includes(action.scope)
@@ -2294,8 +2310,17 @@ Write a professional executive summary that highlights the project's current sta
       }
 
       if (action.type === 'create_project') {
-        const projectName = (action.name || action.projectName || '').trim();
+        // Check both name and projectName with defensive coercion
+        const rawName = action.name ?? action.projectName ?? '';
+        const projectName = (typeof rawName === 'string' ? rawName : String(rawName)).trim();
         if (!projectName) {
+          // Log for debugging
+          console.warn('[ManityApp] create_project action has empty name:', {
+            action,
+            actionName: action.name,
+            actionProjectName: action.projectName,
+            rawName
+          });
           label = 'Skipped action: missing project name';
           detail = 'Skipped create_project because no name was provided.';
           appendActionResult(label, detail, actionDeltas);
@@ -2403,10 +2428,24 @@ Write a professional executive summary that highlights the project's current sta
           };
           project.plan = [...project.plan, newTask];
           actionDeltas.push({ type: 'remove_task', projectId: project.id, taskId });
-          label = `Added task "${newTask.title}" to ${project.name}`;
-          detail = `Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)})${taskAssignee ? ` assigned to ${taskAssignee.name}` : ''} to ${project.name}`;
+          const synthesizedLabel = `Added task "${newTask.title}" to ${project.name}`;
+          const synthesizedDetail = `Task "${newTask.title}" in ${project.name} (${describeDueDate(newTask.dueDate)})${taskAssignee ? ` assigned to ${taskAssignee.name}` : ''}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId,
+            taskTitle: newTask.title,
+            assigneeName: taskAssignee?.name,
+            dueDate: newTask.dueDate,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'update_task': {
@@ -2457,10 +2496,26 @@ Write a professional executive summary that highlights the project's current sta
           }
 
           actionDeltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
-          label = `Updated task "${task.title}" in ${project.name}`;
-          detail = `Updated task "${task.title}" in ${project.name}: ${changes.join('; ') || 'no tracked changes'}`;
+          const diffSummary = changes.join('; ');
+          const synthesizedLabel = `Updated task "${task.title}" in ${project.name}`;
+          const synthesizedDetail = `${task.title} in ${project.name}: ${diffSummary || 'no tracked changes'}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId: task.id,
+            taskTitle: task.title,
+            assigneeName: task.assignee?.name,
+            dueDate: task.dueDate,
+            diffSummary,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'add_subtask': {
@@ -2490,10 +2545,26 @@ Write a professional executive summary that highlights the project's current sta
           };
           task.subtasks = [...(task.subtasks || []), newSubtask];
           actionDeltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
-          label = `Added subtask "${newSubtask.title}" to ${task.title}`;
-          detail = `Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)})${subtaskAssignee ? ` assigned to ${subtaskAssignee.name}` : ''} under ${task.title} in ${project.name}`;
+          const synthesizedLabel = `Added subtask "${newSubtask.title}" to ${task.title}`;
+          const synthesizedDetail = `Subtask "${newSubtask.title}" under ${task.title} in ${project.name} (${describeDueDate(newSubtask.dueDate)})${subtaskAssignee ? ` assigned to ${subtaskAssignee.name}` : ''}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId: task.id,
+            taskTitle: task.title,
+            subtaskId,
+            subtaskTitle: newSubtask.title,
+            assigneeName: subtaskAssignee?.name,
+            dueDate: newSubtask.dueDate,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'update_subtask': {
@@ -2551,10 +2622,28 @@ Write a professional executive summary that highlights the project's current sta
           }
 
           actionDeltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
-          label = `Updated subtask "${subtask.title}" in ${task.title}`;
-          detail = `Updated subtask "${subtask.title}" in ${task.title}: ${changes.join('; ') || 'no tracked changes'}`;
+          const diffSummary = changes.join('; ');
+          const synthesizedLabel = `Updated subtask "${subtask.title}" in ${task.title}`;
+          const synthesizedDetail = `${subtask.title} under ${task.title} in ${project.name}: ${diffSummary || 'no tracked changes'}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId: task.id,
+            taskTitle: task.title,
+            subtaskId: subtask.id,
+            subtaskTitle: subtask.title,
+            assigneeName: subtask.assignee?.name,
+            dueDate: subtask.dueDate,
+            diffSummary,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'update_project': {
@@ -2609,10 +2698,22 @@ Write a professional executive summary that highlights the project's current sta
           }
 
           actionDeltas.push({ type: 'restore_project', projectId: project.id, previous });
-          label = `Updated ${project.name}`;
-          detail = `Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`;
+          const diffSummary = changes.join('; ');
+          const synthesizedLabel = `Updated project ${project.name}`;
+          const synthesizedDetail = `${project.name}: ${diffSummary || 'no tracked changes noted'}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            diffSummary,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'send_email': {
@@ -2656,7 +2757,12 @@ Write a professional executive summary that highlights the project's current sta
             });
             label = `Email sent to ${normalizedRecipients.join(', ')}`;
             detail = `Sent email "${action.subject}"`;
-            appendActionResult(label, detail, actionDeltas);
+            appendActionResult(label, detail, actionDeltas, {
+              type: action.type,
+              fallbackLabel: label,
+              fallbackDetail: detail,
+            });
+            appendedActionResult = true;
           } catch (error) {
             appendActionResult('Failed to send email', error?.message || 'Email service returned an error.', actionDeltas);
             continue;
@@ -2669,7 +2775,24 @@ Write a professional executive summary that highlights the project's current sta
           detail = `Skipped unsupported action type: ${action.type}`;
       }
 
-      appendActionResult(label, detail, actionDeltas);
+      if (!appendedActionResult) {
+        const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
+        const resolvedLabel = providedLabel || label;
+        const resolvedDetail = providedDetail || detail;
+        appendActionResult(resolvedLabel, resolvedDetail, actionDeltas, {
+          type: action.type,
+          projectId: project?.id,
+          projectName: project?.name,
+          taskId: action.taskId,
+          taskTitle: action.taskTitle || action.title,
+          subtaskId: action.subtaskId,
+          subtaskTitle: action.subtaskTitle,
+          assigneeName,
+          dueDate: action.dueDate,
+          fallbackLabel: resolvedLabel,
+          fallbackDetail: resolvedDetail,
+        });
+      }
     }
 
     if (projectsChanged) {
@@ -3135,7 +3258,9 @@ PEOPLE & EMAIL ADDRESSES:
   }, [projects, loggedInUser]);
 
   useEffect(() => {
-    if (viewingProjectId && !visibleProjects.some(p => p.id === viewingProjectId)) {
+    // Only clear viewingProjectId if projects have loaded and the project doesn't exist
+    // This prevents clearing the ID on page refresh before projects are loaded
+    if (viewingProjectId && visibleProjects.length > 0 && !visibleProjects.some(p => p.id === viewingProjectId)) {
       setViewingProjectId(null);
     }
   }, [loggedInUser, viewingProjectId, visibleProjects]);
@@ -4270,7 +4395,10 @@ PEOPLE & EMAIL ADDRESSES:
         </div>
       )}
 
-      <main style={styles.main}>
+      <main style={{
+        ...styles.main,
+        ...(activeView === 'thrust' ? styles.mainMomentum : {}),
+      }}>
         <div style={styles.topBar}>
           <div style={styles.topBarLeft}>
             <button
@@ -4375,7 +4503,27 @@ PEOPLE & EMAIL ADDRESSES:
 
             <div style={styles.detailsHeader}>
               <div>
-                <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
+                {editMode ? (
+                  <input
+                    type="text"
+                    value={editValues.name}
+                    onChange={(e) => setEditValues({...editValues, name: e.target.value})}
+                    onFocus={() => setFocusedField('project-name')}
+                    onBlur={() => setFocusedField(null)}
+                    style={{
+                      ...styles.detailsTitle,
+                      border: '2px solid var(--earth)',
+                      borderRadius: '6px',
+                      padding: '8px 12px',
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      backgroundColor: '#FFFFFF'
+                    }}
+                    placeholder="Project Name"
+                  />
+                ) : (
+                  <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
+                )}
                 <div style={styles.descriptionSection}>
                   <label style={styles.descriptionLabel}>Project Description</label>
                   {editMode ? (
@@ -5798,37 +5946,39 @@ PEOPLE & EMAIL ADDRESSES:
             onDeletePerson={deletePerson}
           />
         ) : activeView === 'thrust' ? (
-          <MomentumChat
-            messages={getThrustConversation()}
-            onSendMessage={(message) => {
-              setThrustMessages(prev => [...prev, message]);
-            }}
-            onApplyActions={(actionResults, updatedProjectIds) => {
-              // Track recently updated projects for highlighting with timestamps
-              if (updatedProjectIds && updatedProjectIds.length > 0) {
-                const now = Date.now();
-                setRecentlyUpdatedProjects(prev => {
-                  const updated = { ...prev };
-                  updatedProjectIds.forEach(id => {
-                    updated[id] = now;
+          <div style={styles.momentumViewWrapper}>
+            <MomentumChatWithAgent
+              messages={getThrustConversation()}
+              onSendMessage={(message) => {
+                setThrustMessages(prev => [...prev, message]);
+              }}
+              onApplyActions={(actionResults, updatedProjectIds) => {
+                // Track recently updated projects for highlighting with timestamps
+                if (updatedProjectIds && updatedProjectIds.length > 0) {
+                  const now = Date.now();
+                  setRecentlyUpdatedProjects(prev => {
+                    const updated = { ...prev };
+                    updatedProjectIds.forEach(id => {
+                      updated[id] = now;
+                    });
+                    return updated;
                   });
-                  return updated;
-                });
-                setExpandedMomentumProjects(prev => {
-                  const newExpanded = { ...prev };
-                  updatedProjectIds.forEach(id => {
-                    newExpanded[String(id)] = true;
+                  setExpandedMomentumProjects(prev => {
+                    const newExpanded = { ...prev };
+                    updatedProjectIds.forEach(id => {
+                      newExpanded[String(id)] = true;
+                    });
+                    return newExpanded;
                   });
-                  return newExpanded;
-                });
-              }
-            }}
-            onUndoAction={undoThrustAction}
-            loggedInUser={loggedInUser}
-            people={people}
-            isSantafied={isSantafied}
-            recentlyUpdatedProjects={recentlyUpdatedProjects}
-          />
+                }
+              }}
+              onUndoAction={undoThrustAction}
+              loggedInUser={loggedInUser}
+              people={people}
+              isSantafied={isSantafied}
+              recentlyUpdatedProjects={recentlyUpdatedProjects}
+            />
+          </div>
         ) : activeView === 'slides' ? (
           <Slides
             projects={projects}
@@ -6136,6 +6286,7 @@ const styles = {
   container: {
     display: 'flex',
     minHeight: '100vh',
+    height: '100vh',
     width: '100%',
     backgroundColor: 'var(--cream)',
     fontFamily: "'Crimson Pro', Georgia, serif",
@@ -6650,6 +6801,13 @@ const styles = {
     overflowY: 'auto',
     minWidth: 0,
     transition: 'padding 0.2s ease',
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+  },
+
+  mainMomentum: {
+    overflowY: 'hidden',
   },
 
   header: {
@@ -6692,6 +6850,12 @@ const styles = {
     fontSize: '12px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumViewWrapper: {
+    flex: 1,
+    minHeight: 0,
+    display: 'flex',
   },
 
   newProjectPanel: {
