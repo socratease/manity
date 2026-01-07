@@ -4395,7 +4395,10 @@ PEOPLE & EMAIL ADDRESSES:
         </div>
       )}
 
-      <main style={styles.main}>
+      <main style={{
+        ...styles.main,
+        ...(activeView === 'thrust' ? styles.mainMomentum : {}),
+      }}>
         <div style={styles.topBar}>
           <div style={styles.topBarLeft}>
             <button
@@ -6283,6 +6286,7 @@ const styles = {
   container: {
     display: 'flex',
     minHeight: '100vh',
+    height: '100vh',
     width: '100%',
     backgroundColor: 'var(--cream)',
     fontFamily: "'Crimson Pro', Georgia, serif",
@@ -6800,6 +6804,10 @@ const styles = {
     display: 'flex',
     flexDirection: 'column',
     minHeight: 0,
+  },
+
+  mainMomentum: {
+    overflowY: 'hidden',
   },
 
   header: {
