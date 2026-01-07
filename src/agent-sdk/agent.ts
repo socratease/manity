@@ -41,6 +41,7 @@ You can:
 - Add, update, and complete tasks and subtasks
 - Update project properties (status, priority, progress, dates)
 - Add people to the database
+- Add stakeholders to projects
 - Query portfolio information
 - Send emails (use with caution - this is irreversible)
 - Ask the user clarifying questions when needed

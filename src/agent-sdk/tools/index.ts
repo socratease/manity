@@ -14,6 +14,7 @@ export { updateTaskTool, UpdateTaskInput, type UpdateTaskInputType } from './upd
 export { addSubtaskTool, AddSubtaskInput, type AddSubtaskInputType } from './addSubtask';
 export { updateSubtaskTool, UpdateSubtaskInput, type UpdateSubtaskInputType } from './updateSubtask';
 export { updateProjectTool, UpdateProjectInput, type UpdateProjectInputType } from './updateProject';
+export { addStakeholdersTool, AddStakeholdersInput, type AddStakeholdersInputType } from './addStakeholders';
 export { addPersonTool, AddPersonInput, type AddPersonInputType } from './addPerson';
 export { queryPortfolioTool, QueryPortfolioInput, type QueryPortfolioInputType } from './queryPortfolio';
 export { sendEmailTool, SendEmailInput, type SendEmailInputType } from './sendEmail';
@@ -27,6 +28,7 @@ import { updateTaskTool } from './updateTask';
 import { addSubtaskTool } from './addSubtask';
 import { updateSubtaskTool } from './updateSubtask';
 import { updateProjectTool } from './updateProject';
+import { addStakeholdersTool } from './addStakeholders';
 import { addPersonTool } from './addPerson';
 import { queryPortfolioTool } from './queryPortfolio';
 import { sendEmailTool } from './sendEmail';
@@ -43,6 +45,7 @@ export const allTools = [
   addSubtaskTool,
   updateSubtaskTool,
   updateProjectTool,
+  addStakeholdersTool,
   addPersonTool,
   queryPortfolioTool,
   sendEmailTool,
@@ -60,6 +63,7 @@ export type ToolName =
   | 'add_subtask'
   | 'update_subtask'
   | 'update_project'
+  | 'add_stakeholders'
   | 'add_person'
   | 'query_portfolio'
   | 'send_email'
@@ -73,6 +77,7 @@ export const toolNames: ToolName[] = [
   'add_subtask',
   'update_subtask',
   'update_project',
+  'add_stakeholders',
   'add_person',
   'query_portfolio',
   'send_email',
@@ -93,6 +98,7 @@ export const toolCategories: Record<ToolName, ToolMetadata> = {
   'add_subtask': { name: 'add_subtask', category: 'safe', description: 'Add a subtask to a task' },
   'update_subtask': { name: 'update_subtask', category: 'safe', description: 'Update a subtask' },
   'update_project': { name: 'update_project', category: 'safe', description: 'Update project properties' },
+  'add_stakeholders': { name: 'add_stakeholders', category: 'safe', description: 'Add stakeholders to a project' },
   'add_person': { name: 'add_person', category: 'safe', description: 'Add a person to the database' },
   'query_portfolio': { name: 'query_portfolio', category: 'safe', description: 'Query portfolio information' },
   'send_email': { name: 'send_email', category: 'sensitive', requiresConfirmation: true, description: 'Send an email (irreversible)' },
