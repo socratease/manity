@@ -23,12 +23,25 @@ export const supportedMomentumActions = [
  * @param {Array} projects - Array of project objects to search
  * @returns {Object|null} - Resolved project or null if not found
  */
+const normalizeProjectName = name =>
+  typeof name === 'string'
+    ? name.trim()
+    : '';
+
+const normalizeProjectRef = ref => {
+  if (typeof ref === 'string') {
+    return ref.trim();
+  }
+  return ref;
+};
+
 export function resolveMomentumProjectRef(target, projects) {
   if (!target) return null;
-  const lowerTarget = `${target}`.toLowerCase();
+  const normalizedTarget = normalizeProjectRef(target);
+  const lowerTarget = `${normalizedTarget}`.toLowerCase();
   return projects.find(project =>
-    `${project.id}` === `${target}` ||
-    project.name.toLowerCase() === lowerTarget
+    `${project.id}` === `${normalizedTarget}` ||
+    normalizeProjectName(project.name).toLowerCase() === lowerTarget
   ) || null;
 }
 
@@ -47,9 +60,59 @@ export function validateThrustActions(actions = [], projects = []) {
 
   const validActions = [];
   // Track projects being created in this batch so subsequent actions can reference them
-  const pendingProjects = new Map(); // projectName -> temporary project object
+  // Pending projects are indexed by both name (case-insensitive) and any supplied ID
+  const pendingProjects = new Map(); // key -> temporary project object
 
-  actions.forEach((action, idx) => {
+  const registerPendingProject = (name, id) => {
+    if (name) {
+      pendingProjects.set(`name:${name.toLowerCase()}`, { name, id });
+    }
+    if (id !== undefined && id !== null) {
+      pendingProjects.set(`id:${id}`, { name: name || `${id}`, id });
+    }
+  };
+
+  const getPendingProject = (ref) => {
+    const idKey = `id:${ref}`;
+    if (pendingProjects.has(idKey)) {
+      return pendingProjects.get(idKey);
+    }
+
+    if (typeof ref === 'string') {
+      const nameKey = `name:${ref.toLowerCase()}`;
+      if (pendingProjects.has(nameKey)) {
+        return pendingProjects.get(nameKey);
+      }
+    }
+
+    return null;
+  };
+
+  // Track projects that will be created later in the batch so we can reorder dependent actions
+  const futureCreatedProjects = new Set();
+  actions.forEach(action => {
+    if (action?.type === 'create_project') {
+      const projectName = normalizeProjectName(action.name || action.projectName);
+      if (projectName) {
+        futureCreatedProjects.add(projectName.toLowerCase());
+      }
+    }
+  });
+
+  const deferredActions = new Map(); // projectName -> [{ action, idx, projectRef }]
+
+  const processDeferredActions = projectName => {
+    const normalized = projectName.toLowerCase();
+    const queued = deferredActions.get(normalized) || [];
+    deferredActions.delete(normalized);
+    queued.forEach(({ action, idx, projectRef }) => {
+      handleAction(action, idx, { allowDefer: false, projectRef });
+    });
+  };
+
+  const handleAction = (action, idx, options = {}) => {
+    const { allowDefer = true, projectRef: providedProjectRef } = options;
+
     if (!action || typeof action !== 'object') {
       errors.push(`Action ${idx + 1} was not an object.`);
       return;
@@ -67,14 +130,22 @@ export function validateThrustActions(actions = [], projects = []) {
 
     // create_project doesn't need a projectId - it creates a new project
     if (action.type === 'create_project') {
-      const projectName = action.name || action.projectName;
+      const projectId = action.projectId ?? action.id;
+      // Coerce name to string to handle edge cases (undefined, null, numbers)
+      const rawName = action.name ?? action.projectName ?? '';
+      const projectName = normalizeProjectName(typeof rawName === 'string' ? rawName : String(rawName));
       if (!projectName) {
+        // Log the raw action for debugging when name is missing
+        console.warn('[Momentum] create_project action missing name:', JSON.stringify(action, null, 2));
         errors.push(`Action ${idx + 1} (create_project) is missing a name or projectName.`);
         return;
       }
-      // Track this project so subsequent actions can reference it
-      pendingProjects.set(projectName.toLowerCase(), { name: projectName });
-      validActions.push(action);
+      // Track this project so subsequent actions can reference it by name OR id
+      registerPendingProject(projectName, projectId);
+      // Explicitly set both name and projectName to ensure they're always present
+      const validatedAction = { ...action, name: projectName, projectName: projectName };
+      validActions.push(validatedAction);
+      processDeferredActions(projectName);
       return;
     }
 
@@ -151,7 +222,7 @@ export function validateThrustActions(actions = [], projects = []) {
       return;
     }
 
-    const projectRef = action.projectId ?? action.projectName;
+    const projectRef = providedProjectRef ?? normalizeProjectRef(action.projectId ?? action.projectName);
     if (!projectRef) {
       errors.push(`Action ${idx + 1} (${action.type}) is missing a projectId or projectName.`);
       return;
@@ -161,14 +232,20 @@ export function validateThrustActions(actions = [], projects = []) {
     let resolvedProject = resolveMomentumProjectRef(projectRef, projects);
 
     // If not found in existing projects, check if it's being created in this batch
-    if (!resolvedProject && typeof projectRef === 'string') {
-      const pendingProject = pendingProjects.get(projectRef.toLowerCase());
+    if (!resolvedProject) {
+      const pendingProject = getPendingProject(projectRef);
       if (pendingProject) {
         // Allow reference to project being created in same batch
         // The action will be executed after the create_project action
-        validActions.push(action);
-        return;
+        resolvedProject = pendingProject;
       }
+    }
+
+    if (!resolvedProject && allowDefer && typeof projectRef === 'string' && futureCreatedProjects.has(projectRef.toLowerCase())) {
+      const queue = deferredActions.get(projectRef.toLowerCase()) || [];
+      queue.push({ action, idx, projectRef });
+      deferredActions.set(projectRef.toLowerCase(), queue);
+      return;
     }
 
     if (!resolvedProject) {
@@ -196,6 +273,15 @@ export function validateThrustActions(actions = [], projects = []) {
       ...action,
       projectId: resolvedProject.id,
       projectName: resolvedProject.name
+    });
+  };
+
+  actions.forEach((action, idx) => handleAction(action, idx));
+
+  deferredActions.forEach(queue => {
+    queue.forEach(({ action, idx, projectRef }) => {
+      const ref = projectRef ?? action.projectName ?? action.projectId ?? 'unknown project';
+      errors.push(`Action ${idx + 1} (${action.type}) references project "${ref}" that was scheduled to be created later in the batch, but no valid create_project action was found before validation completed.`);
     });
   });
 

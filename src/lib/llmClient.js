@@ -40,5 +40,6 @@ export async function callOpenAIChat({
 
   const json = await res.json();
   const content = json.content ?? json.choices?.[0]?.message?.content ?? "";
-  return { content, raw: json.raw ?? json };
+  const thinking = json.thinking ?? null;
+  return { content, thinking, raw: json.raw ?? json };
 }

@@ -12,7 +12,7 @@ import backend.main as main
 def _create_test_client(tmp_path):
     db_path = tmp_path / "test.db"
     main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
-    SQLModel.metadata.create_all(main.engine)
+    main.create_db_and_tables()
     return TestClient(main.app)
 
 
@@ -21,7 +21,7 @@ def test_models_can_be_mapped_and_related(tmp_path):
     main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
 
     # Ensure we start from a clean metadata state
-    SQLModel.metadata.create_all(main.engine)
+    main.create_db_and_tables()
 
     with Session(main.engine) as session:
         project = main.Project(id="project-1", name="Test Project")
@@ -39,11 +39,11 @@ def test_models_can_be_mapped_and_related(tmp_path):
         assert refreshed_project.recentActivity[0].note == "note"
 
 
-def test_stakeholders_are_normalized_to_json(tmp_path):
+def test_stakeholders_are_mapped_to_people(tmp_path):
     db_path = tmp_path / "test.db"
     main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
 
-    SQLModel.metadata.create_all(main.engine)
+    main.create_db_and_tables()
 
     payload = main.ProjectPayload(
         name="Stakeholder Project",
@@ -51,26 +51,97 @@ def test_stakeholders_are_normalized_to_json(tmp_path):
         priority="high",
         progress=10,
         stakeholders=[
-            main.Stakeholder(id="person-1", name="Alice", team="Product"),
-            main.Stakeholder(id="person-2", name="Bob", team="Engineering"),
+            main.PersonReference(name="Alice", team="Product", email="alice@example.com"),
+            main.PersonReference(name="Bob", team="Engineering"),
         ],
     )
 
     with Session(main.engine) as session:
         project = main.upsert_project(session, payload)
 
-        expected = [
-            {"id": "person-1", "name": "Alice", "team": "Product"},
-            {"id": "person-2", "name": "Bob", "team": "Engineering"},
-        ]
-
-        assert project.stakeholders == expected
+        assert {person.name for person in project.stakeholders} == {"Alice", "Bob"}
+        assert {person.team for person in project.stakeholders} == {"Product", "Engineering"}
 
         serialized = main.serialize_project(project)
-        assert serialized["stakeholders"] == expected
+        assert len(serialized["stakeholders"]) == 2
+        assert {person["name"] for person in serialized["stakeholders"]} == {"Alice", "Bob"}
+        alice = next(person for person in serialized["stakeholders"] if person["name"] == "Alice")
+        assert alice["email"] == "alice@example.com"
 
         refreshed_project = session.get(main.Project, project.id)
-        assert refreshed_project.stakeholders == expected
+        assert len(refreshed_project.stakeholders) == 2
+
+
+def test_upsert_project_does_not_autoflush_null_name(tmp_path):
+    db_path = tmp_path / "autoflush.db"
+    main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
+
+    SQLModel.metadata.create_all(main.engine)
+
+    payload = main.ProjectPayload(
+        name="Autoflush Safety",
+        status="active",
+        priority="medium",
+        progress=0,
+        description="",
+        plan=[],
+        recentActivity=[],
+        stakeholders=[],
+    )
+
+    with Session(main.engine) as session:
+        project = main.upsert_project(session, payload)
+        assert project.name == "Autoflush Safety"
+
+
+def test_people_created_from_project_relations(tmp_path):
+    db_path = tmp_path / "test.db"
+    main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
+
+    SQLModel.metadata.create_all(main.engine)
+
+    payload = main.ProjectPayload(
+        name="People Project",
+        status="active",
+        priority="high",
+        stakeholders=[main.Stakeholder(name="Taylor Swift", team="Product")],
+        recentActivity=[main.ActivityPayload(date="2025-01-01", note="Kickoff", author="Taylor Swift")],
+    )
+
+    with Session(main.engine) as session:
+        project = main.upsert_project(session, payload)
+        people = session.exec(select(main.Person)).all()
+        assert len(people) == 1
+        person = people[0]
+
+        serialized = main.serialize_project_with_people(session, project)
+        assert serialized["stakeholders"][0]["id"] == person.id
+        assert serialized["recentActivity"][0]["authorId"] == person.id
+
+
+def test_backfill_populates_missing_people(tmp_path):
+    db_path = tmp_path / "backfill.db"
+    main.engine = main.create_engine_from_env(f"sqlite:///{db_path}")
+
+    SQLModel.metadata.create_all(main.engine)
+
+    with Session(main.engine) as session:
+        project = main.Project(
+            id="legacy-project",
+            name="Legacy",
+            stakeholders_legacy=[{"name": "Legacy Owner", "team": "Ops"}],
+            recentActivity=[main.Activity(id="activity-1", date="2025-01-01", note="note", author="Legacy Owner")],
+        )
+        session.add(project)
+        session.commit()
+
+        main.run_people_backfill(session)
+
+        refreshed_project = session.get(main.Project, "legacy-project")
+        people = session.exec(select(main.Person)).all()
+
+        assert len(people) == 1
+        assert refreshed_project.stakeholders[0].id == people[0].id
 
 
 def test_upsert_project_loads_relationships(tmp_path):
@@ -132,8 +203,8 @@ def test_upsert_project_loads_relationships(tmp_path):
         assert project.recentActivity is not None
         assert len(project.recentActivity) == 2
         activity_notes = [activity.note for activity in project.recentActivity]
+        assert activity_notes == ["Made progress", "Started project"]
         assert activity_notes[0] == "Made progress"
-        assert activity_notes[1] == "Started project"
 
         # Verify serialization includes all relationships
         serialized = main.serialize_project(project)

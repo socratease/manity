@@ -7,13 +7,12 @@ import PeopleGraph from './components/PeopleGraph';
 import PersonPicker from './components/PersonPicker';
 import AddPersonCallout from './components/AddPersonCallout';
 import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
-import RoamingAvatars from './components/RoamingAvatars';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 import { MOMENTUM_THRUST_SYSTEM_PROMPT } from './lib/momentumPrompts';
 import { verifyThrustActions } from './lib/momentumVerification';
 import SnowEffect from './components/SnowEffect';
 import ChristmasConfetti from './components/ChristmasConfetti';
-import MomentumChat from './components/MomentumChat';
+import MomentumChatWithAgent from './components/MomentumChatWithAgent';
 import Slides from './components/Slides';
 import DataPage from './components/DataPage';
 
@@ -25,11 +24,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const recentUpdatesRef = useRef(null);
   const recentlyCompletedRef = useRef(null);
   const nextUpRef = useRef(null);
-
-  // Refs for roaming avatars feature
-  const jugglerRef = useRef(null);
-  const projectCardRefs = useRef({});
-  const [avatarsReleased, setAvatarsReleased] = useState(false);
 
   const {
     projects,
@@ -157,20 +151,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       localStorage.removeItem('manity_logged_in_user');
     }
   }, [loggedInUser]);
-
-  // Track scroll position for roaming avatars release
-  useEffect(() => {
-    const handleScroll = () => {
-      if (!jugglerRef.current) return;
-      const rect = jugglerRef.current.getBoundingClientRect();
-      // Release avatars when juggler is mostly scrolled out of view
-      const shouldRelease = rect.bottom < 100;
-      setAvatarsReleased(shouldRelease);
-    };
-
-    window.addEventListener('scroll', handleScroll, { passive: true });
-    return () => window.removeEventListener('scroll', handleScroll);
-  }, []);
+  const resolvedLoggedInUser = loggedInUser?.trim() || '';
+  const activityAuthor = resolvedLoggedInUser || undefined;
+  const defaultOwnerStakeholder = resolvedLoggedInUser
+    ? [{ name: resolvedLoggedInUser, team: 'Owner' }]
+    : [];
 
   const [focusedField, setFocusedField] = useState(null);
   const [taskEditEnabled, setTaskEditEnabled] = useState(false);
@@ -513,6 +498,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         if (view === 'portfolio' || view === 'overview') {
           setActiveView(view);
           setViewingProjectId(projectId);
+        } else if (view === 'project') {
+          setActiveView('overview');
+          setViewingProjectId(projectId);
         } else if (view === 'thrust') {
           setActiveView('thrust');
           setActiveProjectInChat(projectId);
@@ -824,7 +812,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         await addActivity(projectId, {
           date: new Date().toISOString(),
           note: checkinNote,
-          author: loggedInUser || 'Anonymous'
+        author: activityAuthor
         });
       } catch (error) {
         console.error('Failed to add daily checkin:', error);
@@ -848,7 +836,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         await addActivity(viewingProjectId, {
           date: new Date().toISOString(),
           note: newUpdate,
-          author: loggedInUser || 'Anonymous'
+        author: activityAuthor
         });
       } catch (error) {
         console.error('Failed to add update:', error);
@@ -994,6 +982,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     const project = projects.find(p => p.id === viewingProjectId);
     if (project) {
       setEditValues({
+        name: project.name,
         status: project.status,
         priority: project.priority,
         stakeholders: project.stakeholders, // Keep full objects for PersonPicker
@@ -1011,7 +1000,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
     const finalStakeholders = stakeholdersArray.length > 0
       ? stakeholdersArray
-      : [{ name: loggedInUser || 'You', team: 'Owner' }];
+      : defaultOwnerStakeholder;
 
     // Sync stakeholders to People database
     await syncStakeholdersToPeople(finalStakeholders);
@@ -1019,6 +1008,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     // Use updateProject API to persist all edited values
     try {
       await updateProject(viewingProjectId, {
+        name: editValues.name,
         status: editValues.status,
         priority: editValues.priority,
         progress: editValues.progress || 0,
@@ -1031,10 +1021,14 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       await addActivity(viewingProjectId, {
         date: new Date().toISOString(),
         note: 'Updated project details',
-        author: loggedInUser || 'System'
+        author: activityAuthor
       });
     } catch (error) {
       console.error('Failed to save project edits:', error);
+      // Show error to user if it's a duplicate name error
+      if (error.message && error.message.includes('already exists')) {
+        alert(error.message);
+      }
     }
 
     setEditMode(false);
@@ -1171,7 +1165,14 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         await addActivity(viewingProjectId, {
           date: new Date().toISOString(),
           note: noteWithContext,
-          author: loggedInUser || 'Anonymous'
+          author: activityAuthor,
+          // Include taskContext for persistent task/subtask association
+          taskContext: {
+            taskId,
+            subtaskId,
+            taskTitle,
+            subtaskTitle
+          }
         });
       } catch (error) {
         console.error('Failed to add subtask comment:', error);
@@ -1191,7 +1192,12 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         await addActivity(viewingProjectId, {
           date: new Date().toISOString(),
           note: noteWithContext,
-          author: loggedInUser || 'Anonymous'
+          author: activityAuthor,
+          // Include taskContext for persistent task association
+          taskContext: {
+            taskId,
+            taskTitle
+          }
         });
       } catch (error) {
         console.error('Failed to add task comment:', error);
@@ -1848,11 +1854,17 @@ Write a professional executive summary that highlights the project's current sta
   };
 
   const normalizeStakeholderEntry = (person) => {
-    if (!person || !person.name) return null;
-    const existing = findPersonByName(person.name);
+    if (!person || (!person.name && !person.id)) return null;
+    const existing = person.id
+      ? people.find(p => p.id === person.id) || findPersonByName(person.name)
+      : findPersonByName(person.name);
+    const name = person.name || existing?.name;
+    if (!name) return null;
     return {
-      name: person.name,
-      team: existing?.team || person.team || 'Contributor'
+      id: person.id || existing?.id || null,
+      name,
+      team: existing?.team || person.team || 'Contributor',
+      email: person.email || existing?.email || null
     };
   };
 
@@ -1863,7 +1875,8 @@ Write a professional executive summary that highlights the project's current sta
       const normalized = normalizeStakeholderEntry(entry);
       if (!normalized) return;
 
-      map.set(normalized.name.toLowerCase(), normalized);
+      const key = normalized.id || normalized.name.toLowerCase();
+      map.set(key, normalized);
     });
 
     return Array.from(map.values());
@@ -1898,6 +1911,8 @@ Write a professional executive summary that highlights the project's current sta
   const syncAllPeopleFromProjects = async (projectsData) => {
     const peopleToSync = new Map(); // Use Map to avoid duplicates
 
+    const ignoredAuthorNames = new Set(['you', 'system', 'unknown', 'anonymous']);
+
     projectsData.forEach(project => {
       // Add stakeholders
       if (project.stakeholders) {
@@ -1911,8 +1926,20 @@ Write a professional executive summary that highlights the project's current sta
       // Add authors from activities
       if (project.recentActivity) {
         project.recentActivity.forEach(activity => {
-          if (activity.author && activity.author.trim() && activity.author !== 'You') {
-            peopleToSync.set(activity.author.toLowerCase(), normalizeStakeholderEntry({ name: activity.author }));
+          if (activity.authorPerson && activity.authorPerson.name) {
+            const normalized = normalizeStakeholderEntry(activity.authorPerson);
+            if (normalized) {
+              peopleToSync.set((normalized.id || normalized.name).toString().toLowerCase(), normalized);
+            }
+          } else if (activity.author && activity.author.trim()) {
+            const authorName = activity.author.trim();
+            if (ignoredAuthorNames.has(authorName.toLowerCase())) {
+              return;
+            }
+            const normalized = normalizeStakeholderEntry({ name: authorName });
+            if (normalized) {
+              peopleToSync.set(normalized.name.toLowerCase(), normalized);
+            }
           }
         });
       }
@@ -1944,7 +1971,7 @@ Write a professional executive summary that highlights the project's current sta
       name: newProjectName.trim(),
       stakeholders: stakeholderEntries.length > 0
         ? stakeholderEntries
-        : normalizeStakeholderList([{ name: loggedInUser || 'You', team: 'Owner' }]),
+        : normalizeStakeholderList(defaultOwnerStakeholder),
       status: newProjectStatus,
       priority: newProjectPriority,
       progress: 0,
@@ -1965,7 +1992,7 @@ Write a professional executive summary that highlights the project's current sta
         await addActivity(createdProject.id, {
           date: createdAt,
           note: newProjectDescription,
-          author: loggedInUser || 'You'
+          author: activityAuthor
         });
       }
 
@@ -2169,11 +2196,15 @@ Write a professional executive summary that highlights the project's current sta
       projectLookup.set(project.name.toLowerCase(), project.id);
     });
 
-    const appendActionResult = (label, detail, deltas = []) => {
+    const appendActionResult = (label, detail, deltas = [], metadata = {}) => {
+      const { fallbackLabel, fallbackDetail, ...rest } = metadata;
+      const normalizedLabel = (label || '').trim();
+      const normalizedDetail = (detail || '').trim();
+
       result.actionResults.push({
-        label: label || 'Action processed',
-        detail: detail || 'No additional details provided.',
-        deltas
+        ...rest,
+        label: normalizedLabel || fallbackLabel || 'Action processed',
+        detail: normalizedDetail || fallbackDetail || 'No additional details provided.',
       });
       result.deltas.push(...deltas);
     };
@@ -2201,6 +2232,9 @@ Write a professional executive summary that highlights the project's current sta
       const actionDeltas = [];
       let label = '';
       let detail = '';
+      const providedLabel = (action.label || '').trim();
+      const providedDetail = (action.detail || '').trim();
+      let appendedActionResult = false;
 
       if (action.type === 'query_portfolio') {
         const scope = ['portfolio', 'project', 'people'].includes(action.scope)
@@ -2276,8 +2310,17 @@ Write a professional executive summary that highlights the project's current sta
       }
 
       if (action.type === 'create_project') {
-        const projectName = (action.name || action.projectName || '').trim();
+        // Check both name and projectName with defensive coercion
+        const rawName = action.name ?? action.projectName ?? '';
+        const projectName = (typeof rawName === 'string' ? rawName : String(rawName)).trim();
         if (!projectName) {
+          // Log for debugging
+          console.warn('[ManityApp] create_project action has empty name:', {
+            action,
+            actionName: action.name,
+            actionProjectName: action.projectName,
+            rawName
+          });
           label = 'Skipped action: missing project name';
           detail = 'Skipped create_project because no name was provided.';
           appendActionResult(label, detail, actionDeltas);
@@ -2343,7 +2386,7 @@ Write a professional executive summary that highlights the project's current sta
             id: activityId,
             date: new Date().toISOString(),
             note,
-            author: action.author || loggedInUser || 'You'
+            author: action.author || activityAuthor || ''
           };
           Object.assign(
             project,
@@ -2366,7 +2409,7 @@ Write a professional executive summary that highlights the project's current sta
             const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
             if (assigneeName) {
               const person = findPersonByName(assigneeName);
-              taskAssignee = person ? { name: person.name, team: person.team } : { name: assigneeName };
+              taskAssignee = person ? { id: person.id, name: person.name, team: person.team } : { name: assigneeName };
             }
           }
           const newTask = {
@@ -2385,10 +2428,24 @@ Write a professional executive summary that highlights the project's current sta
           };
           project.plan = [...project.plan, newTask];
           actionDeltas.push({ type: 'remove_task', projectId: project.id, taskId });
-          label = `Added task "${newTask.title}" to ${project.name}`;
-          detail = `Added task "${newTask.title}" (${describeDueDate(newTask.dueDate)})${taskAssignee ? ` assigned to ${taskAssignee.name}` : ''} to ${project.name}`;
+          const synthesizedLabel = `Added task "${newTask.title}" to ${project.name}`;
+          const synthesizedDetail = `Task "${newTask.title}" in ${project.name} (${describeDueDate(newTask.dueDate)})${taskAssignee ? ` assigned to ${taskAssignee.name}` : ''}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId,
+            taskTitle: newTask.title,
+            assigneeName: taskAssignee?.name,
+            dueDate: newTask.dueDate,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'update_task': {
@@ -2433,16 +2490,32 @@ Write a professional executive summary that highlights the project's current sta
               if (newAssigneeName && newAssigneeName !== currentAssigneeName) {
                 const person = findPersonByName(newAssigneeName);
                 changes.push(`assigned to ${newAssigneeName}`);
-                task.assignee = person ? { name: person.name, team: person.team } : { name: newAssigneeName };
+                task.assignee = person ? { id: person.id, name: person.name, team: person.team } : { name: newAssigneeName };
               }
             }
           }
 
           actionDeltas.push({ type: 'restore_task', projectId: project.id, taskId: task.id, previous });
-          label = `Updated task "${task.title}" in ${project.name}`;
-          detail = `Updated task "${task.title}" in ${project.name}: ${changes.join('; ') || 'no tracked changes'}`;
+          const diffSummary = changes.join('; ');
+          const synthesizedLabel = `Updated task "${task.title}" in ${project.name}`;
+          const synthesizedDetail = `${task.title} in ${project.name}: ${diffSummary || 'no tracked changes'}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId: task.id,
+            taskTitle: task.title,
+            assigneeName: task.assignee?.name,
+            dueDate: task.dueDate,
+            diffSummary,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'add_subtask': {
@@ -2460,7 +2533,7 @@ Write a professional executive summary that highlights the project's current sta
             const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
             if (assigneeName) {
               const person = findPersonByName(assigneeName);
-              subtaskAssignee = person ? { name: person.name, team: person.team } : { name: assigneeName };
+              subtaskAssignee = person ? { id: person.id, name: person.name, team: person.team } : { name: assigneeName };
             }
           }
           const newSubtask = {
@@ -2472,10 +2545,26 @@ Write a professional executive summary that highlights the project's current sta
           };
           task.subtasks = [...(task.subtasks || []), newSubtask];
           actionDeltas.push({ type: 'remove_subtask', projectId: project.id, taskId: task.id, subtaskId });
-          label = `Added subtask "${newSubtask.title}" to ${task.title}`;
-          detail = `Added subtask "${newSubtask.title}" (${describeDueDate(newSubtask.dueDate)})${subtaskAssignee ? ` assigned to ${subtaskAssignee.name}` : ''} under ${task.title} in ${project.name}`;
+          const synthesizedLabel = `Added subtask "${newSubtask.title}" to ${task.title}`;
+          const synthesizedDetail = `Subtask "${newSubtask.title}" under ${task.title} in ${project.name} (${describeDueDate(newSubtask.dueDate)})${subtaskAssignee ? ` assigned to ${subtaskAssignee.name}` : ''}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId: task.id,
+            taskTitle: task.title,
+            subtaskId,
+            subtaskTitle: newSubtask.title,
+            assigneeName: subtaskAssignee?.name,
+            dueDate: newSubtask.dueDate,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'update_subtask': {
@@ -2533,10 +2622,28 @@ Write a professional executive summary that highlights the project's current sta
           }
 
           actionDeltas.push({ type: 'restore_subtask', projectId: project.id, taskId: task.id, subtaskId: subtask.id, previous });
-          label = `Updated subtask "${subtask.title}" in ${task.title}`;
-          detail = `Updated subtask "${subtask.title}" in ${task.title}: ${changes.join('; ') || 'no tracked changes'}`;
+          const diffSummary = changes.join('; ');
+          const synthesizedLabel = `Updated subtask "${subtask.title}" in ${task.title}`;
+          const synthesizedDetail = `${subtask.title} under ${task.title} in ${project.name}: ${diffSummary || 'no tracked changes'}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            taskId: task.id,
+            taskTitle: task.title,
+            subtaskId: subtask.id,
+            subtaskTitle: subtask.title,
+            assigneeName: subtask.assignee?.name,
+            dueDate: subtask.dueDate,
+            diffSummary,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'update_project': {
@@ -2591,10 +2698,22 @@ Write a professional executive summary that highlights the project's current sta
           }
 
           actionDeltas.push({ type: 'restore_project', projectId: project.id, previous });
-          label = `Updated ${project.name}`;
-          detail = `Updated ${project.name}: ${changes.join('; ') || 'no tracked changes noted'}`;
+          const diffSummary = changes.join('; ');
+          const synthesizedLabel = `Updated project ${project.name}`;
+          const synthesizedDetail = `${project.name}: ${diffSummary || 'no tracked changes noted'}`;
+          label = providedLabel || synthesizedLabel;
+          detail = providedDetail || synthesizedDetail;
           projectsChanged = true;
           result.updatedProjectIds.add(project.id);
+          appendActionResult(label, detail, actionDeltas, {
+            type: action.type,
+            projectId: project.id,
+            projectName: project.name,
+            diffSummary,
+            fallbackLabel: synthesizedLabel,
+            fallbackDetail: synthesizedDetail,
+          });
+          appendedActionResult = true;
           break;
         }
         case 'send_email': {
@@ -2638,7 +2757,12 @@ Write a professional executive summary that highlights the project's current sta
             });
             label = `Email sent to ${normalizedRecipients.join(', ')}`;
             detail = `Sent email "${action.subject}"`;
-            appendActionResult(label, detail, actionDeltas);
+            appendActionResult(label, detail, actionDeltas, {
+              type: action.type,
+              fallbackLabel: label,
+              fallbackDetail: detail,
+            });
+            appendedActionResult = true;
           } catch (error) {
             appendActionResult('Failed to send email', error?.message || 'Email service returned an error.', actionDeltas);
             continue;
@@ -2651,7 +2775,24 @@ Write a professional executive summary that highlights the project's current sta
           detail = `Skipped unsupported action type: ${action.type}`;
       }
 
-      appendActionResult(label, detail, actionDeltas);
+      if (!appendedActionResult) {
+        const assigneeName = typeof action.assignee === 'string' ? action.assignee : action.assignee?.name;
+        const resolvedLabel = providedLabel || label;
+        const resolvedDetail = providedDetail || detail;
+        appendActionResult(resolvedLabel, resolvedDetail, actionDeltas, {
+          type: action.type,
+          projectId: project?.id,
+          projectName: project?.name,
+          taskId: action.taskId,
+          taskTitle: action.taskTitle || action.title,
+          subtaskId: action.subtaskId,
+          subtaskTitle: action.subtaskTitle,
+          assigneeName,
+          dueDate: action.dueDate,
+          fallbackLabel: resolvedLabel,
+          fallbackDetail: resolvedDetail,
+        });
+      }
     }
 
     if (projectsChanged) {
@@ -2738,7 +2879,7 @@ Write a professional executive summary that highlights the project's current sta
       const normalized = normalizeStakeholderEntry(entry);
       if (!normalized) return;
 
-      const key = normalized.name.toLowerCase();
+      const key = normalized.id || normalized.name.toLowerCase();
       const existing = stakeholderMap.get(key);
 
       if (!existing || (!existing.team && normalized.team)) {
@@ -2831,7 +2972,7 @@ Write a professional executive summary that highlights the project's current sta
           await addActivity(targetProjectId, {
             date: new Date().toISOString(),
             note: timelineUpdate,
-            author: loggedInUser || 'Anonymous'
+            author: activityAuthor
           });
         } catch (error) {
           console.error('Failed to add timeline update:', error);
@@ -2926,7 +3067,7 @@ Write a professional executive summary that highlights the project's current sta
     const userMessage = {
       id: generateActivityId(),
       role: 'user',
-      author: loggedInUser || 'You',
+      author: resolvedLoggedInUser || 'User',
       note: thrustDraft,
       date: new Date().toISOString(),
     };
@@ -2941,7 +3082,7 @@ Write a professional executive summary that highlights the project's current sta
 
 LOGGED-IN USER: ${loggedInUser || 'Not set'}
 - When the user says "me", "my", "I", or similar pronouns, they are referring to: ${loggedInUser || 'the logged-in user'}
-- When adding comments or updates, use "${loggedInUser || 'You'}" as the author unless otherwise specified
+- When adding comments or updates, use the logged-in user's name as the author unless otherwise specified
 - When sending emails on behalf of the user, the "from" address will be automatically set to the logged-in user's email
 
 PEOPLE & EMAIL ADDRESSES:
@@ -3117,7 +3258,9 @@ PEOPLE & EMAIL ADDRESSES:
   }, [projects, loggedInUser]);
 
   useEffect(() => {
-    if (viewingProjectId && !visibleProjects.some(p => p.id === viewingProjectId)) {
+    // Only clear viewingProjectId if projects have loaded and the project doesn't exist
+    // This prevents clearing the ID on page refresh before projects are loaded
+    if (viewingProjectId && visibleProjects.length > 0 && !visibleProjects.some(p => p.id === viewingProjectId)) {
       setViewingProjectId(null);
     }
   }, [loggedInUser, viewingProjectId, visibleProjects]);
@@ -3377,11 +3520,6 @@ PEOPLE & EMAIL ADDRESSES:
   const renderProjectCard = (project, index) => (
     <div
       key={project.id}
-      ref={(el) => {
-        if (el) {
-          projectCardRefs.current[project.id] = el;
-        }
-      }}
       data-project-id={project.id}
       onClick={() => updateHash('overview', project.id)}
       style={{
@@ -4257,7 +4395,10 @@ PEOPLE & EMAIL ADDRESSES:
         </div>
       )}
 
-      <main style={styles.main}>
+      <main style={{
+        ...styles.main,
+        ...(activeView === 'thrust' ? styles.mainMomentum : {}),
+      }}>
         <div style={styles.topBar}>
           <div style={styles.topBarLeft}>
             <button
@@ -4362,7 +4503,27 @@ PEOPLE & EMAIL ADDRESSES:
 
             <div style={styles.detailsHeader}>
               <div>
-                <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
+                {editMode ? (
+                  <input
+                    type="text"
+                    value={editValues.name}
+                    onChange={(e) => setEditValues({...editValues, name: e.target.value})}
+                    onFocus={() => setFocusedField('project-name')}
+                    onBlur={() => setFocusedField(null)}
+                    style={{
+                      ...styles.detailsTitle,
+                      border: '2px solid var(--earth)',
+                      borderRadius: '6px',
+                      padding: '8px 12px',
+                      width: '100%',
+                      boxSizing: 'border-box',
+                      backgroundColor: '#FFFFFF'
+                    }}
+                    placeholder="Project Name"
+                  />
+                ) : (
+                  <h2 style={styles.detailsTitle}>{viewingProject.name}</h2>
+                )}
                 <div style={styles.descriptionSection}>
                   <label style={styles.descriptionLabel}>Project Description</label>
                   {editMode ? (
@@ -5785,37 +5946,39 @@ PEOPLE & EMAIL ADDRESSES:
             onDeletePerson={deletePerson}
           />
         ) : activeView === 'thrust' ? (
-          <MomentumChat
-            messages={getThrustConversation()}
-            onSendMessage={(message) => {
-              setThrustMessages(prev => [...prev, message]);
-            }}
-            onApplyActions={(actionResults, updatedProjectIds) => {
-              // Track recently updated projects for highlighting with timestamps
-              if (updatedProjectIds && updatedProjectIds.length > 0) {
-                const now = Date.now();
-                setRecentlyUpdatedProjects(prev => {
-                  const updated = { ...prev };
-                  updatedProjectIds.forEach(id => {
-                    updated[id] = now;
+          <div style={styles.momentumViewWrapper}>
+            <MomentumChatWithAgent
+              messages={getThrustConversation()}
+              onSendMessage={(message) => {
+                setThrustMessages(prev => [...prev, message]);
+              }}
+              onApplyActions={(actionResults, updatedProjectIds) => {
+                // Track recently updated projects for highlighting with timestamps
+                if (updatedProjectIds && updatedProjectIds.length > 0) {
+                  const now = Date.now();
+                  setRecentlyUpdatedProjects(prev => {
+                    const updated = { ...prev };
+                    updatedProjectIds.forEach(id => {
+                      updated[id] = now;
+                    });
+                    return updated;
                   });
-                  return updated;
-                });
-                setExpandedMomentumProjects(prev => {
-                  const newExpanded = { ...prev };
-                  updatedProjectIds.forEach(id => {
-                    newExpanded[String(id)] = true;
+                  setExpandedMomentumProjects(prev => {
+                    const newExpanded = { ...prev };
+                    updatedProjectIds.forEach(id => {
+                      newExpanded[String(id)] = true;
+                    });
+                    return newExpanded;
                   });
-                  return newExpanded;
-                });
-              }
-            }}
-            onUndoAction={undoThrustAction}
-            loggedInUser={loggedInUser}
-            people={people}
-            isSantafied={isSantafied}
-            recentlyUpdatedProjects={recentlyUpdatedProjects}
-          />
+                }
+              }}
+              onUndoAction={undoThrustAction}
+              loggedInUser={loggedInUser}
+              people={people}
+              isSantafied={isSantafied}
+              recentlyUpdatedProjects={recentlyUpdatedProjects}
+            />
+          </div>
         ) : activeView === 'slides' ? (
           <Slides
             projects={projects}
@@ -5867,22 +6030,11 @@ PEOPLE & EMAIL ADDRESSES:
           <>
             <div style={{ marginBottom: '24px' }}>
               <PeopleProjectsJuggle
-                ref={jugglerRef}
                 projects={visibleProjects}
                 people={people}
                 isSantafied={isSantafied}
-                avatarsReleased={avatarsReleased}
               />
             </div>
-            {/* Roaming avatars that escape the juggler and hop between projects */}
-            <RoamingAvatars
-              people={people}
-              projects={visibleProjects}
-              jugglerRef={jugglerRef}
-              projectCardRefs={projectCardRefs}
-              isSantafied={isSantafied}
-              enabled={true}
-            />
             <header style={styles.header}>
               <div>
                 <h2 style={styles.pageTitle}>Your Projects</h2>
@@ -6134,6 +6286,7 @@ const styles = {
   container: {
     display: 'flex',
     minHeight: '100vh',
+    height: '100vh',
     width: '100%',
     backgroundColor: 'var(--cream)',
     fontFamily: "'Crimson Pro', Georgia, serif",
@@ -6648,6 +6801,13 @@ const styles = {
     overflowY: 'auto',
     minWidth: 0,
     transition: 'padding 0.2s ease',
+    display: 'flex',
+    flexDirection: 'column',
+    minHeight: 0,
+  },
+
+  mainMomentum: {
+    overflowY: 'hidden',
   },
 
   header: {
@@ -6690,6 +6850,12 @@ const styles = {
     fontSize: '12px',
     color: 'var(--stone)',
     fontFamily: "'Inter', sans-serif",
+  },
+
+  momentumViewWrapper: {
+    flex: 1,
+    minHeight: 0,
+    display: 'flex',
   },
 
   newProjectPanel: {

@@ -111,6 +111,7 @@ LOG_DIR="${LOG_DIR:-$HOME/.local/manity-dev/logs}"
 VENV_DIR="${VENV_DIR:-$HOME/.local/venvs/manity-dev}"
 RUN_DIR="${RUN_DIR:-$HOME/.local/manity-dev/run}"
 DATABASE_URL="${DATABASE_URL:-sqlite:////home/c17420g/projects/manity-dev-data/portfolio.db}"
+BACKUP_DIR="${BACKUP_DIR:-/home/c17420g/projects/manity-dev-data/backups}"
 
 # Derived defaults (temporary; will recompute after dotenv overlay)
 VITE_API_BASE="${VITE_API_BASE:-http://localhost:$BACKEND_PORT}"
@@ -139,17 +140,39 @@ done
 ensure_dir "$LOG_DIR"
 ensure_dir "$RUN_DIR"
 ensure_dir "$(dirname "$VENV_DIR")"
-DB_PATH="${DATABASE_URL#sqlite:}"
-DB_PATH="${DB_PATH#//}"
-DB_PATH="${DB_PATH#//}"
-ensure_dir "$(dirname "$DB_PATH")"
+if [[ "$DATABASE_URL" == sqlite:* ]]; then
+  DB_PATH="${DATABASE_URL#sqlite://}"
+  case "$DB_PATH" in
+    //*) DB_PATH="/${DB_PATH#//}" ;;
+  esac
+  ensure_dir "$(dirname "$DB_PATH")"
+else
+  DB_PATH=""
+fi
+ensure_dir "$BACKUP_DIR"
 
 msg "Configuration:"
-for k in BACKEND_DIR BACKEND_APP BACKEND_PORT FRONTEND_DIR FRONTEND_PORT VITE_ROOT DATABASE_URL LOG_DIR VENV_DIR RUN_DIR; do
+for k in BACKEND_DIR BACKEND_APP BACKEND_PORT FRONTEND_DIR FRONTEND_PORT VITE_ROOT DATABASE_URL LOG_DIR VENV_DIR RUN_DIR BACKUP_DIR; do
   v="${!k}"; printf "  %-14s = %s\n" "$k" "$v"
 done
 printf "  %-14s = %s\n" "VITE_API_BASE" "$VITE_API_BASE"
 printf "  %-14s = %s\n" "NODE_ENV" "$NODE_ENV"
+
+##############################################
+# Backup database (SQLite only)
+##############################################
+if [[ -n "${DB_PATH:-}" && -f "$DB_PATH" ]]; then
+  timestamp=$(date +"%Y%m%d-%H%M%S")
+  db_filename=$(basename "$DB_PATH")
+  backup_path="$BACKUP_DIR/${db_filename%.*}-${timestamp}.${db_filename##*.}"
+  msg "Backing up database $DB_PATH -> $backup_path"
+  cp "$DB_PATH" "$backup_path"
+elif [[ -n "${DB_PATH:-}" ]]; then
+  err "SQLite database not found at resolved path: $DB_PATH"
+  exit 1
+else
+  msg "DATABASE_URL is not SQLite; skipping backup"
+fi
 
 ##############################################
 # Python venv and backend dependencies
