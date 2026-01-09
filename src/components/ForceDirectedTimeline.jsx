@@ -131,11 +131,14 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     });
   }, [getTimelineRange, getTimelineX, sampleTasks, timelineZoom, startDate, dimensions.width]);
 
-  // Initialize nodes
+  // Initialize nodes - directly update nodesRef to ensure physics effect
+  // has fresh data when it restarts (fixes race condition where physics
+  // would read stale ref before the sync effect could update it)
   useEffect(() => {
+    nodesRef.current = seededNodes;
     setNodes(seededNodes);
     setSimulationVersion(version => version + 1);
-  }, [seededNodes, timelineZoom]);
+  }, [seededNodes]);
 
   useEffect(() => {
     nodesRef.current = nodes;
