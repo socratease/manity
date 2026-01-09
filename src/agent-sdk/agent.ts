@@ -132,7 +132,7 @@ export interface AgentConfig {
  * Default agent configuration
  */
 export const defaultAgentConfig: AgentConfig = {
-  maxToolCalls: 10,
+  maxToolCalls: 25,
   allowSideEffects: true,
 };
 
