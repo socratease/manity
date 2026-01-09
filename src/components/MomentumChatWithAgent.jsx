@@ -12,6 +12,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
 import { getTheme } from '../lib/theme';
+import { getAllTags, insertTagAtCursor, parseTaggedText } from '../lib/tagging';
 
 // Import the new agent SDK
 import { useAgentRuntime } from '../agent-sdk';
@@ -57,6 +58,16 @@ export default function MomentumChatWithAgent({
     return map[status] || colors.stone;
   };
 
+  const getTagTypeColor = (tagType) => {
+    const map = {
+      person: colors.sage,
+      project: colors.earth,
+      task: colors.amber,
+      subtask: colors.stone
+    };
+    return map[tagType] || colors.cloud;
+  };
+
   // Get data and services from portfolio hook
   const {
     projects,
@@ -73,6 +84,10 @@ export default function MomentumChatWithAgent({
 
   // Component state
   const [inputValue, setInputValue] = useState('');
+  const [showTagSuggestions, setShowTagSuggestions] = useState(false);
+  const [tagSearchTerm, setTagSearchTerm] = useState('');
+  const [selectedTagIndex, setSelectedTagIndex] = useState(0);
+  const [cursorPosition, setCursorPosition] = useState(0);
   const [hoveredProject, setHoveredProject] = useState(null);
   const [linkedMessageId, setLinkedMessageId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
@@ -81,6 +96,7 @@ export default function MomentumChatWithAgent({
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
   const activeAssistantMessageId = useRef(null);
+  const inputRef = useRef(null);
 
   // Initialize agent runtime using the new SDK hook
   const {
@@ -102,6 +118,24 @@ export default function MomentumChatWithAgent({
   // State for streaming thinking steps during execution
   const [streamingThinkingSteps, setStreamingThinkingSteps] = useState([]);
   const [inProgressAssistantMessage, setInProgressAssistantMessage] = useState(null);
+
+  const visibleProjects = useMemo(
+    () => projects.filter(project => project.status !== 'deleted'),
+    [projects]
+  );
+
+  const availableTags = useMemo(
+    () => getAllTags(people, visibleProjects),
+    [people, visibleProjects]
+  );
+
+  const getFilteredTags = useCallback(
+    (searchTerm) =>
+      availableTags
+        .filter(tag => tag.display.toLowerCase().includes(searchTerm.toLowerCase()))
+        .slice(0, 8),
+    [availableTags]
+  );
 
   // Persist agent deltas to the backend (projects, tasks, subtasks, comments)
   const persistAgentResults = useCallback(
@@ -271,6 +305,92 @@ export default function MomentumChatWithAgent({
     },
   };
 
+  const handleInputChange = (event) => {
+    const text = event.target.value;
+    const cursorPos = event.target.selectionStart ?? text.length;
+
+    setInputValue(text);
+    setCursorPosition(cursorPos);
+
+    const textUpToCursor = text.substring(0, cursorPos);
+    const lastAtSymbol = textUpToCursor.lastIndexOf('@');
+
+    if (lastAtSymbol !== -1) {
+      const textAfterAt = textUpToCursor.substring(lastAtSymbol + 1);
+      if (!textAfterAt.includes(' ')) {
+        setTagSearchTerm(textAfterAt);
+        setShowTagSuggestions(true);
+        setSelectedTagIndex(0);
+      } else {
+        setShowTagSuggestions(false);
+      }
+    } else {
+      setShowTagSuggestions(false);
+    }
+  };
+
+  const handleInsertTag = useCallback(
+    (tag) => {
+      const { text: newText, cursorPosition: newCursorPosition } = insertTagAtCursor({
+        text: inputValue,
+        cursorPosition,
+        tagDisplay: tag.display
+      });
+
+      setInputValue(newText);
+      setCursorPosition(newCursorPosition);
+      setShowTagSuggestions(false);
+      setTagSearchTerm('');
+
+      requestAnimationFrame(() => {
+        if (inputRef.current) {
+          inputRef.current.focus();
+          inputRef.current.setSelectionRange(newCursorPosition, newCursorPosition);
+        }
+      });
+    },
+    [cursorPosition, inputValue]
+  );
+
+  const handleInputKeyDown = (event) => {
+    if (showTagSuggestions) {
+      const filteredTags = getFilteredTags(tagSearchTerm);
+
+      if (event.key === 'ArrowDown') {
+        event.preventDefault();
+        setSelectedTagIndex(prev =>
+          prev < filteredTags.length - 1 ? prev + 1 : prev
+        );
+        return;
+      }
+
+      if (event.key === 'ArrowUp') {
+        event.preventDefault();
+        setSelectedTagIndex(prev => (prev > 0 ? prev - 1 : 0));
+        return;
+      }
+
+      if (event.key === 'Enter') {
+        event.preventDefault();
+        if (filteredTags[selectedTagIndex]) {
+          handleInsertTag(filteredTags[selectedTagIndex]);
+        }
+        return;
+      }
+
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        setShowTagSuggestions(false);
+        return;
+      }
+    }
+
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      handleSend();
+    }
+  };
+
   // Handle send message - now uses OpenAI Agents SDK with sequential execution
   const handleSend = async () => {
     if (!inputValue.trim() || isTyping) return;
@@ -288,6 +408,9 @@ export default function MomentumChatWithAgent({
     }
 
     setInputValue('');
+    setShowTagSuggestions(false);
+    setTagSearchTerm('');
+    setSelectedTagIndex(0);
     setIsTyping(true);
     setStreamingThinkingSteps([]); // Reset thinking steps
     const assistantId = `msg-${Date.now() + 1}`;
@@ -587,7 +710,7 @@ export default function MomentumChatWithAgent({
                   ...(isUser ? styles.userText : styles.assistantText),
                 }}
               >
-                {renderMarkdownBlocks(message.note || message.content)}
+                {renderMarkdownBlocks(message.note || message.content, styles.messageTag)}
               </div>
             )}
             {/* User Question Prompt - when agent needs clarification */}
@@ -710,6 +833,8 @@ export default function MomentumChatWithAgent({
     );
   };
 
+  const filteredTags = showTagSuggestions ? getFilteredTags(tagSearchTerm) : [];
+
   return (
     <div style={styles.container} className="momentum-container">
       <style>{`
@@ -789,10 +914,36 @@ export default function MomentumChatWithAgent({
         </div>
 
         <div style={styles.inputContainer} className="momentum-input-container">
+          {showTagSuggestions && filteredTags.length > 0 && (
+            <div style={styles.tagSuggestions}>
+              {filteredTags.map((tag, idx) => (
+                <div
+                  key={`${tag.type}-${tag.value}-${idx}`}
+                  style={{
+                    ...styles.tagSuggestionItem,
+                    backgroundColor: idx === selectedTagIndex ? colors.cloud : '#FFFFFF',
+                  }}
+                  onClick={() => handleInsertTag(tag)}
+                  onMouseEnter={() => setSelectedTagIndex(idx)}
+                >
+                  <span
+                    style={{
+                      ...styles.tagTypeBadge,
+                      backgroundColor: getTagTypeColor(tag.type),
+                    }}
+                  >
+                    <span style={styles.tagTypeLabel}>{tag.type.slice(0, 1).toUpperCase()}</span>
+                  </span>
+                  <span style={styles.tagSuggestionText}>{tag.display}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <input
+            ref={inputRef}
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
+            onChange={handleInputChange}
+            onKeyDown={handleInputKeyDown}
             placeholder="Ask Momentum to update projects..."
             style={styles.input}
           />
@@ -838,29 +989,49 @@ export default function MomentumChatWithAgent({
   );
 }
 
-function renderInlineMarkdown(text, keyPrefix) {
+function renderInlineMarkdown(text, keyPrefix, tagStyle) {
   const segments = [];
-  const boldRegex = /\*\*(.+?)\*\*/g;
-  let lastIndex = 0;
-  let match;
+  const parts = parseTaggedText(text);
+  let segmentIndex = 0;
 
-  while ((match = boldRegex.exec(text)) !== null) {
-    if (match.index > lastIndex) {
-      segments.push(text.slice(lastIndex, match.index));
+  const renderTextSegment = (segment) => {
+    const boldRegex = /\*\*(.+?)\*\*/g;
+    let lastIndex = 0;
+    let match;
+
+    while ((match = boldRegex.exec(segment)) !== null) {
+      if (match.index > lastIndex) {
+        segments.push(segment.slice(lastIndex, match.index));
+      }
+
+      segments.push(
+        <strong key={`${keyPrefix}-bold-${segmentIndex++}`}>{match[1]}</strong>
+      );
+      lastIndex = boldRegex.lastIndex;
     }
 
-    segments.push(<strong key={`${keyPrefix}-bold-${segments.length}`}>{match[1]}</strong>);
-    lastIndex = boldRegex.lastIndex;
-  }
+    if (lastIndex < segment.length) {
+      segments.push(segment.slice(lastIndex));
+    }
+  };
 
-  if (lastIndex < text.length) {
-    segments.push(text.slice(lastIndex));
-  }
+  parts.forEach((part, idx) => {
+    if (part.type === 'tag') {
+      segments.push(
+        <span key={`${keyPrefix}-tag-${idx}`} style={tagStyle}>
+          {part.display}
+        </span>
+      );
+      return;
+    }
+
+    renderTextSegment(part.content || '');
+  });
 
   return segments;
 }
 
-function renderMarkdownBlocks(text) {
+function renderMarkdownBlocks(text, tagStyle) {
   const lines = text.split(/\r?\n/);
   const blocks = [];
   let currentList = null;
@@ -876,7 +1047,7 @@ function renderMarkdownBlocks(text) {
       >
         {currentList.items.map((item, idx) => (
           <li key={`${currentList.type}-${idx}`} style={{ marginBottom: 4 }}>
-            {renderInlineMarkdown(item, `${currentList.type}-${idx}`)}
+            {renderInlineMarkdown(item, `${currentList.type}-${idx}`, tagStyle)}
           </li>
         ))}
       </ListTag>
@@ -913,7 +1084,7 @@ function renderMarkdownBlocks(text) {
     if (trimmed.length > 0) {
       blocks.push(
         <p key={`p-${idx}`} style={{ margin: '8px 0' }}>
-          {renderInlineMarkdown(trimmed, `p-${idx}`)}
+          {renderInlineMarkdown(trimmed, `p-${idx}`, tagStyle)}
         </p>
       );
     }
@@ -1028,6 +1199,17 @@ const getStyles = (colors) => ({
     color: '#3A3631',
     borderBottomLeftRadius: '4px',
   },
+  messageTag: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '2px 6px',
+    borderRadius: '8px',
+    backgroundColor: '#EDE5D8',
+    color: '#6B5442',
+    fontSize: '12px',
+    fontWeight: '600',
+    margin: '0 2px',
+  },
   actionsContainer: {
     display: 'flex',
     flexDirection: 'column',
@@ -1131,6 +1313,7 @@ const getStyles = (colors) => ({
     padding: '16px 24px',
     borderTop: '1px solid #E8E3D8',
     backgroundColor: '#FDFCFA',
+    position: 'relative',
   },
   input: {
     flex: 1,
@@ -1155,6 +1338,49 @@ const getStyles = (colors) => ({
     alignItems: 'center',
     justifyContent: 'center',
     boxShadow: '0 3px 10px rgba(139, 111, 71, 0.25)',
+  },
+  tagSuggestions: {
+    position: 'absolute',
+    bottom: '100%',
+    left: '24px',
+    right: '24px',
+    marginBottom: '10px',
+    backgroundColor: '#FFFFFF',
+    border: '1px solid #E8E3D8',
+    borderRadius: '12px',
+    boxShadow: '0 10px 24px rgba(0,0,0,0.12)',
+    padding: '6px',
+    zIndex: 20,
+    maxHeight: '200px',
+    overflowY: 'auto',
+  },
+  tagSuggestionItem: {
+    display: 'flex',
+    alignItems: 'center',
+    gap: '10px',
+    padding: '10px 12px',
+    borderRadius: '8px',
+    cursor: 'pointer',
+    transition: 'background-color 0.15s ease',
+  },
+  tagTypeBadge: {
+    display: 'flex',
+    alignItems: 'center',
+    justifyContent: 'center',
+    width: '24px',
+    height: '24px',
+    borderRadius: '6px',
+    color: '#FFFFFF',
+    fontSize: '11px',
+    fontWeight: '700',
+  },
+  tagTypeLabel: {
+    lineHeight: 1,
+  },
+  tagSuggestionText: {
+    fontSize: '13px',
+    fontWeight: '500',
+    color: '#3A3631',
   },
   canvasColumn: {
     width: '300px',
