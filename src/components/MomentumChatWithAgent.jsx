@@ -11,6 +11,7 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
+import { useInitiatives } from '../hooks/useInitiatives';
 import { getTheme } from '../lib/theme';
 
 // Import the new agent SDK
@@ -19,6 +20,7 @@ import { useAgentRuntime } from '../agent-sdk';
 // Import UI components
 import ThinkingProcess from './ThinkingProcess';
 import UserQuestionPrompt from './UserQuestionPrompt';
+import InitiativeContainer from './InitiativeContainer';
 
 // Default to base theme, can be overridden by props
 const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
@@ -70,6 +72,36 @@ export default function MomentumChatWithAgent({
     createPerson,
     sendEmail,
   } = usePortfolioData();
+
+  // Get initiatives
+  const { initiatives } = useInitiatives();
+
+  // Group projects by initiative for display
+  const { initiativeGroups, ungroupedProjects } = useMemo(() => {
+    const grouped = {};
+    const ungrouped = [];
+
+    // Create a map of initiative ID to initiative
+    const initiativeMap = {};
+    initiatives.forEach(init => {
+      initiativeMap[init.id] = init;
+      grouped[init.id] = { initiative: init, projects: [] };
+    });
+
+    // Group projects
+    projects.forEach(project => {
+      if (project.initiativeId && grouped[project.initiativeId]) {
+        grouped[project.initiativeId].projects.push(project);
+      } else {
+        ungrouped.push(project);
+      }
+    });
+
+    return {
+      initiativeGroups: Object.values(grouped).filter(g => g.projects.length > 0 || g.initiative),
+      ungroupedProjects: ungrouped,
+    };
+  }, [projects, initiatives]);
 
   // Component state
   const [inputValue, setInputValue] = useState('');
@@ -831,19 +863,57 @@ export default function MomentumChatWithAgent({
       <div style={styles.canvasColumn}>
         <div style={styles.canvasHeader}>
           <h3 style={styles.canvasTitle}>Projects</h3>
-          <span style={styles.projectCount}>{projects.length} total</span>
+          <span style={styles.projectCount}>
+            {initiatives.length > 0 ? `${initiatives.length} initiatives, ` : ''}{projects.length} projects
+          </span>
         </div>
         <div style={styles.projectsContainer}>
-          {[...projects]
-            .sort((a, b) => {
-              const aTime = recentlyUpdatedProjects[a.id] || 0;
-              const bTime = recentlyUpdatedProjects[b.id] || 0;
-              if (aTime !== bTime) return bTime - aTime;
-              const priorityOrder = { high: 3, medium: 2, low: 1 };
-              return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
-            })
-            .map((p, i) => renderProjectCard(p, i))
-          }
+          {/* Render initiatives with their grouped projects */}
+          {initiativeGroups.map(({ initiative, projects: initiativeProjects }) => (
+            <InitiativeContainer
+              key={initiative.id}
+              initiative={{
+                ...initiative,
+                projects: initiativeProjects,
+              }}
+              getPriorityColor={getPriorityColor}
+              getStatusColor={getStatusColor}
+            >
+              {[...initiativeProjects]
+                .sort((a, b) => {
+                  const aTime = recentlyUpdatedProjects[a.id] || 0;
+                  const bTime = recentlyUpdatedProjects[b.id] || 0;
+                  if (aTime !== bTime) return bTime - aTime;
+                  const priorityOrder = { high: 3, medium: 2, low: 1 };
+                  return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
+                })
+                .map((p, i) => renderProjectCard(p, i))
+              }
+            </InitiativeContainer>
+          ))}
+
+          {/* Render ungrouped projects */}
+          {ungroupedProjects.length > 0 && (
+            <>
+              {initiatives.length > 0 && (
+                <div style={styles.ungroupedHeader}>
+                  <span style={styles.ungroupedLabel}>Ungrouped Projects</span>
+                </div>
+              )}
+              <div style={styles.ungroupedProjects}>
+                {[...ungroupedProjects]
+                  .sort((a, b) => {
+                    const aTime = recentlyUpdatedProjects[a.id] || 0;
+                    const bTime = recentlyUpdatedProjects[b.id] || 0;
+                    if (aTime !== bTime) return bTime - aTime;
+                    const priorityOrder = { high: 3, medium: 2, low: 1 };
+                    return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
+                  })
+                  .map((p, i) => renderProjectCard(p, i))
+                }
+              </div>
+            </>
+          )}
         </div>
         <div style={styles.canvasLegend}>
           <div style={styles.legendItem}><span style={{ ...styles.legendDot, backgroundColor: colors.coral }} />High</div>
@@ -1412,6 +1482,23 @@ const getStyles = (colors) => ({
     flexDirection: 'column',
     gap: '10px',
     overflowY: 'auto',
+  },
+  ungroupedHeader: {
+    marginTop: '16px',
+    paddingBottom: '8px',
+    borderBottom: '1px solid #E8E3D8',
+  },
+  ungroupedLabel: {
+    fontSize: '12px',
+    fontWeight: '600',
+    color: '#9B9488',
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+  },
+  ungroupedProjects: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
   },
   projectCard: {
     position: 'relative',

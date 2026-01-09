@@ -18,6 +18,7 @@ export const useProjectStore = create((set, get) => ({
   expandedTasks: {},
   expandedMomentumProjects: {},
   expandedActionMessages: {},
+  expandedInitiatives: {},  // For collapsing/expanding initiative containers
 
   // New item states
   addingNewTask: false,
@@ -111,6 +112,14 @@ export const useProjectStore = create((set, get) => ({
       [messageId]: !state.expandedActionMessages[messageId]
     }
   })),
+
+  toggleInitiative: (initiativeId) => set((state) => ({
+    expandedInitiatives: {
+      ...state.expandedInitiatives,
+      [initiativeId]: !state.expandedInitiatives[initiativeId]
+    }
+  })),
+  setExpandedInitiatives: (initiatives) => set({ expandedInitiatives: initiatives }),
 
   // New task
   setAddingNewTask: (adding) => set({ addingNewTask: adding }),

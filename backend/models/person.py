@@ -7,6 +7,7 @@ from sqlmodel import Field, Relationship, SQLModel
 
 if TYPE_CHECKING:
     from .project import Project, ProjectPersonLink
+    from .initiative import Initiative, InitiativePersonLink
 
 
 class PersonReference(SQLModel):
@@ -30,4 +31,8 @@ class Person(PersonBase, table=True):
     projects: list["Project"] = Relationship(
         back_populates="stakeholders",
         link_model="ProjectPersonLink",
+    )
+    owned_initiatives: list["Initiative"] = Relationship(
+        back_populates="owners",
+        link_model="InitiativePersonLink",
     )

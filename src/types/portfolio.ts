@@ -403,6 +403,24 @@ export interface Project {
   lastUpdate?: string;
   plan: Task[];
   recentActivity: Activity[];
+  initiativeId?: string;
+  initiative?: {
+    id: string;
+    name: string;
+  } | null;
+}
+
+export interface Initiative {
+  id: string;
+  name: string;
+  description: string;
+  status: 'planning' | 'active' | 'on-hold' | 'cancelled' | 'completed';
+  priority: 'high' | 'medium' | 'low';
+  startDate?: string;
+  targetDate?: string;
+  owners: Person[];           // Direct owners of the initiative
+  stakeholders: Person[];     // Aggregated from all projects
+  projects: Project[];        // Child projects (may be partial in list view)
 }
 
 export interface Person {

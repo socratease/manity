@@ -739,6 +739,38 @@ class ProjectPersonLink(SQLModel, table=True):
     )
 
 
+class InitiativePersonLink(SQLModel, table=True):
+    """Link table for many-to-many relationship between Initiatives and People (owners)."""
+    initiative_id: str = Field(
+        sa_column=Column("initiative_id", String, ForeignKey("initiative.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+    )
+    person_id: str = Field(
+        sa_column=Column("person_id", String, ForeignKey("person.id", ondelete="CASCADE"), primary_key=True, nullable=False),
+    )
+
+
+class InitiativeBase(SQLModel):
+    """Base model for Initiative with common fields."""
+    name: str = Field(sa_column=Column(String, unique=True, index=True))
+    description: str = ""
+    status: str = "planning"  # planning | active | on-hold | cancelled | completed
+    priority: str = "medium"  # high | medium | low
+    startDate: Optional[str] = None
+    targetDate: Optional[str] = None
+
+
+class Initiative(InitiativeBase, table=True):
+    """Initiative entity - a meta-project that groups related projects."""
+    id: Optional[str] = Field(default=None, primary_key=True)
+
+    # Relationships
+    projects: list["Project"] = Relationship(back_populates="initiative")
+    owners: list["Person"] = Relationship(
+        back_populates="owned_initiatives",
+        link_model=InitiativePersonLink,
+    )
+
+
 class ProjectBase(SQLModel):
     name: str = Field(sa_column=Column(String, unique=True, index=True))
     status: str = "planning"
@@ -757,6 +789,10 @@ class ProjectBase(SQLModel):
 
 class Project(ProjectBase, table=True):
     id: Optional[str] = Field(default=None, primary_key=True)
+    initiative_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column("initiative_id", String, ForeignKey("initiative.id", ondelete="SET NULL"), nullable=True),
+    )
     plan: list[Task] = Relationship(
         back_populates="project",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
@@ -769,6 +805,7 @@ class Project(ProjectBase, table=True):
         back_populates="projects",
         link_model=ProjectPersonLink,
     )
+    initiative: Optional["Initiative"] = Relationship(back_populates="projects")
 
 
 class PersonBase(SQLModel):
@@ -782,6 +819,10 @@ class Person(PersonBase, table=True):
     projects: list["Project"] = Relationship(
         back_populates="stakeholders",
         link_model=ProjectPersonLink,
+    )
+    owned_initiatives: list["Initiative"] = Relationship(
+        back_populates="owners",
+        link_model=InitiativePersonLink,
     )
 
 
@@ -920,6 +961,29 @@ class ProjectPayload(SQLModel):
             v = v.strip()
             if not v:
                 raise ValueError("Project name cannot be empty")
+        return v
+
+
+class InitiativePayload(SQLModel):
+    """Payload for creating/updating an initiative."""
+    id: Optional[str] = None
+    name: str
+    description: str = ""
+    status: str = "planning"
+    priority: str = "medium"
+    startDate: Optional[str] = None
+    targetDate: Optional[str] = None
+    owners: List[PersonReference] = Field(default_factory=list)
+
+    @field_validator("name", mode="before")
+    @classmethod
+    def validate_name(cls, v):
+        if v is None:
+            raise ValueError("Initiative name cannot be null")
+        if isinstance(v, str):
+            v = v.strip()
+            if not v:
+                raise ValueError("Initiative name cannot be empty")
         return v
 
 
@@ -1219,6 +1283,7 @@ def create_db_and_tables() -> None:
     ensure_column("project", "progress INTEGER")
     ensure_column("project", "status TEXT")
     ensure_column("project", "description TEXT")
+    ensure_column("project", "initiative_id TEXT REFERENCES initiative(id) ON DELETE SET NULL")
 
 
 def get_session():
@@ -1403,7 +1468,7 @@ def migrate_people_links(session: Session) -> None:
 def serialize_project(project: Project, person_index: PersonIndex | None = None) -> dict:
     normalize_project_activity(project)
 
-    return {
+    result = {
         "id": project.id,
         "name": project.name,
         "status": project.status,
@@ -1417,7 +1482,17 @@ def serialize_project(project: Project, person_index: PersonIndex | None = None)
         "stakeholders": [serialize_person(person) for person in project.stakeholders],
         "plan": [serialize_task(task) for task in project.plan],
         "recentActivity": [serialize_activity(activity, person_index) for activity in project.recentActivity],
+        "initiativeId": project.initiative_id,
     }
+    # Include initiative name if available
+    if project.initiative:
+        result["initiative"] = {
+            "id": project.initiative.id,
+            "name": project.initiative.name,
+        }
+    else:
+        result["initiative"] = None
+    return result
 
 
 def resolve_assignee_id(session: Session, assignee_payload: Optional[AssigneePayload]) -> Optional[str]:
@@ -1454,6 +1529,51 @@ def resolve_assignee_id(session: Session, assignee_payload: Optional[AssigneePay
 def serialize_project_with_people(session: Session, project: Project) -> dict:
     person_index = build_person_index(session)
     return serialize_project(project, person_index)
+
+
+def serialize_initiative(initiative: Initiative, person_index: PersonIndex | None = None, include_projects: bool = True) -> dict:
+    """Serialize an initiative to a dictionary for API response."""
+    # Collect aggregated stakeholders from all projects (unique by id)
+    stakeholder_ids = set()
+    aggregated_stakeholders = []
+    for project in initiative.projects:
+        for stakeholder in project.stakeholders:
+            if stakeholder.id not in stakeholder_ids:
+                stakeholder_ids.add(stakeholder.id)
+                aggregated_stakeholders.append(serialize_person(stakeholder))
+
+    result = {
+        "id": initiative.id,
+        "name": initiative.name,
+        "description": initiative.description,
+        "status": initiative.status,
+        "priority": initiative.priority,
+        "startDate": initiative.startDate,
+        "targetDate": initiative.targetDate,
+        "owners": [serialize_person(owner) for owner in initiative.owners],
+        "stakeholders": aggregated_stakeholders,
+    }
+
+    if include_projects:
+        result["projects"] = [
+            {
+                "id": project.id,
+                "name": project.name,
+                "status": project.status,
+                "priority": project.priority,
+                "progress": project.progress,
+            }
+            for project in initiative.projects
+        ]
+
+    return result
+
+
+def serialize_initiative_with_full_projects(initiative: Initiative, person_index: PersonIndex | None = None) -> dict:
+    """Serialize an initiative with full project details."""
+    result = serialize_initiative(initiative, person_index, include_projects=False)
+    result["projects"] = [serialize_project(project, person_index) for project in initiative.projects]
+    return result
 
 
 def apply_task_payload(task: Task, payload: TaskPayload, session: Session | None = None) -> Task:
@@ -1838,6 +1958,7 @@ def load_project(session: Session, project_id: str) -> Project:
             selectinload(Project.recentActivity),
             selectinload(Project.recentActivity).selectinload(Activity.author_person),
             selectinload(Project.stakeholders),
+            selectinload(Project.initiative),
         )
     )
     project = session.exec(statement).first()
@@ -2015,6 +2136,185 @@ def send_email_action(payload: EmailSendPayload, request: Request, session: Sess
     }
 
 
+# =============================================================================
+# Initiative Endpoints
+# =============================================================================
+
+def load_initiative(session: Session, initiative_id: str) -> Initiative:
+    """Load an initiative by ID with all relationships."""
+    statement = select(Initiative).where(Initiative.id == initiative_id).options(
+        selectinload(Initiative.projects).selectinload(Project.stakeholders),
+        selectinload(Initiative.owners),
+    )
+    initiative = session.exec(statement).first()
+    if not initiative:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Initiative not found")
+    return initiative
+
+
+def upsert_initiative(session: Session, payload: InitiativePayload) -> Initiative:
+    """Create or update an initiative from a payload."""
+    initiative_id = payload.id or generate_id("initiative")
+
+    # Check if initiative exists
+    existing = session.exec(select(Initiative).where(Initiative.id == initiative_id)).first()
+
+    if existing:
+        initiative = existing
+        initiative.name = payload.name
+        initiative.description = payload.description
+        initiative.status = payload.status
+        initiative.priority = payload.priority
+        initiative.startDate = payload.startDate
+        initiative.targetDate = payload.targetDate
+    else:
+        initiative = Initiative(
+            id=initiative_id,
+            name=payload.name,
+            description=payload.description,
+            status=payload.status,
+            priority=payload.priority,
+            startDate=payload.startDate,
+            targetDate=payload.targetDate,
+        )
+        session.add(initiative)
+
+    # Handle owners
+    if payload.owners:
+        # Clear existing owners and add new ones
+        initiative.owners.clear()
+        for owner_ref in payload.owners:
+            person = resolve_person_reference(session, owner_ref)
+            if person and person not in initiative.owners:
+                initiative.owners.append(person)
+
+    session.commit()
+    session.refresh(initiative)
+    return initiative
+
+
+@app.get("/initiatives")
+def list_initiatives(session: Session = Depends(get_session)):
+    """List all initiatives with their projects and owners."""
+    person_index = build_person_index(session)
+    statement = select(Initiative).options(
+        selectinload(Initiative.projects).selectinload(Project.stakeholders),
+        selectinload(Initiative.owners),
+    )
+    initiatives = session.exec(statement).all()
+    return [serialize_initiative(initiative, person_index) for initiative in initiatives]
+
+
+@app.post("/initiatives", status_code=status.HTTP_201_CREATED)
+def create_initiative(payload: InitiativePayload, request: Request, session: Session = Depends(get_session)):
+    """Create a new initiative."""
+    initiative = upsert_initiative(session, payload)
+    log_action(session, "create_initiative", "initiative", initiative.id, {"name": initiative.name}, request)
+    # Reload with relationships
+    initiative = load_initiative(session, initiative.id)
+    return serialize_initiative(initiative)
+
+
+@app.get("/initiatives/{initiative_id}")
+def get_initiative(initiative_id: str, session: Session = Depends(get_session)):
+    """Get a single initiative with full details."""
+    person_index = build_person_index(session)
+    initiative = load_initiative(session, initiative_id)
+    return serialize_initiative_with_full_projects(initiative, person_index)
+
+
+@app.put("/initiatives/{initiative_id}")
+def update_initiative(initiative_id: str, payload: InitiativePayload, request: Request, session: Session = Depends(get_session)):
+    """Update an initiative."""
+    if payload.id and payload.id != initiative_id:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Initiative ID mismatch")
+
+    payload.id = initiative_id
+    initiative = upsert_initiative(session, payload)
+    log_action(session, "update_initiative", "initiative", initiative_id, {"name": initiative.name}, request)
+    # Reload with relationships
+    initiative = load_initiative(session, initiative.id)
+    return serialize_initiative(initiative)
+
+
+@app.delete("/initiatives/{initiative_id}", status_code=status.HTTP_204_NO_CONTENT)
+def delete_initiative(initiative_id: str, request: Request, session: Session = Depends(get_session)):
+    """Delete an initiative. Projects become ungrouped (not deleted)."""
+    initiative = load_initiative(session, initiative_id)
+    deleted_data = {"name": initiative.name}
+
+    # Projects will become ungrouped due to ON DELETE SET NULL
+    session.delete(initiative)
+    session.commit()
+    log_action(session, "delete_initiative", "initiative", initiative_id, deleted_data, request)
+    return None
+
+
+@app.post("/initiatives/{initiative_id}/owners/{person_id}", status_code=status.HTTP_201_CREATED)
+def add_owner_to_initiative(initiative_id: str, person_id: str, request: Request, session: Session = Depends(get_session)):
+    """Add an owner to an initiative."""
+    initiative = load_initiative(session, initiative_id)
+    person = session.exec(select(Person).where(Person.id == person_id)).first()
+    if not person:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
+
+    if person not in initiative.owners:
+        initiative.owners.append(person)
+        session.commit()
+        log_action(session, "add_initiative_owner", "initiative", initiative_id, {"person_id": person_id, "person_name": person.name}, request)
+
+    return serialize_initiative(initiative)
+
+
+@app.delete("/initiatives/{initiative_id}/owners/{person_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_owner_from_initiative(initiative_id: str, person_id: str, request: Request, session: Session = Depends(get_session)):
+    """Remove an owner from an initiative."""
+    initiative = load_initiative(session, initiative_id)
+    person = session.exec(select(Person).where(Person.id == person_id)).first()
+    if not person:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Person not found")
+
+    if person in initiative.owners:
+        initiative.owners.remove(person)
+        session.commit()
+        log_action(session, "remove_initiative_owner", "initiative", initiative_id, {"person_id": person_id, "person_name": person.name}, request)
+
+    return None
+
+
+@app.post("/initiatives/{initiative_id}/projects/{project_id}", status_code=status.HTTP_201_CREATED)
+def add_project_to_initiative(initiative_id: str, project_id: str, request: Request, session: Session = Depends(get_session)):
+    """Add a project to an initiative."""
+    initiative = load_initiative(session, initiative_id)
+    project = session.exec(select(Project).where(Project.id == project_id)).first()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    project.initiative_id = initiative_id
+    session.commit()
+    log_action(session, "add_project_to_initiative", "initiative", initiative_id, {"project_id": project_id, "project_name": project.name}, request)
+
+    # Reload initiative
+    initiative = load_initiative(session, initiative_id)
+    return serialize_initiative(initiative)
+
+
+@app.delete("/initiatives/{initiative_id}/projects/{project_id}", status_code=status.HTTP_204_NO_CONTENT)
+def remove_project_from_initiative(initiative_id: str, project_id: str, request: Request, session: Session = Depends(get_session)):
+    """Remove a project from an initiative (makes it ungrouped)."""
+    initiative = load_initiative(session, initiative_id)
+    project = session.exec(select(Project).where(Project.id == project_id)).first()
+    if not project:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Project not found")
+
+    if project.initiative_id == initiative_id:
+        project.initiative_id = None
+        session.commit()
+        log_action(session, "remove_project_from_initiative", "initiative", initiative_id, {"project_id": project_id, "project_name": project.name}, request)
+
+    return None
+
+
 @app.get("/projects")
 def list_projects(session: Session = Depends(get_session)):
     person_index = build_person_index(session)
@@ -2025,6 +2325,7 @@ def list_projects(session: Session = Depends(get_session)):
         selectinload(Project.recentActivity),
         selectinload(Project.recentActivity).selectinload(Activity.author_person),
         selectinload(Project.stakeholders),
+        selectinload(Project.initiative),
     )
     projects = session.exec(statement).all()
     return [serialize_project(project, person_index) for project in projects]
