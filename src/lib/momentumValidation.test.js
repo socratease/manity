@@ -312,6 +312,8 @@ describe('validateThrustActions', () => {
               return { type, projectId: '1', taskId: 'task-1', subtaskId: 'subtask-1', title: 'Updated subtask', status: 'todo' };
             case 'update_project':
               return { type, projectId: '1', status: 'active', progress: 50 };
+            case 'add_stakeholders':
+              return { type, projectId: '1', stakeholders: ['Alex Morgan', 'Jamie Example'] };
             case 'add_person':
               return { type, name: 'Jamie Example', email: 'jamie@example.com' };
             case 'send_email':

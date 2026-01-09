@@ -81,6 +81,7 @@ export default function MomentumChatWithAgent({
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
   const activeAssistantMessageId = useRef(null);
+  const textareaRef = useRef(null);
 
   // Initialize agent runtime using the new SDK hook
   const {
@@ -222,6 +223,15 @@ export default function MomentumChatWithAgent({
     }
     prevMessagesLengthRef.current = messages.length;
   }, [messages]);
+
+  // Auto-resize textarea as user types
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+    }
+  }, [inputValue]);
 
   const displayedMessages = useMemo(() => {
     if (!inProgressAssistantMessage) return messages;
@@ -789,12 +799,19 @@ export default function MomentumChatWithAgent({
         </div>
 
         <div style={styles.inputContainer} className="momentum-input-container">
-          <input
+          <textarea
+            ref={textareaRef}
             value={inputValue}
             onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="Ask Momentum to update projects..."
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder="Ask Momentum to update projects... (⌘/Ctrl+Enter to send)"
             style={styles.input}
+            rows={1}
           />
           <button
             onClick={handleSend}
@@ -840,40 +857,77 @@ export default function MomentumChatWithAgent({
 
 function renderInlineMarkdown(text, keyPrefix) {
   const segments = [];
-  const boldRegex = /\*\*(.+?)\*\*/g;
+  // Match bold (**text**), inline code (`code`), and links ([text](url))
+  const inlineRegex = /(\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
   let lastIndex = 0;
   let match;
 
-  while ((match = boldRegex.exec(text)) !== null) {
+  while ((match = inlineRegex.exec(text)) !== null) {
     if (match.index > lastIndex) {
       segments.push(text.slice(lastIndex, match.index));
     }
 
-    segments.push(<strong key={`${keyPrefix}-bold-${segments.length}`}>{match[1]}</strong>);
-    lastIndex = boldRegex.lastIndex;
+    if (match[2]) {
+      // Bold text
+      segments.push(<strong key={`${keyPrefix}-bold-${segments.length}`}>{match[2]}</strong>);
+    } else if (match[3]) {
+      // Inline code
+      segments.push(
+        <code
+          key={`${keyPrefix}-code-${segments.length}`}
+          style={{
+            backgroundColor: '#F0EDE6',
+            padding: '2px 6px',
+            borderRadius: '4px',
+            fontFamily: 'Monaco, Consolas, monospace',
+            fontSize: '13px',
+            color: '#8B6F47',
+          }}
+        >
+          {match[3]}
+        </code>
+      );
+    } else if (match[4] && match[5]) {
+      // Link
+      segments.push(
+        <a
+          key={`${keyPrefix}-link-${segments.length}`}
+          href={match[5]}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            color: '#8B6F47',
+            textDecoration: 'underline',
+          }}
+        >
+          {match[4]}
+        </a>
+      );
+    }
+
+    lastIndex = inlineRegex.lastIndex;
   }
 
   if (lastIndex < text.length) {
     segments.push(text.slice(lastIndex));
   }
 
-  return segments;
+  return segments.length > 0 ? segments : [text];
 }
 
 function renderMarkdownBlocks(text) {
   const lines = text.split(/\r?\n/);
   const blocks = [];
   let currentList = null;
+  let currentCodeBlock = null;
+  let currentTable = null;
+  let i = 0;
 
   const flushList = () => {
     if (!currentList) return;
-
     const ListTag = currentList.type === 'ol' ? 'ol' : 'ul';
     blocks.push(
-      <ListTag
-        key={`list-${blocks.length}`}
-        style={{ paddingLeft: 20, margin: '8px 0' }}
-      >
+      <ListTag key={`list-${blocks.length}`} style={{ paddingLeft: 20, margin: '8px 0' }}>
         {currentList.items.map((item, idx) => (
           <li key={`${currentList.type}-${idx}`} style={{ marginBottom: 4 }}>
             {renderInlineMarkdown(item, `${currentList.type}-${idx}`)}
@@ -881,45 +935,209 @@ function renderMarkdownBlocks(text) {
         ))}
       </ListTag>
     );
-
     currentList = null;
   };
 
-  lines.forEach((line, idx) => {
-    const trimmed = line.trim();
-    const unorderedMatch = /^[-*]\s+(.*)/.exec(trimmed);
-    const orderedMatch = /^\d+\.\s+(.*)/.exec(trimmed);
+  const flushCodeBlock = () => {
+    if (!currentCodeBlock) return;
+    blocks.push(
+      <pre
+        key={`code-${blocks.length}`}
+        style={{
+          backgroundColor: '#F0EDE6',
+          padding: '12px',
+          borderRadius: '8px',
+          overflow: 'auto',
+          margin: '8px 0',
+          border: '1px solid #E8E3D8',
+        }}
+      >
+        <code
+          style={{
+            fontFamily: 'Monaco, Consolas, monospace',
+            fontSize: '13px',
+            color: '#3A3631',
+            whiteSpace: 'pre',
+          }}
+        >
+          {currentCodeBlock.content.join('\n')}
+        </code>
+      </pre>
+    );
+    currentCodeBlock = null;
+  };
 
+  const flushTable = () => {
+    if (!currentTable || currentTable.rows.length === 0) return;
+    blocks.push(
+      <table
+        key={`table-${blocks.length}`}
+        style={{
+          borderCollapse: 'collapse',
+          margin: '8px 0',
+          width: '100%',
+          border: '1px solid #E8E3D8',
+        }}
+      >
+        <thead>
+          <tr>
+            {currentTable.headers.map((header, idx) => (
+              <th
+                key={`th-${idx}`}
+                style={{
+                  border: '1px solid #E8E3D8',
+                  padding: '8px',
+                  backgroundColor: '#F0EDE6',
+                  textAlign: 'left',
+                  fontWeight: '600',
+                }}
+              >
+                {renderInlineMarkdown(header.trim(), `th-${idx}`)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {currentTable.rows.map((row, rowIdx) => (
+            <tr key={`tr-${rowIdx}`}>
+              {row.map((cell, cellIdx) => (
+                <td
+                  key={`td-${rowIdx}-${cellIdx}`}
+                  style={{
+                    border: '1px solid #E8E3D8',
+                    padding: '8px',
+                  }}
+                >
+                  {renderInlineMarkdown(cell.trim(), `td-${rowIdx}-${cellIdx}`)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+    currentTable = null;
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Check for code block start/end
+    if (trimmed.startsWith('```')) {
+      if (currentCodeBlock) {
+        flushCodeBlock();
+        i++;
+        continue;
+      } else {
+        flushList();
+        flushTable();
+        currentCodeBlock = { content: [] };
+        i++;
+        continue;
+      }
+    }
+
+    // If inside code block, accumulate content
+    if (currentCodeBlock) {
+      currentCodeBlock.content.push(line);
+      i++;
+      continue;
+    }
+
+    // Check for table row
+    const tableMatch = /^\|(.+)\|$/.exec(trimmed);
+    if (tableMatch) {
+      flushList();
+      const cells = tableMatch[1].split('|').map(c => c.trim());
+
+      // Check if this is a header separator row (e.g., |---|---|)
+      if (cells.every(c => /^[-:]+$/.test(c))) {
+        i++;
+        continue; // Skip separator rows
+      }
+
+      if (!currentTable) {
+        // First row becomes headers
+        currentTable = { headers: cells, rows: [] };
+      } else {
+        // Subsequent rows become data
+        currentTable.rows.push(cells);
+      }
+      i++;
+      continue;
+    } else {
+      flushTable();
+    }
+
+    // Check for headers
+    const headerMatch = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+    if (headerMatch) {
+      flushList();
+      const level = headerMatch[1].length;
+      const HeaderTag = `h${level}`;
+      blocks.push(
+        React.createElement(
+          HeaderTag,
+          {
+            key: `h${level}-${i}`,
+            style: {
+              margin: '12px 0 8px',
+              fontSize: `${20 - level * 2}px`,
+              fontWeight: '700',
+              color: '#3A3631',
+            },
+          },
+          renderInlineMarkdown(headerMatch[2], `h${level}-${i}`)
+        )
+      );
+      i++;
+      continue;
+    }
+
+    // Check for unordered list
+    const unorderedMatch = /^[-*]\s+(.*)/.exec(trimmed);
     if (unorderedMatch) {
+      flushTable();
       if (!currentList || currentList.type !== 'ul') {
         flushList();
         currentList = { type: 'ul', items: [] };
       }
       currentList.items.push(unorderedMatch[1]);
-      return;
+      i++;
+      continue;
     }
 
+    // Check for ordered list
+    const orderedMatch = /^\d+\.\s+(.*)/.exec(trimmed);
     if (orderedMatch) {
+      flushTable();
       if (!currentList || currentList.type !== 'ol') {
         flushList();
         currentList = { type: 'ol', items: [] };
       }
       currentList.items.push(orderedMatch[1]);
-      return;
+      i++;
+      continue;
     }
 
+    // Regular paragraph
     flushList();
-
     if (trimmed.length > 0) {
       blocks.push(
-        <p key={`p-${idx}`} style={{ margin: '8px 0' }}>
-          {renderInlineMarkdown(trimmed, `p-${idx}`)}
+        <p key={`p-${i}`} style={{ margin: '8px 0' }}>
+          {renderInlineMarkdown(trimmed, `p-${i}`)}
         </p>
       );
     }
-  });
 
+    i++;
+  }
+
+  // Flush any remaining blocks
   flushList();
+  flushCodeBlock();
+  flushTable();
 
   return blocks.length > 0 ? blocks : [text];
 }
@@ -1141,6 +1359,12 @@ const getStyles = (colors) => ({
     fontSize: '14px',
     color: '#3A3631',
     outline: 'none',
+    resize: 'none',
+    overflowY: 'auto',
+    minHeight: '44px',
+    maxHeight: '200px',
+    lineHeight: '1.5',
+    fontFamily: 'inherit',
   },
   sendButton: {
     width: '44px',
