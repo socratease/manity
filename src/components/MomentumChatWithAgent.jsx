@@ -108,6 +108,10 @@ export default function MomentumChatWithAgent({
   const [hoveredProject, setHoveredProject] = useState(null);
   const [linkedMessageId, setLinkedMessageId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
+  const [showTagSuggestions, setShowTagSuggestions] = useState(false);
+  const [tagSearchTerm, setTagSearchTerm] = useState('');
+  const [selectedTagIndex, setSelectedTagIndex] = useState(0);
+  const [cursorPosition, setCursorPosition] = useState(0);
   const [projectPositions, setProjectPositions] = useState({});
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
@@ -265,6 +269,107 @@ export default function MomentumChatWithAgent({
     }
   }, [inputValue]);
 
+  const allTags = useMemo(() => {
+    const tags = [];
+    const knownPeople = new Set();
+
+    people.forEach(person => {
+      const display = `${person.name} (${person.team || 'Contributor'})`;
+      knownPeople.add(display);
+      tags.push({ type: 'person', value: person.id, display });
+    });
+
+    const stakeholderSet = new Set();
+    projects.forEach(project => {
+      (project.stakeholders || []).forEach(stakeholder => {
+        const display = `${stakeholder.name} (${stakeholder.team || 'Contributor'})`;
+        if (!knownPeople.has(display)) {
+          stakeholderSet.add(display);
+        }
+      });
+    });
+
+    stakeholderSet.forEach(display => {
+      tags.push({ type: 'person', value: display, display });
+    });
+
+    projects.forEach(project => {
+      tags.push({ type: 'project', value: project.id, display: project.name });
+      (project.plan || []).forEach(task => {
+        tags.push({
+          type: 'task',
+          value: task.id,
+          display: `${project.name} → ${task.title}`,
+          projectId: project.id,
+        });
+        (task.subtasks || []).forEach(subtask => {
+          tags.push({
+            type: 'subtask',
+            value: subtask.id,
+            display: `${project.name} → ${task.title} → ${subtask.title}`,
+            projectId: project.id,
+            taskId: task.id,
+          });
+        });
+      });
+    });
+
+    return tags;
+  }, [people, projects]);
+
+  const filteredTags = useMemo(() => {
+    if (!showTagSuggestions) return [];
+    const lowerSearch = tagSearchTerm.toLowerCase();
+    return allTags
+      .filter(tag => tag.display.toLowerCase().includes(lowerSearch))
+      .slice(0, 8);
+  }, [allTags, showTagSuggestions, tagSearchTerm]);
+
+  const handleInputChange = (e) => {
+    const text = e.target.value;
+    const cursorPos = e.target.selectionStart;
+
+    setInputValue(text);
+    setCursorPosition(cursorPos);
+
+    const textUpToCursor = text.substring(0, cursorPos);
+    const lastAtSymbol = textUpToCursor.lastIndexOf('@');
+
+    if (lastAtSymbol !== -1) {
+      const textAfterAt = textUpToCursor.substring(lastAtSymbol + 1);
+      if (!textAfterAt.includes(' ')) {
+        setTagSearchTerm(textAfterAt);
+        setShowTagSuggestions(true);
+        setSelectedTagIndex(0);
+      } else {
+        setShowTagSuggestions(false);
+      }
+    } else {
+      setShowTagSuggestions(false);
+    }
+  };
+
+  const insertTag = (tag) => {
+    const textBeforeCursor = inputValue.substring(0, cursorPosition);
+    const textAfterCursor = inputValue.substring(cursorPosition);
+    const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
+    if (lastAtSymbol === -1) {
+      return;
+    }
+
+    const beforeAt = inputValue.substring(0, lastAtSymbol);
+    const tagText = `@${tag.display}`;
+    const newText = beforeAt + tagText + ' ' + textAfterCursor;
+
+    setInputValue(newText);
+    setShowTagSuggestions(false);
+    setTagSearchTerm('');
+
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  };
+
   const displayedMessages = useMemo(() => {
     if (!inProgressAssistantMessage) return messages;
 
@@ -330,6 +435,10 @@ export default function MomentumChatWithAgent({
     }
 
     setInputValue('');
+    setShowTagSuggestions(false);
+    setTagSearchTerm('');
+    setSelectedTagIndex(0);
+    setCursorPosition(0);
     setIsTyping(true);
     setStreamingThinkingSteps([]); // Reset thinking steps
     const assistantId = `msg-${Date.now() + 1}`;
@@ -834,9 +943,28 @@ export default function MomentumChatWithAgent({
           <textarea
             ref={textareaRef}
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              if (showTagSuggestions) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setSelectedTagIndex(prev =>
+                    prev < filteredTags.length - 1 ? prev + 1 : prev
+                  );
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setSelectedTagIndex(prev => (prev > 0 ? prev - 1 : 0));
+                } else if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (filteredTags[selectedTagIndex]) {
+                    insertTag(filteredTags[selectedTagIndex]);
+                  }
+                  return;
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setShowTagSuggestions(false);
+                }
+              } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 handleSend();
               }
@@ -845,6 +973,40 @@ export default function MomentumChatWithAgent({
             style={styles.input}
             rows={1}
           />
+          {showTagSuggestions && filteredTags.length > 0 && (
+            <div style={styles.tagSuggestions}>
+              {filteredTags.map((tag, idx) => (
+                <div
+                  key={`${tag.type}-${tag.value}-${idx}`}
+                  style={{
+                    ...styles.tagSuggestionItem,
+                    backgroundColor: idx === selectedTagIndex ? '#F6F1E7' : '#FFFFFF',
+                  }}
+                  onClick={() => insertTag(tag)}
+                  onMouseEnter={() => setSelectedTagIndex(idx)}
+                >
+                  <span
+                    style={{
+                      ...styles.tagTypeLabel,
+                      backgroundColor:
+                        tag.type === 'person' ? `${colors.sage}20` :
+                        tag.type === 'project' ? `${colors.earth}20` :
+                        tag.type === 'task' ? `${colors.amber}20` :
+                        `${colors.coral}20`,
+                      color:
+                        tag.type === 'person' ? colors.sage :
+                        tag.type === 'project' ? colors.earth :
+                        tag.type === 'task' ? colors.amber :
+                        colors.coral,
+                    }}
+                  >
+                    {tag.type}
+                  </span>
+                  <span style={styles.tagSuggestionDisplay}>{tag.display}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <button
             onClick={handleSend}
             disabled={!inputValue.trim() || isTyping}
@@ -1419,6 +1581,7 @@ const getStyles = (colors) => ({
     padding: '16px 24px',
     borderTop: '1px solid #E8E3D8',
     backgroundColor: '#FDFCFA',
+    position: 'relative',
   },
   input: {
     flex: 1,
@@ -1435,6 +1598,42 @@ const getStyles = (colors) => ({
     maxHeight: '200px',
     lineHeight: '1.5',
     fontFamily: 'inherit',
+  },
+  tagSuggestions: {
+    position: 'absolute',
+    top: '100%',
+    marginTop: '8px',
+    left: '24px',
+    right: '78px',
+    backgroundColor: '#FFFFFF',
+    border: '1px solid #E8E3D8',
+    borderRadius: '12px',
+    boxShadow: '0 6px 16px rgba(139, 111, 71, 0.12)',
+    maxHeight: '220px',
+    overflowY: 'auto',
+    zIndex: 20,
+  },
+  tagSuggestionItem: {
+    padding: '8px 12px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    borderBottom: '1px solid #EFE6D8',
+    transition: 'background-color 0.15s ease',
+  },
+  tagTypeLabel: {
+    padding: '2px 6px',
+    borderRadius: '4px',
+    fontSize: '9px',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: '0.3px',
+  },
+  tagSuggestionDisplay: {
+    fontSize: '13px',
+    color: '#3A3631',
+    fontWeight: '500',
   },
   sendButton: {
     width: '44px',
