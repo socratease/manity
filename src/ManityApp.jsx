@@ -15,6 +15,7 @@ import ChristmasConfetti from './components/ChristmasConfetti';
 import MomentumChatWithAgent from './components/MomentumChatWithAgent';
 import Slides from './components/Slides';
 import DataPage from './components/DataPage';
+import { useSeasonalTheme } from './themes';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -46,6 +47,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     updateActivity,
     deleteActivity: apiDeleteActivity
   } = usePortfolioData();
+
+  const activeTheme = useSeasonalTheme();
+  const isSantafied = activeTheme.id === 'christmas';
+  const isSeasonalThemeActive = activeTheme.id !== 'base';
 
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
@@ -198,12 +203,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     recentUpdates: 3,
     recentlyCompleted: 3,
     nextUp: 3
-  });
-
-  // Santa-fy mode state (default: enabled)
-  const [isSantafied, setIsSantafied] = useState(() => {
-    const saved = localStorage.getItem('manity_santafied');
-    return saved !== null ? saved === 'true' : true; // Default to true
   });
 
   const [showDataPage, setShowDataPage] = useState(() => {
@@ -405,11 +404,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       nextUp: 3
     });
   }, [currentSlideIndex, activeView]);
-
-  // Persist Santa-fy mode to localStorage
-  useEffect(() => {
-    localStorage.setItem('manity_santafied', isSantafied.toString());
-  }, [isSantafied]);
 
   useEffect(() => {
     localStorage.setItem('manity_show_data_page', showDataPage ? 'true' : 'false');
@@ -3925,21 +3919,21 @@ PEOPLE & EMAIL ADDRESSES:
       )}
 
       {/* Festive Banner */}
-      {isSantafied && (
+      {isSeasonalThemeActive && (
         <div style={{
           position: 'fixed',
           top: 0,
           left: 0,
           right: 0,
           height: '3px',
-          background: 'linear-gradient(90deg, #C41E3A 0%, #165B33 25%, #FFD700 50%, #C41E3A 75%, #165B33 100%)',
+          background: `linear-gradient(90deg, ${activeTheme.colors.earth} 0%, ${activeTheme.colors.sage} 25%, ${activeTheme.colors.amber} 50%, ${activeTheme.colors.earth} 75%, ${activeTheme.colors.sage} 100%)`,
           backgroundSize: '200% 100%',
           animation: 'festiveSlide 3s linear infinite',
           zIndex: 9999,
         }} />
       )}
       <style>
-        {isSantafied && `
+        {isSeasonalThemeActive && `
           @keyframes festiveSlide {
             0% { background-position: 0% 0%; }
             100% { background-position: 200% 0%; }
@@ -3949,18 +3943,16 @@ PEOPLE & EMAIL ADDRESSES:
 
       <div style={{
         ...styles.container,
-        ...(isSantafied && {
-          '--earth': '#C41E3A',     // Classic Christmas red
-          '--sage': '#165B33',      // Deep Christmas green
-          '--coral': '#FF6B6B',     // Bright festive red
-          '--amber': '#FFD700',     // Gold
-          '--cream': '#FFFAF0',     // Warm ivory
-          '--cloud': '#F0E6E6',     // Light pink-tinted cloud
-          '--stone': '#8B4513',     // Warm brown
-          '--charcoal': '#2C1810',  // Deep brown
-          backgroundColor: '#FFFAF0',  // Warm ivory background
-          transition: 'background-color 0.5s ease',
-        })
+        '--earth': activeTheme.colors.earth,
+        '--sage': activeTheme.colors.sage,
+        '--coral': activeTheme.colors.coral,
+        '--amber': activeTheme.colors.amber,
+        '--cream': activeTheme.colors.cream,
+        '--cloud': activeTheme.colors.cloud,
+        '--stone': activeTheme.colors.stone,
+        '--charcoal': activeTheme.colors.charcoal,
+        backgroundColor: activeTheme.colors.cream,
+        transition: 'background-color 0.5s ease',
       }}>
       {/* Daily Check-in Modal */}
       {showDailyCheckin && selectedProject && (
@@ -4456,18 +4448,18 @@ PEOPLE & EMAIL ADDRESSES:
                 </div>
               </div>
             )}
-            <button
-              onClick={() => setIsSantafied(!isSantafied)}
+            <div
               style={{
                 ...styles.settingsIconButton,
                 marginRight: '8px',
-                fontSize: '18px'
+                fontSize: '18px',
+                cursor: 'default'
               }}
-              title={isSantafied ? 'Disable Santa-fy mode' : 'Enable Santa-fy mode'}
-              aria-label={isSantafied ? 'Disable Santa-fy mode' : 'Enable Santa-fy mode'}
+              title={isSeasonalThemeActive ? `${activeTheme.name} theme active` : 'Base theme active'}
+              aria-label={isSeasonalThemeActive ? `${activeTheme.name} theme active` : 'Base theme active'}
             >
-              {isSantafied ? '🎅' : '❄️'}
-            </button>
+              {isSeasonalThemeActive ? '🎉' : '❄️'}
+            </div>
             <button
               onClick={() => onOpenSettings({
                 loggedInUser,
