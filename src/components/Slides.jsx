@@ -297,6 +297,13 @@ export default function Slides({
   const handleExportPowerPoint = async () => {
     if (visibleProjects.length === 0) return;
 
+    // Validate API base URL is configured
+    if (!apiBaseUrl) {
+      alert('API base URL not configured. Please check your VITE_API_BASE environment variable.');
+      console.error('[PPTX Export] apiBaseUrl is empty - VITE_API_BASE may not be set');
+      return;
+    }
+
     setIsExporting(true);
     try {
       // Prepare slide data for all visible projects
@@ -318,7 +325,10 @@ export default function Slides({
           targetDate: project.targetDate,
           priority: project.priority,
           status: project.status,
-          stakeholders: project.stakeholders || [],
+          stakeholders: (project.stakeholders || []).map(s => ({
+            name: s.name || '',
+            team: s.team || ''
+          })),
           recentlyCompleted: recentlyCompleted.map(t => ({
             title: `${t.taskTitle} → ${t.title}`,
             date: t.dueDateInfo.text
@@ -375,7 +385,18 @@ export default function Slides({
       }
 
       if (blob.size === 0 || (!isPptx && !hasZipSignature)) {
-        throw new Error('Invalid PowerPoint file received');
+        console.error('[PPTX Export] Validation failed:', {
+          blobSize: blob.size,
+          contentType,
+          isPptx,
+          hasZipSignature,
+          apiBaseUrl
+        });
+        throw new Error(
+          `Invalid PowerPoint file received. ` +
+          `This may indicate the API URL is misconfigured. ` +
+          `(Content-Type: ${contentType || 'none'}, Size: ${blob.size} bytes)`
+        );
       }
 
       const url = window.URL.createObjectURL(blob);
