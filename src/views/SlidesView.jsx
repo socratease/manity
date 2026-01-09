@@ -59,7 +59,11 @@ Write a professional executive summary that highlights the project's current sta
       setProjects={setProjects}
       onGenerateExecSummary={generateExecSummary}
       isGeneratingSummary={isGeneratingSummary}
-      apiBaseUrl={import.meta.env.VITE_API_BASE_URL || ''}
+      apiBaseUrl={
+        import.meta.env.VITE_API_BASE ||
+        import.meta.env.VITE_API_BASE_URL ||
+        ''
+      }
     />
   );
 }
