@@ -2,7 +2,6 @@ import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, Search, User, UserCircle } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
-import { getAllTags as getAllTagsUtil, insertTagAtCursor, parseTaggedText } from './lib/tagging';
 import ForceDirectedTimeline from './components/ForceDirectedTimeline';
 import PeopleGraph from './components/PeopleGraph';
 import PersonPicker from './components/PersonPicker';
@@ -873,11 +872,13 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   };
 
   const insertProjectTag = (tag) => {
-    const { text: newText } = insertTagAtCursor({
-      text: newUpdate,
-      cursorPosition: projectUpdateCursorPosition,
-      tagDisplay: tag.display
-    });
+    const textBeforeCursor = newUpdate.substring(0, projectUpdateCursorPosition);
+    const textAfterCursor = newUpdate.substring(projectUpdateCursorPosition);
+    const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
+
+    const beforeAt = newUpdate.substring(0, lastAtSymbol);
+    const tagText = `@${tag.display}`;
+    const newText = beforeAt + tagText + ' ' + textAfterCursor;
 
     setNewUpdate(newText);
     setShowProjectTagSuggestions(false);
@@ -1516,6 +1517,53 @@ Write a professional executive summary that highlights the project's current sta
     return tasks.sort((a, b) => new Date(a.dueDate || 0) - new Date(b.dueDate || 0));
   };
 
+  // Get all possible tags for autocomplete
+  const getAllTags = () => {
+    const tags = [];
+
+    // Add all people from the database
+    people.forEach(person => {
+      const personString = `${person.name} (${person.team})`;
+      tags.push({ type: 'person', value: person.id, display: personString });
+    });
+
+    // Also add unique stakeholders from projects (for backwards compatibility)
+    const allStakeholders = new Set();
+    visibleProjects.forEach(p => {
+      p.stakeholders.forEach(s => {
+        const stakeholderString = `${s.name} (${s.team})`;
+        if (!people.find(person => person.name === s.name && person.team === s.team)) {
+          allStakeholders.add(stakeholderString);
+        }
+      });
+    });
+    allStakeholders.forEach(name => {
+      tags.push({ type: 'person', value: name, display: name });
+    });
+
+    // Add all projects
+    visibleProjects.forEach(p => {
+      tags.push({ type: 'project', value: p.id, display: p.name });
+
+      // Add all tasks and subtasks
+      p.plan.forEach(task => {
+        tags.push({ type: 'task', value: task.id, display: `${p.name} → ${task.title}`, projectId: p.id });
+        
+        task.subtasks.forEach(subtask => {
+          tags.push({ 
+            type: 'subtask', 
+            value: subtask.id, 
+            display: `${p.name} → ${task.title} → ${subtask.title}`,
+            projectId: p.id,
+            taskId: task.id
+          });
+        });
+      });
+    });
+    
+    return tags;
+  };
+
   // Global search - get filtered results based on query
   const getGlobalSearchResults = (query) => {
     if (!query.trim()) return [];
@@ -1638,11 +1686,13 @@ Write a professional executive summary that highlights the project's current sta
   };
 
   const insertTag = (tag, inputRef) => {
-    const { text: newText } = insertTagAtCursor({
-      text: timelineUpdate,
-      cursorPosition,
-      tagDisplay: tag.display
-    });
+    const textBeforeCursor = timelineUpdate.substring(0, cursorPosition);
+    const textAfterCursor = timelineUpdate.substring(cursorPosition);
+    const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
+
+    const beforeAt = timelineUpdate.substring(0, lastAtSymbol);
+    const tagText = `@${tag.display}`;
+    const newText = beforeAt + tagText + ' ' + textAfterCursor;
 
     setTimelineUpdate(newText);
     setShowTagSuggestions(false);
@@ -1680,11 +1730,13 @@ Write a professional executive summary that highlights the project's current sta
   };
 
   const insertThrustTag = (tag) => {
-    const { text: newText } = insertTagAtCursor({
-      text: thrustDraft,
-      cursorPosition: thrustCursorPosition,
-      tagDisplay: tag.display
-    });
+    const textBeforeCursor = thrustDraft.substring(0, thrustCursorPosition);
+    const textAfterCursor = thrustDraft.substring(thrustCursorPosition);
+    const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
+
+    const beforeAt = thrustDraft.substring(0, lastAtSymbol);
+    const tagText = `@${tag.display}`;
+    const newText = beforeAt + tagText + ' ' + textAfterCursor;
 
     setThrustDraft(newText);
     setShowThrustTagSuggestions(false);
@@ -1717,15 +1769,73 @@ Write a professional executive summary that highlights the project's current sta
   };
 
   const insertCheckinTag = (tag) => {
-    const { text: newText } = insertTagAtCursor({
-      text: checkinNote,
-      cursorPosition: checkinCursorPosition,
-      tagDisplay: tag.display
-    });
+    const textBeforeCursor = checkinNote.substring(0, checkinCursorPosition);
+    const textAfterCursor = checkinNote.substring(checkinCursorPosition);
+    const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
+
+    const beforeAt = checkinNote.substring(0, lastAtSymbol);
+    const tagText = `@${tag.display}`;
+    const newText = beforeAt + tagText + ' ' + textAfterCursor;
 
     setCheckinNote(newText);
     setShowCheckinTagSuggestions(false);
     setCheckinTagSearchTerm('');
+  };
+
+  const parseTaggedText = (text) => {
+    if (!text) return [];
+
+    // Parse text with tags in both old format @[Display Name](type:value) and new format @Display
+    const parts = [];
+    let currentIndex = 0;
+
+    // Combined regex: match old format or new format
+    // Old format: @[Display Name](type:value)
+    // New format: @DisplayName (word characters, spaces, and parentheses until space or end)
+    // Mentions must start at the beginning of the string or after whitespace to avoid matching emails
+    const combinedRegex = /(?<!\S)@\[([^\]]+)\]\(([^:]+):([^)]+)\)|(?<!\S)@([\w\s\(\),→.'-]+)(?=\s|$|[.!?])/g;
+    let match;
+
+    while ((match = combinedRegex.exec(text)) !== null) {
+      // Add text before the tag
+      if (match.index > currentIndex) {
+        parts.push({
+          type: 'text',
+          content: text.substring(currentIndex, match.index)
+        });
+      }
+
+      // Add the tag
+      if (match[1]) {
+        // Old format: @[Display](type:value)
+        parts.push({
+          type: 'tag',
+          tagType: match[2],
+          display: match[1],
+          value: match[3]
+        });
+      } else if (match[4]) {
+        // New format: @Display
+        parts.push({
+          type: 'tag',
+          tagType: 'unknown',
+          display: match[4],
+          value: match[4]
+        });
+      }
+
+      currentIndex = match.index + match[0].length;
+    }
+
+    // Add remaining text
+    if (currentIndex < text.length) {
+      parts.push({
+        type: 'text',
+        content: text.substring(currentIndex)
+      });
+    }
+
+    return parts.length > 0 ? parts : [{ type: 'text', content: text }];
   };
 
   const cloneProjectDeep = (project) => ({
@@ -2793,12 +2903,6 @@ Write a professional executive summary that highlights the project's current sta
 
   // Show all projects, but organize by who is on them
   const visibleProjects = projects.filter(project => project.status !== 'deleted');
-
-  // Get all possible tags for autocomplete
-  const getAllTags = useCallback(
-    () => getAllTagsUtil(people, visibleProjects),
-    [people, visibleProjects]
-  );
 
   // Filter projects by search query (when search is open) or portfolio filter (persistent)
   const searchFilterProjects = (projectList) => {
