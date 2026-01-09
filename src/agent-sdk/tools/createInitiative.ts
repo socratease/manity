@@ -35,7 +35,7 @@ export const createInitiativeTool = tool({
     }
 
     // Check for duplicate (case-insensitive)
-    const existingInitiatives = ctx.initiatives || [];
+    const existingInitiatives = ctx.workingInitiatives || [];
     const existing = existingInitiatives.find(
       (i: { name: string }) => i.name.toLowerCase() === initiativeName.toLowerCase()
     );
@@ -69,16 +69,15 @@ export const createInitiativeTool = tool({
       projects: [],
     };
 
-    // Add to working initiatives
-    if (!ctx.workingInitiatives) {
-      ctx.workingInitiatives = [];
+    try {
+      const createdInitiative = await ctx.services.createInitiative(newInitiative);
+      ctx.workingInitiatives.push(createdInitiative);
+      ctx.trackUpdatedEntity(createdInitiative.id);
+
+      return `Created initiative "${initiativeName}" with ${createdInitiative.priority} priority and ${createdInitiative.status} status.${owners.length > 0 ? ` Owners: ${owners.map(o => o.name).join(', ')}.` : ''}`;
+    } catch (error) {
+      return `Error creating initiative: ${(error as Error).message}`;
     }
-    ctx.workingInitiatives.push(newInitiative);
-
-    // Track for persistence (the API will handle the actual creation)
-    ctx.trackUpdatedEntity(initiativeId);
-
-    return `Created initiative "${initiativeName}" with ${input.priority || 'medium'} priority and ${input.status || 'planning'} status.${owners.length > 0 ? ` Owners: ${owners.map(o => o.name).join(', ')}.` : ''}`;
   },
 });
 
