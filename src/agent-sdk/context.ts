@@ -16,6 +16,7 @@ import type {
   StakeholderEntry,
   Activity,
 } from '../agent/types';
+import type { Initiative } from '../types/portfolio';
 import type { ToolServices } from './types';
 
 /**
@@ -25,6 +26,8 @@ export interface ToolExecutionContext {
   // State
   projects: Project[];
   workingProjects: Project[];
+  initiatives: Initiative[];
+  workingInitiatives: Initiative[];
   people: Person[];
   loggedInUser: string;
 
@@ -106,11 +109,13 @@ export function cloneProjectDeep(project: Project): Project {
  */
 export function createToolExecutionContext(
   projects: Project[],
+  initiatives: Initiative[],
   people: Person[],
   loggedInUser: string,
   services: ToolServices
 ): ToolExecutionContext {
   const workingProjects = projects.map(cloneProjectDeep);
+  const workingInitiatives = initiatives.map((initiative) => JSON.parse(JSON.stringify(initiative)));
   const projectLookup = buildProjectLookup(workingProjects);
   const deltas: Delta[] = [];
   const updatedEntityIds = new Set<string | number>();
@@ -231,6 +236,8 @@ export function createToolExecutionContext(
   return {
     projects,
     workingProjects,
+    initiatives,
+    workingInitiatives,
     people,
     loggedInUser,
     projectLookup,
