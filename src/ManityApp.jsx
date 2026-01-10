@@ -9065,6 +9065,7 @@ const styles = {
   },
 
   tagInlineCompact: {
+    display: 'inline-flex',
     padding: '1px 6px',
     borderRadius: '3px',
     backgroundColor: 'var(--amber)' + '20',
@@ -9072,6 +9073,8 @@ const styles = {
     fontSize: '13px',
     fontFamily: "'Inter', sans-serif",
     fontWeight: '600',
+    whiteSpace: 'nowrap',
+    width: 'fit-content',
   },
 
   // Thrust View

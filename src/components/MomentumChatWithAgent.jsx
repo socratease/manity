@@ -1529,6 +1529,8 @@ const getStyles = (colors) => ({
     color: colors.earth,
     margin: '0 2px',
     lineHeight: '1.3',
+    whiteSpace: 'nowrap',
+    width: 'fit-content',
   },
   mentionTagClickable: {
     cursor: 'pointer',
