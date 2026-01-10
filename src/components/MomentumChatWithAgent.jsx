@@ -53,7 +53,7 @@ export default function MomentumChatWithAgent({
   } = usePortfolioData();
 
   // Get initiatives
-  const { initiatives, createInitiative, addProjectToInitiative } = useInitiatives();
+  const { initiatives, createInitiative, addProjectToInitiative, addOwnerToInitiative } = useInitiatives();
 
   const seededAgentHistory = useMemo(
     () =>
@@ -72,7 +72,13 @@ export default function MomentumChatWithAgent({
   };
 
   const getStatusColor = (status) => {
-    const map = { active: colors.sage, planning: colors.amber, 'on-hold': colors.stone, completed: colors.earth };
+    const map = {
+      active: colors.sage,
+      planning: colors.amber,
+      'on-hold': colors.stone,
+      blocked: colors.coral,
+      completed: colors.earth,
+    };
     return map[status] || colors.stone;
   };
 
@@ -177,6 +183,7 @@ export default function MomentumChatWithAgent({
     sendEmail,
     createInitiative,
     addProjectToInitiative,
+    addOwnerToInitiative,
     initialConversationHistory: seededAgentHistory,
   });
 

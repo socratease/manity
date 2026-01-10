@@ -176,6 +176,7 @@ export const queryPortfolioTool = tool({
           active: summaries.filter(p => p.status === 'active').length,
           planning: summaries.filter(p => p.status === 'planning').length,
           'on-hold': summaries.filter(p => p.status === 'on-hold').length,
+          blocked: summaries.filter(p => p.status === 'blocked').length,
           completed: summaries.filter(p => p.status === 'completed').length,
         },
         byPriority: {

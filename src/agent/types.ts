@@ -392,7 +392,7 @@ export interface Project {
   id: string | number;
   name: string;
   stakeholders: Stakeholder[];
-  status: 'planning' | 'active' | 'on-hold' | 'cancelled' | 'completed';
+  status: 'planning' | 'active' | 'on-hold' | 'blocked' | 'cancelled' | 'completed';
   priority: 'high' | 'medium' | 'low';
   progress: number;
   progressMode?: 'auto' | 'manual';
