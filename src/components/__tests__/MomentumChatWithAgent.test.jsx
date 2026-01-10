@@ -19,7 +19,12 @@ vi.mock('../../hooks/usePortfolioData', () => ({
 }));
 
 vi.mock('../../hooks/useInitiatives', () => ({
-  useInitiatives: () => ({ initiatives: [], createInitiative: vi.fn(), addProjectToInitiative: vi.fn() }),
+  useInitiatives: () => ({
+    initiatives: [],
+    createInitiative: vi.fn(),
+    addProjectToInitiative: vi.fn(),
+    addOwnerToInitiative: vi.fn(),
+  }),
 }));
 
 vi.mock('../../themes/hooks', () => ({
