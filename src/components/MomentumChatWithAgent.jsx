@@ -13,6 +13,7 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { usePortfolioData } from '../hooks/usePortfolioData';
 import { useInitiatives } from '../hooks/useInitiatives';
 import { useSeasonalTheme } from '../themes/hooks';
+import { baseTheme } from '../themes/colors';
 import { getAllTags } from '../lib/tagging';
 import { parseTaggedText } from '../lib/taggedText';
 
@@ -31,9 +32,11 @@ export default function MomentumChatWithAgent({
   onUndoAction,
   loggedInUser = 'You',
   people = [],
-  recentlyUpdatedProjects = {}
+  recentlyUpdatedProjects = {},
+  enableSeasonalTheme = false,
 }) {
-  const theme = useSeasonalTheme();
+  const seasonalTheme = useSeasonalTheme();
+  const theme = enableSeasonalTheme ? seasonalTheme : baseTheme;
   const colors = theme.colors;
   const styles = getStyles(colors);
 

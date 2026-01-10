@@ -205,6 +205,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const EffectComponent = useSeasonalEffect();
   const showSeasonalBanner = seasonalTheme.id !== 'base';
   const seasonalBannerGradient = `linear-gradient(90deg, ${seasonalTheme.colors.earth} 0%, ${seasonalTheme.colors.sage} 25%, ${seasonalTheme.colors.amber} 50%, ${seasonalTheme.colors.coral} 75%, ${seasonalTheme.colors.earth} 100%)`;
+  const enableMomentumSeasonalTheme = seasonalTheme.id !== 'base';
 
   const [showDataPage, setShowDataPage] = useState(() => {
     const saved = localStorage.getItem('manity_show_data_page');
@@ -5918,6 +5919,7 @@ PEOPLE & EMAIL ADDRESSES:
               loggedInUser={loggedInUser}
               people={people}
               recentlyUpdatedProjects={recentlyUpdatedProjects}
+              enableSeasonalTheme={enableMomentumSeasonalTheme}
             />
           </div>
         ) : activeView === 'slides' ? (
