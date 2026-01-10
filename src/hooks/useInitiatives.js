@@ -23,10 +23,14 @@ export const useInitiatives = ({ personRefForApi } = {}) => {
   const mapInitiativeForApi = useCallback((initiative = {}) => {
     const name = (initiative.name ?? '').trim();
 
+    const owners = (initiative.owners || [])
+      .map(o => (personRefForApi ? personRefForApi(o) : o))
+      .filter(Boolean);
+
     return {
       ...initiative,
       name,
-      owners: (initiative.owners || []).map(o => personRefForApi?.(o)).filter(Boolean),
+      owners,
     };
   }, [personRefForApi]);
 

@@ -29,7 +29,7 @@ export const queryPortfolioTool = tool({
 
     // If querying a specific initiative
     if (input.scope === 'initiative' || input.initiativeId || input.initiativeName) {
-      const initiatives = ctx.initiatives || [];
+      const initiatives = ctx.workingInitiatives || [];
       const searchTerm = (input.initiativeId || input.initiativeName || '').toLowerCase();
       const initiative = initiatives.find(
         (i: { id: string; name: string }) =>
@@ -75,7 +75,7 @@ export const queryPortfolioTool = tool({
 
     // Query all initiatives
     if (input.scope === 'initiatives') {
-      const initiatives = ctx.initiatives || [];
+      const initiatives = ctx.workingInitiatives || [];
 
       if (input.detailLevel === 'detailed') {
         return JSON.stringify({

@@ -74,7 +74,7 @@ export default function MomentumChatWithAgent({
   } = usePortfolioData();
 
   // Get initiatives
-  const { initiatives } = useInitiatives();
+  const { initiatives, createInitiative } = useInitiatives();
 
   // Group projects by initiative for display
   const { initiativeGroups, ungroupedProjects } = useMemo(() => {
@@ -125,10 +125,12 @@ export default function MomentumChatWithAgent({
     pendingQuestion,
   } = useAgentRuntime({
     projects,
+    initiatives,
     people,
     loggedInUser,
     createPerson,
     sendEmail,
+    createInitiative,
     initialConversationHistory: seededAgentHistory,
   });
 

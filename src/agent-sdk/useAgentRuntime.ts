@@ -46,6 +46,8 @@ const LLM_MODEL = import.meta.env.VITE_LLM_MODEL || 'gpt-4.1';
 export interface UseAgentRuntimeProps {
   /** Current projects */
   projects: Project[];
+  /** Current initiatives */
+  initiatives: import('../types/portfolio').Initiative[];
   /** People database */
   people: Person[];
   /** Logged-in user name */
@@ -54,6 +56,8 @@ export interface UseAgentRuntimeProps {
   createPerson: (person: Partial<Person>) => Promise<Person>;
   /** Send email callback */
   sendEmail: (params: { recipients: string[]; subject: string; body: string }) => Promise<void>;
+  /** Create initiative callback */
+  createInitiative: (initiative: Partial<import('../types/portfolio').Initiative>) => Promise<import('../types/portfolio').Initiative>;
   /** Callback when projects are updated */
   onProjectsUpdate?: (projects: Project[]) => void;
   /** Agent configuration */
@@ -129,10 +133,12 @@ function getToolDefinitions(tools: FunctionTool[]): ToolDefinition[] {
 export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeReturn {
   const {
     projects,
+    initiatives,
     people,
     loggedInUser,
     createPerson,
     sendEmail,
+    createInitiative,
     config = defaultAgentConfig,
     initialConversationHistory = [],
     enableStreaming = true,
@@ -172,6 +178,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
   const buildServices = useCallback((): ToolServices => ({
     createPerson,
     sendEmail,
+    createInitiative,
     buildThrustContext: () =>
       projects.map(project => ({
         id: project.id,
@@ -196,15 +203,16 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         })),
         recentActivity: project.recentActivity.slice(0, 3),
       })),
-  }), [createPerson, sendEmail, projects]);
+  }), [createPerson, createInitiative, sendEmail, projects]);
 
   // Build agent context
   const buildContext = useCallback((message: string): AgentContext => ({
     userMessage: message,
     projects: projects.map(cloneProjectDeep),
+    initiatives: initiatives.map((initiative) => JSON.parse(JSON.stringify(initiative))),
     people: [...people],
     loggedInUser,
-  }), [projects, people, loggedInUser]);
+  }), [initiatives, projects, people, loggedInUser]);
 
   /**
    * Execute tools sequentially from a list of tool calls.
@@ -537,6 +545,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     // Create tool execution context with delta tracking
     const toolContext = createToolExecutionContext(
       agentContext.projects,
+      agentContext.initiatives,
       agentContext.people,
       agentContext.loggedInUser,
       services
