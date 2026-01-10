@@ -815,9 +815,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       setCheckinNote('');
 
       // Move to next project the user is a contributor on, or close if done
-      const currentIndex = userProjects.findIndex(p => p.id === projectId);
-      if (currentIndex < userProjects.length - 1) {
-        setSelectedProject(userProjects[currentIndex + 1]);
+      const currentIndex = userActiveProjects.findIndex(p => p.id === projectId);
+      if (currentIndex < userActiveProjects.length - 1) {
+        setSelectedProject(userActiveProjects[currentIndex + 1]);
       } else {
         setShowDailyCheckin(false);
         setSelectedProject(null);
@@ -3225,15 +3225,15 @@ PEOPLE & EMAIL ADDRESSES:
   useEffect(() => {
     if (!showDailyCheckin) return;
 
-    if (userProjects.length > 0 && (!selectedProject || !userProjects.some(p => p.id === selectedProject.id))) {
-      setSelectedProject(userProjects[0]);
+    if (userActiveProjects.length > 0 && (!selectedProject || !userActiveProjects.some(p => p.id === selectedProject.id))) {
+      setSelectedProject(userActiveProjects[0]);
     }
 
-    if (showDailyCheckin && userProjects.length === 0) {
+    if (showDailyCheckin && userActiveProjects.length === 0) {
       setShowDailyCheckin(false);
       setSelectedProject(null);
     }
-  }, [showDailyCheckin, userProjects, selectedProject]);
+  }, [showDailyCheckin, userActiveProjects, selectedProject]);
 
   useEffect(() => {
     if (visibleProjects.length === 0) {
@@ -4102,9 +4102,9 @@ PEOPLE & EMAIL ADDRESSES:
                 <button
                   onClick={() => {
                     // Skip to next project the user is a contributor on
-                    const currentIndex = userProjects.findIndex(p => p.id === selectedProject.id);
-                    if (currentIndex < userProjects.length - 1) {
-                      setSelectedProject(userProjects[currentIndex + 1]);
+                    const currentIndex = userActiveProjects.findIndex(p => p.id === selectedProject.id);
+                    if (currentIndex < userActiveProjects.length - 1) {
+                      setSelectedProject(userActiveProjects[currentIndex + 1]);
                       setCheckinNote('');
                     } else {
                       setShowDailyCheckin(false);
@@ -4144,13 +4144,13 @@ PEOPLE & EMAIL ADDRESSES:
               </p>
 
               <div style={styles.progressIndicator}>
-                {userProjects.map((p, idx) => (
+                {userActiveProjects.map((p, idx) => (
                   <div
                     key={p.id}
                     style={{
                       ...styles.progressDot,
                       backgroundColor: p.id === selectedProject.id ? 'var(--amber)' : 'var(--cloud)',
-                      opacity: idx <= userProjects.indexOf(selectedProject) ? 1 : 0.3
+                      opacity: idx <= userActiveProjects.indexOf(selectedProject) ? 1 : 0.3
                     }}
                   />
                 ))}
@@ -4390,18 +4390,18 @@ PEOPLE & EMAIL ADDRESSES:
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', marginRight: '12px' }}>
                 <button
                   onClick={() => {
-                    if (userProjects.length > 0) {
-                      setSelectedProject(userProjects[0]);
+                    if (userActiveProjects.length > 0) {
+                      setSelectedProject(userActiveProjects[0]);
                       setShowDailyCheckin(true);
                     }
                   }}
                   style={{
                     ...styles.dailyUpdateButton,
-                    opacity: userProjects.length === 0 ? 0.5 : 1,
-                    cursor: userProjects.length === 0 ? 'not-allowed' : 'pointer'
+                    opacity: userActiveProjects.length === 0 ? 0.5 : 1,
+                    cursor: userActiveProjects.length === 0 ? 'not-allowed' : 'pointer'
                   }}
-                  disabled={userProjects.length === 0}
-                  title={userProjects.length === 0 ? 'No projects you are a contributor on' : 'Start a daily check-in for your projects'}
+                  disabled={userActiveProjects.length === 0}
+                  title={userActiveProjects.length === 0 ? 'No active projects you are a contributor on' : 'Start a daily check-in for your projects'}
                 >
                   Daily Update
                 </button>
