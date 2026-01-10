@@ -3,13 +3,6 @@
  * Centralized exports for all theme definitions
  */
 
-export { baseTheme } from './base';
-export { christmasTheme } from './christmas';
-export { easterTheme } from './easter';
-export { halloweenTheme } from './halloween';
-export { valentinesTheme } from './valentines';
-export { stPatricksTheme } from './stPatricks';
-
 import type { SeasonalTheme } from '../types';
 import { baseTheme } from './base';
 import { christmasTheme } from './christmas';
@@ -17,6 +10,15 @@ import { easterTheme } from './easter';
 import { halloweenTheme } from './halloween';
 import { valentinesTheme } from './valentines';
 import { stPatricksTheme } from './stPatricks';
+
+export {
+  baseTheme,
+  christmasTheme,
+  easterTheme,
+  halloweenTheme,
+  valentinesTheme,
+  stPatricksTheme,
+};
 
 /**
  * All available seasonal themes
