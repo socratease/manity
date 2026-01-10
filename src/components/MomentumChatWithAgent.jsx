@@ -1661,8 +1661,8 @@ const getStyles = (colors) => ({
   },
   tagSuggestions: {
     position: 'absolute',
-    top: '100%',
-    marginTop: '8px',
+    bottom: '100%',
+    marginBottom: '8px',
     left: '24px',
     right: '78px',
     backgroundColor: '#FFFFFF',
