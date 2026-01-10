@@ -17,7 +17,6 @@ describe('Zustand Stores', () => {
         isSidebarCollapsed: false,
         globalSearchQuery: '',
         globalSearchOpen: false,
-        isSantafied: true,
         featuredPersonId: null,
         recentlyUpdatedProjects: {},
       });
@@ -29,7 +28,6 @@ describe('Zustand Stores', () => {
       expect(state.activeView).toBe('people');
       expect(state.isSidebarCollapsed).toBe(false);
       expect(state.globalSearchQuery).toBe('');
-      expect(state.isSantafied).toBe(true);
     });
 
     it('setActiveView updates view', () => {
@@ -66,16 +64,6 @@ describe('Zustand Stores', () => {
 
       setGlobalSearchOpen(false);
       expect(useUIStore.getState().globalSearchOpen).toBe(false);
-    });
-
-    it('setIsSantafied updates theme mode', () => {
-      const { setIsSantafied } = useUIStore.getState();
-
-      setIsSantafied(false);
-      expect(useUIStore.getState().isSantafied).toBe(false);
-
-      setIsSantafied(true);
-      expect(useUIStore.getState().isSantafied).toBe(true);
     });
 
     it('markProjectUpdated tracks recently updated projects', () => {
