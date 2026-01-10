@@ -1,4 +1,4 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { getActiveTheme } from '../seasonManager';
 import type { SeasonalTheme } from '../types';
 
@@ -22,18 +22,15 @@ import type { SeasonalTheme } from '../types';
  * const christmasTheme = useSeasonalTheme(new Date('2025-12-25'));
  */
 export function useSeasonalTheme(dateOverride?: Date): SeasonalTheme {
-  // Calculate the active theme based on the current or overridden date
-  const activeTheme = useMemo(() => {
-    return getActiveTheme(dateOverride);
-  }, [dateOverride]);
-
   // Track the current theme in state for potential future animations/transitions
-  const [currentTheme, setCurrentTheme] = useState<SeasonalTheme>(activeTheme);
+  const [currentTheme, setCurrentTheme] = useState<SeasonalTheme>(() =>
+    getActiveTheme(dateOverride),
+  );
 
   // Update theme when the active theme changes (e.g., crossing a seasonal boundary)
   useEffect(() => {
-    setCurrentTheme(activeTheme);
-  }, [activeTheme]);
+    setCurrentTheme(getActiveTheme(dateOverride));
+  }, [dateOverride]);
 
   // If dateOverride is provided, check daily for theme changes
   // This allows the theme to update automatically at midnight
@@ -45,7 +42,7 @@ export function useSeasonalTheme(dateOverride?: Date): SeasonalTheme {
 
     // Check every hour if we've crossed into a new seasonal boundary
     const checkInterval = setInterval(() => {
-      const newTheme = getActiveTheme();
+      const newTheme = getActiveTheme(dateOverride);
       if (newTheme.id !== currentTheme.id) {
         setCurrentTheme(newTheme);
       }
