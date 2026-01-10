@@ -37,6 +37,23 @@ export default function MomentumChatWithAgent({
   const colors = theme.colors;
   const styles = getStyles(colors);
 
+  // Get data and services from portfolio hook
+  const {
+    projects,
+    createProject,
+    updateProject,
+    addActivity,
+    addTask,
+    updateTask,
+    addSubtask,
+    updateSubtask,
+    createPerson,
+    sendEmail,
+  } = usePortfolioData();
+
+  // Get initiatives
+  const { initiatives, createInitiative } = useInitiatives();
+
   const seededAgentHistory = useMemo(
     () =>
       messages
@@ -98,23 +115,6 @@ export default function MomentumChatWithAgent({
     },
     [findProjectForTag]
   );
-
-  // Get data and services from portfolio hook
-  const {
-    projects,
-    createProject,
-    updateProject,
-    addActivity,
-    addTask,
-    updateTask,
-    addSubtask,
-    updateSubtask,
-    createPerson,
-    sendEmail,
-  } = usePortfolioData();
-
-  // Get initiatives
-  const { initiatives, createInitiative } = useInitiatives();
 
   // Group projects by initiative for display
   const { initiativeGroups, ungroupedProjects } = useMemo(() => {
