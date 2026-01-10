@@ -110,6 +110,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const SIDEBAR_MAX_WIDTH = 360;
   const DEFAULT_SIDEBAR_WIDTH = 238;
   const SIDEBAR_WIDTH_STORAGE_KEY = 'manity_sidebar_width';
+  const SEASONAL_THEME_STORAGE_KEY = 'manity_seasonal_theme_enabled';
 
   const clampSidebarWidth = useCallback(
     (width) => Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width)),
@@ -201,8 +202,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     nextUp: 3
   });
 
-  const seasonalTheme = useSeasonalTheme();
-  const EffectComponent = useSeasonalEffect();
+  const [seasonalThemeEnabled, setSeasonalThemeEnabled] = useState(() => {
+    const saved = localStorage.getItem(SEASONAL_THEME_STORAGE_KEY);
+    if (saved === null) {
+      return true;
+    }
+    return saved === 'true';
+  });
+
+  const seasonalTheme = useSeasonalTheme(undefined, seasonalThemeEnabled);
+  const EffectComponent = useSeasonalEffect(undefined, seasonalThemeEnabled);
   const showSeasonalBanner = seasonalTheme.id !== 'base';
   const seasonalBannerGradient = `linear-gradient(90deg, ${seasonalTheme.colors.earth} 0%, ${seasonalTheme.colors.sage} 25%, ${seasonalTheme.colors.amber} 50%, ${seasonalTheme.colors.coral} 75%, ${seasonalTheme.colors.earth} 100%)`;
 
@@ -413,6 +422,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       window.location.hash = '#/people';
     }
   }, [activeView, showDataPage]);
+
+  useEffect(() => {
+    localStorage.setItem(SEASONAL_THEME_STORAGE_KEY, seasonalThemeEnabled ? 'true' : 'false');
+  }, [seasonalThemeEnabled]);
 
   // Persist sidebar width
   useEffect(() => {
@@ -4419,7 +4432,9 @@ PEOPLE & EMAIL ADDRESSES:
                 },
                 allStakeholders: getAllStakeholders(),
                 showDataPage,
-                setShowDataPage
+                setShowDataPage,
+                seasonalThemeEnabled,
+                setSeasonalThemeEnabled
               })}
               style={styles.settingsIconButton}
               aria-label="Open settings"
@@ -5918,6 +5933,7 @@ PEOPLE & EMAIL ADDRESSES:
               loggedInUser={loggedInUser}
               people={people}
               recentlyUpdatedProjects={recentlyUpdatedProjects}
+              seasonalThemeEnabled={seasonalThemeEnabled}
             />
           </div>
         ) : activeView === 'slides' ? (
@@ -5977,6 +5993,7 @@ PEOPLE & EMAIL ADDRESSES:
               <PeopleProjectsJuggle
                 projects={visibleProjects}
                 people={people}
+                seasonalThemeEnabled={seasonalThemeEnabled}
               />
             </div>
             <header style={styles.header}>

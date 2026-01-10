@@ -32,8 +32,8 @@ const HeartsEffect = lazy(() => import('../effects/HeartsEffect'));
  * }
  * ```
  */
-export function useSeasonalEffect(dateOverride?: Date) {
-  const theme = useSeasonalTheme(dateOverride);
+export function useSeasonalEffect(dateOverride?: Date, isEnabled: boolean = true) {
+  const theme = useSeasonalTheme(dateOverride, isEnabled);
   const effect = theme.effect;
 
   // Memoize the component selection and configuration to avoid recreating on every render
@@ -86,12 +86,12 @@ export function useSeasonalEffect(dateOverride?: Date) {
  * }
  * ```
  */
-export function useSeasonalEffectWithConfig(dateOverride?: Date): {
+export function useSeasonalEffectWithConfig(dateOverride?: Date, isEnabled: boolean = true): {
   EffectComponent: React.LazyExoticComponent<() => JSX.Element> | null;
   config: ThemeEffect;
 } {
-  const theme = useSeasonalTheme(dateOverride);
-  const EffectComponent = useSeasonalEffect(dateOverride);
+  const theme = useSeasonalTheme(dateOverride, isEnabled);
+  const EffectComponent = useSeasonalEffect(dateOverride, isEnabled);
 
   return {
     EffectComponent,
