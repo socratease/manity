@@ -315,8 +315,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                 },
                 status: {
                   type: "string",
-                  enum: ["todo", "in-progress", "completed", "planning", "active", "on-hold", "cancelled"],
-                  description: "Status of task, subtask, or project. Use todo/in-progress/completed for tasks; planning/active/on-hold/cancelled/completed for projects (use 'active' instead of 'in_progress')."
+                  enum: ["todo", "in-progress", "completed", "planning", "active", "on-hold", "blocked", "cancelled"],
+                  description: "Status of task, subtask, or project. Use todo/in-progress/completed for tasks; planning/active/on-hold/blocked/cancelled/completed for projects (use 'active' instead of 'in_progress')."
                 },
                 dueDate: {
                   type: "string",
@@ -3349,6 +3349,19 @@ PEOPLE & EMAIL ADDRESSES:
     return colors[priority] || 'var(--stone)';
   };
 
+  const getProjectStatusColor = (status) => {
+    const colors = {
+      planning: 'var(--amber)',
+      active: 'var(--sage)',
+      'on-hold': 'var(--stone)',
+      blocked: 'var(--coral)',
+      cancelled: 'var(--stone)',
+      completed: 'var(--earth)',
+      closed: 'var(--stone)',
+    };
+    return colors[status] || 'var(--stone)';
+  };
+
   const handleSlideAdvance = (direction) => {
     if (visibleProjects.length === 0) return;
 
@@ -4590,11 +4603,18 @@ PEOPLE & EMAIL ADDRESSES:
                         <option value="planning">Planning</option>
                         <option value="active">Active</option>
                         <option value="on-hold">On Hold</option>
+                        <option value="blocked">Blocked</option>
                         <option value="completed">Completed</option>
                         <option value="closed">Closed</option>
                       </select>
                     ) : (
-                      <span style={styles.statusBadgeSmall}>{viewingProject.status}</span>
+                      <span style={{
+                        ...styles.statusBadgeSmall,
+                        backgroundColor: getProjectStatusColor(viewingProject.status) + '20',
+                        color: getProjectStatusColor(viewingProject.status),
+                      }}>
+                        {viewingProject.status}
+                      </span>
                     )}
                   </div>
                   <div style={styles.compactInfoItem}>
@@ -6096,6 +6116,7 @@ PEOPLE & EMAIL ADDRESSES:
                     >
                       <option value="planning">Planning</option>
                       <option value="active">Active</option>
+                      <option value="blocked">Blocked</option>
                       <option value="completed">Completed</option>
                     </select>
                   </div>

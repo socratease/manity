@@ -22,6 +22,7 @@ export default function ThinkingProcess({ steps = [], colors, autoExpand = true 
   const headerStatus = (() => {
     const statuses = sortedSteps.map((step) => step.status);
     if (statuses.includes('failed')) return 'failed';
+    if (statuses.includes('blocked')) return 'blocked';
     if (statuses.includes('awaiting_user')) return 'awaiting_user';
     if (statuses.includes('in_progress')) return 'in_progress';
     if (statuses.every((status) => status === 'completed')) return 'completed';
@@ -48,6 +49,7 @@ export default function ThinkingProcess({ steps = [], colors, autoExpand = true 
     switch (status) {
       case 'completed': return '✓';
       case 'failed': return '✗';
+      case 'blocked': return '⛔';
       case 'awaiting_user': return '⏸';
       case 'in_progress': return '⟳';
       case 'pending': return '…';
@@ -60,6 +62,7 @@ export default function ThinkingProcess({ steps = [], colors, autoExpand = true 
     switch (status) {
       case 'completed': return colors.sage;
       case 'failed': return colors.coral;
+      case 'blocked': return colors.coral;
       case 'awaiting_user': return colors.amber;
       case 'in_progress': return colors.sky || '#4A90D9';
       case 'pending': return colors.stone;
@@ -110,6 +113,7 @@ export default function ThinkingProcess({ steps = [], colors, autoExpand = true 
         }}>
           {headerStatus === 'completed' ? 'Done'
             : headerStatus === 'failed' ? 'Failed'
+            : headerStatus === 'blocked' ? 'Blocked'
             : headerStatus === 'awaiting_user' ? 'Waiting'
             : headerStatus === 'in_progress' ? 'Active'
             : 'Pending'}

@@ -15,7 +15,7 @@ export const UpdateProjectInput = z.object({
   name: z.string().optional().describe('New name for the project'),
   description: z.string().optional().describe('New description'),
   executiveUpdate: z.string().optional().describe('Executive update summary'),
-  status: z.enum(['planning', 'active', 'on-hold', 'cancelled', 'completed']).optional().describe('New status'),
+  status: z.enum(['planning', 'active', 'on-hold', 'blocked', 'cancelled', 'completed']).optional().describe('New status'),
   priority: z.enum(['high', 'medium', 'low']).optional().describe('New priority'),
   progress: z.number().min(0).max(100).optional().describe('New progress percentage'),
   targetDate: z.string().optional().describe('New target date (ISO format)'),
