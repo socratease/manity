@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
 import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, Search, User, UserCircle } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
+import { useInitiatives } from './hooks/useInitiatives';
 import { callOpenAIChat } from './lib/llmClient';
 import ForceDirectedTimeline from './components/ForceDirectedTimeline';
 import PeopleGraph from './components/PeopleGraph';
@@ -47,12 +48,14 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     updateActivity,
     deleteActivity: apiDeleteActivity
   } = usePortfolioData();
+  const { initiatives, createInitiative, deleteInitiative } = useInitiatives();
 
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
   const [checkinNote, setCheckinNote] = useState('');
   const [activeView, setActiveView] = useState('people');
   const [showNewProject, setShowNewProject] = useState(false);
+  const [showNewInitiative, setShowNewInitiative] = useState(false);
   const [viewingProjectId, setViewingProjectId] = useState(null);
   const [newUpdate, setNewUpdate] = useState('');
   const [expandedTasks, setExpandedTasks] = useState({});
@@ -96,6 +99,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [activityEditEnabled, setActivityEditEnabled] = useState(false);
   const [activityEdits, setActivityEdits] = useState({});
   const [projectDeletionEnabled, setProjectDeletionEnabled] = useState(false);
+  const [initiativeDeletionEnabled, setInitiativeDeletionEnabled] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [thrustMessages, setThrustMessages] = useState([]);
@@ -106,6 +110,11 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [thrustRequestStart, setThrustRequestStart] = useState(null);
   const [thrustElapsedMs, setThrustElapsedMs] = useState(0);
   const [expandedMomentumProjects, setExpandedMomentumProjects] = useState({});
+  const [newInitiativeName, setNewInitiativeName] = useState('');
+  const [newInitiativeDescription, setNewInitiativeDescription] = useState('');
+  const [newInitiativeStatus, setNewInitiativeStatus] = useState('planning');
+  const [newInitiativePriority, setNewInitiativePriority] = useState('medium');
+  const [newInitiativeTargetDate, setNewInitiativeTargetDate] = useState('');
   const SIDEBAR_MIN_WIDTH = 200;
   const SIDEBAR_MAX_WIDTH = 360;
   const DEFAULT_SIDEBAR_WIDTH = 238;
@@ -1865,6 +1874,14 @@ Write a professional executive summary that highlights the project's current sta
     setNewProjectStakeholders([]);
   };
 
+  const resetNewInitiativeForm = () => {
+    setNewInitiativeName('');
+    setNewInitiativeDescription('');
+    setNewInitiativeStatus('planning');
+    setNewInitiativePriority('medium');
+    setNewInitiativeTargetDate('');
+  };
+
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
 
@@ -1907,6 +1924,28 @@ Write a professional executive summary that highlights the project's current sta
     } catch (error) {
       console.error('Failed to create project:', error);
     }
+  };
+
+  const handleCreateInitiative = async () => {
+    if (!newInitiativeName.trim()) return;
+
+    await createInitiative({
+      name: newInitiativeName.trim(),
+      description: newInitiativeDescription.trim(),
+      status: newInitiativeStatus,
+      priority: newInitiativePriority,
+      targetDate: newInitiativeTargetDate || undefined,
+    });
+
+    setShowNewInitiative(false);
+    resetNewInitiativeForm();
+  };
+
+  const handleDeleteInitiative = async (initiative) => {
+    if (!initiativeDeletionEnabled) return;
+    const confirmed = window.confirm(`Delete initiative "${initiative.name}"? This can't be undone.`);
+    if (!confirmed) return;
+    await deleteInitiative(initiative.id);
   };
 
   const handleStakeholderSelection = (selectedPeople) => {
@@ -3347,6 +3386,17 @@ PEOPLE & EMAIL ADDRESSES:
       low: 'var(--sage)'
     };
     return colors[priority] || 'var(--stone)';
+  };
+
+  const getInitiativeStatusColor = (status) => {
+    const colors = {
+      planning: 'var(--amber)',
+      active: 'var(--sage)',
+      'on-hold': 'var(--stone)',
+      cancelled: 'var(--coral)',
+      completed: 'var(--earth)',
+    };
+    return colors[status] || 'var(--stone)';
   };
 
   const handleSlideAdvance = (direction) => {
@@ -6006,6 +6056,13 @@ PEOPLE & EMAIL ADDRESSES:
               <div style={styles.headerActions}>
                 <div style={styles.primaryActionGroup}>
                   <button
+                    onClick={() => setShowNewInitiative(prev => !prev)}
+                    style={styles.secondaryButton}
+                  >
+                    <Plus size={18} />
+                    New Initiative
+                  </button>
+                  <button
                     onClick={() => setShowNewProject(prev => !prev)}
                     style={styles.newProjectButton}
                   >
@@ -6033,6 +6090,198 @@ PEOPLE & EMAIL ADDRESSES:
                 </div>
               </div>
             </header>
+
+            {showNewInitiative && (
+              <div style={styles.newProjectPanel}>
+                <div style={styles.sectionHeaderRow}>
+                  <div>
+                    <h3 style={styles.sectionTitle}>New initiative</h3>
+                    <p style={styles.sectionSubtitle}>Define the umbrella effort for related projects.</p>
+                  </div>
+                </div>
+                <div style={styles.newProjectFormGrid}>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Name</label>
+                    <input
+                      type="text"
+                      value={newInitiativeName}
+                      onChange={(e) => setNewInitiativeName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.ctrlKey && e.key === 'Enter') {
+                          e.preventDefault();
+                          handleCreateInitiative();
+                        }
+                      }}
+                      placeholder="What are we rallying around?"
+                      style={styles.input}
+                      autoFocus
+                    />
+                  </div>
+                  <div style={{ ...styles.formField, gridColumn: 'span 2' }}>
+                    <label style={styles.formLabel}>Description</label>
+                    <textarea
+                      value={newInitiativeDescription}
+                      onChange={(e) => setNewInitiativeDescription(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.ctrlKey && e.key === 'Enter') {
+                          e.preventDefault();
+                          handleCreateInitiative();
+                        }
+                      }}
+                      placeholder="What outcome does this initiative drive?"
+                      style={styles.projectUpdateInput}
+                    />
+                  </div>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Priority</label>
+                    <select
+                      value={newInitiativePriority}
+                      onChange={(e) => setNewInitiativePriority(e.target.value)}
+                      style={styles.select}
+                    >
+                      <option value="high">High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </div>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Status</label>
+                    <select
+                      value={newInitiativeStatus}
+                      onChange={(e) => setNewInitiativeStatus(e.target.value)}
+                      style={styles.select}
+                    >
+                      <option value="planning">Planning</option>
+                      <option value="active">Active</option>
+                      <option value="on-hold">On Hold</option>
+                      <option value="completed">Completed</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+                  </div>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Target date</label>
+                    <input
+                      type="date"
+                      value={newInitiativeTargetDate}
+                      onChange={(e) => setNewInitiativeTargetDate(e.target.value)}
+                      style={styles.input}
+                    />
+                  </div>
+                </div>
+                <div style={styles.newProjectActions}>
+                  <button
+                    onClick={handleCreateInitiative}
+                    disabled={!newInitiativeName.trim()}
+                    style={{
+                      ...styles.primaryButton,
+                      opacity: newInitiativeName.trim() ? 1 : 0.5,
+                      cursor: newInitiativeName.trim() ? 'pointer' : 'not-allowed'
+                    }}
+                  >
+                    Create initiative
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowNewInitiative(false);
+                      resetNewInitiativeForm();
+                    }}
+                    style={styles.skipButton}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
+
+            <div style={styles.initiativesSection}>
+              <div style={styles.sectionHeaderRow}>
+                <div>
+                  <h3 style={styles.sectionTitle}>Initiatives</h3>
+                  <p style={styles.sectionSubtitle}>{initiatives.length} total</p>
+                </div>
+                <div style={styles.lockControlGroup}>
+                  <div style={styles.lockHint}>
+                    <span style={styles.lockHintTitle}>Delete initiatives</span>
+                    <span style={styles.lockHintSubtitle}>Unlock to enable deletion</span>
+                  </div>
+                  <button
+                    onClick={() => setInitiativeDeletionEnabled(prev => !prev)}
+                    style={{
+                      ...styles.activityLockButton,
+                      backgroundColor: initiativeDeletionEnabled ? 'var(--coral)' + '12' : '#FFFFFF',
+                      borderColor: initiativeDeletionEnabled ? 'var(--coral)' : 'var(--cloud)',
+                      color: initiativeDeletionEnabled ? 'var(--coral)' : 'var(--charcoal)'
+                    }}
+                    title={initiativeDeletionEnabled ? 'Lock to disable initiative deletion' : 'Unlock to delete initiatives'}
+                  >
+                    {initiativeDeletionEnabled ? <Unlock size={18} /> : <Lock size={18} />}
+                  </button>
+                </div>
+              </div>
+
+              {initiatives.length === 0 ? (
+                <div style={styles.emptyState}>
+                  No initiatives yet. Create one to group related projects.
+                </div>
+              ) : (
+                <div style={styles.initiativesGrid}>
+                  {initiatives.map((initiative) => (
+                    <div key={initiative.id} style={styles.initiativeCard}>
+                      <div style={styles.initiativeCardHeader}>
+                        <div>
+                          <h4 style={styles.initiativeTitle}>{initiative.name}</h4>
+                          <p style={styles.initiativeDescription}>
+                            {initiative.description || 'No description yet.'}
+                          </p>
+                        </div>
+                        <div style={styles.initiativeBadgeRow}>
+                          <span
+                            style={{
+                              ...styles.statusBadgeSmall,
+                              backgroundColor: `${getInitiativeStatusColor(initiative.status)}20`,
+                              color: getInitiativeStatusColor(initiative.status),
+                            }}
+                          >
+                            {initiative.status}
+                          </span>
+                          <span
+                            style={{
+                              ...styles.statusBadgeSmall,
+                              backgroundColor: `${getPriorityColor(initiative.priority)}20`,
+                              color: getPriorityColor(initiative.priority),
+                            }}
+                          >
+                            {initiative.priority} priority
+                          </span>
+                        </div>
+                      </div>
+                      <div style={styles.initiativeMetaRow}>
+                        <span style={styles.initiativeMetaItem}>
+                          {initiative.projects?.length || 0} projects
+                        </span>
+                        {initiative.targetDate && (
+                          <span style={styles.initiativeMetaItem}>
+                            Target {new Date(initiative.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                          </span>
+                        )}
+                      </div>
+                      {initiativeDeletionEnabled && (
+                        <div style={styles.initiativeActions}>
+                          <button
+                            onClick={() => handleDeleteInitiative(initiative)}
+                            style={styles.cardDeleteButton}
+                            title={`Delete ${initiative.name}`}
+                          >
+                            <Trash2 size={14} />
+                            Delete
+                          </button>
+                        </div>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
 
             {showNewProject && (
               <div style={styles.newProjectPanel}>
@@ -6933,11 +7182,85 @@ const styles = {
     gap: '16px',
   },
 
+  initiativesSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+    marginBottom: '24px',
+  },
+
+  initiativesGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+    gap: '20px',
+  },
+
   sectionHeaderRow: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: '12px',
+  },
+
+  initiativeCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: '12px',
+    padding: '18px',
+    border: '1px solid var(--cloud)',
+    boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+
+  initiativeCardHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '12px',
+    alignItems: 'flex-start',
+  },
+
+  initiativeTitle: {
+    fontSize: '16px',
+    fontWeight: '700',
+    color: 'var(--charcoal)',
+    margin: 0,
+  },
+
+  initiativeDescription: {
+    margin: '6px 0 0',
+    fontSize: '13px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    lineHeight: '1.5',
+  },
+
+  initiativeBadgeRow: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    alignItems: 'flex-end',
+  },
+
+  initiativeMetaRow: {
+    display: 'flex',
+    gap: '12px',
+    flexWrap: 'wrap',
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  initiativeMetaItem: {
+    padding: '4px 8px',
+    borderRadius: '999px',
+    backgroundColor: 'var(--cream)',
+    border: '1px solid var(--cloud)',
+  },
+
+  initiativeActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
   },
 
   projectCard: {
