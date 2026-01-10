@@ -59,6 +59,8 @@ export interface ToolServices {
   createInitiative: (initiative: Partial<import('../types/portfolio').Initiative>) => Promise<import('../types/portfolio').Initiative>;
   /** Add a project to an initiative */
   addProjectToInitiative: (initiativeId: string, projectId: string | number) => Promise<import('../types/portfolio').Initiative>;
+  /** Add an owner to an initiative */
+  addOwnerToInitiative: (initiativeId: string, personId: string | number) => Promise<import('../types/portfolio').Initiative>;
   /** Build portfolio context for queries */
   buildThrustContext: () => import('../agent/types').PortfolioSummary[];
 }
