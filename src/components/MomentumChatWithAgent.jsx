@@ -14,6 +14,7 @@ import { usePortfolioData } from '../hooks/usePortfolioData';
 import { useInitiatives } from '../hooks/useInitiatives';
 import { getAllTags } from '../lib/tagging';
 import { getTheme } from '../lib/theme';
+import { parseTaggedText } from '../lib/taggedText';
 
 // Import the new agent SDK
 import { useAgentRuntime } from '../agent-sdk';
@@ -59,6 +60,47 @@ export default function MomentumChatWithAgent({
     const map = { active: colors.sage, planning: colors.amber, 'on-hold': colors.stone, completed: colors.earth };
     return map[status] || colors.stone;
   };
+
+  const findProjectForTag = useCallback(
+    (tag) => {
+      if (!tag?.value) return null;
+      if (tag.tagType === 'task') {
+        return projects.find((project) =>
+          project.plan?.some((task) => `${task.id}` === `${tag.value}`)
+        );
+      }
+      if (tag.tagType === 'subtask') {
+        return projects.find((project) =>
+          project.plan?.some((task) =>
+            task.subtasks?.some((subtask) => `${subtask.id}` === `${tag.value}`)
+          )
+        );
+      }
+      return null;
+    },
+    [projects]
+  );
+
+  const handleMentionClick = useCallback(
+    (tag) => {
+      if (!tag?.tagType) return;
+      if (tag.tagType === 'project') {
+        window.location.hash = `#/project/${tag.value}`;
+        return;
+      }
+      if (tag.tagType === 'person') {
+        window.location.hash = '#/people';
+        return;
+      }
+      if (tag.tagType === 'task' || tag.tagType === 'subtask') {
+        const project = findProjectForTag(tag);
+        if (project?.id) {
+          window.location.hash = `#/project/${project.id}`;
+        }
+      }
+    },
+    [findProjectForTag]
+  );
 
   // Get data and services from portfolio hook
   const {
@@ -695,7 +737,11 @@ export default function MomentumChatWithAgent({
                   ...(isUser ? styles.userText : styles.assistantText),
                 }}
               >
-                {renderMarkdownBlocks(message.note || message.content)}
+                {renderMarkdownBlocks(message.note || message.content, {
+                  onMentionClick: handleMentionClick,
+                  mentionStyle: styles.mentionTag,
+                  mentionClickableStyle: styles.mentionTagClickable,
+                })}
               </div>
             )}
             {/* User Question Prompt - when agent needs clarification */}
@@ -1104,7 +1150,47 @@ function renderInlineMarkdown(text, keyPrefix) {
   return segments.length > 0 ? segments : [text];
 }
 
-function renderMarkdownBlocks(text) {
+function renderInlineMarkdownWithTags(text, keyPrefix, options = {}) {
+  const parts = parseTaggedText(text);
+  const segments = [];
+
+  parts.forEach((part, idx) => {
+    if (part.type === 'tag') {
+      const handleClick = options.onMentionClick ? () => options.onMentionClick(part) : null;
+      const isClickable = Boolean(handleClick);
+      segments.push(
+        <span
+          key={`${keyPrefix}-tag-${idx}`}
+          onClick={handleClick || undefined}
+          onKeyDown={
+            isClickable
+              ? (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    handleClick();
+                  }
+                }
+              : undefined
+          }
+          role={isClickable ? 'button' : undefined}
+          tabIndex={isClickable ? 0 : undefined}
+          style={{
+            ...options.mentionStyle,
+            ...(isClickable ? options.mentionClickableStyle : {}),
+          }}
+        >
+          {part.display}
+        </span>
+      );
+    } else {
+      segments.push(...renderInlineMarkdown(part.content, `${keyPrefix}-text-${idx}`));
+    }
+  });
+
+  return segments.length > 0 ? segments : [text];
+}
+
+function renderMarkdownBlocks(text, options = {}) {
   const lines = text.split(/\r?\n/);
   const blocks = [];
   let currentList = null;
@@ -1119,7 +1205,7 @@ function renderMarkdownBlocks(text) {
       <ListTag key={`list-${blocks.length}`} style={{ paddingLeft: 20, margin: '8px 0' }}>
         {currentList.items.map((item, idx) => (
           <li key={`${currentList.type}-${idx}`} style={{ marginBottom: 4 }}>
-            {renderInlineMarkdown(item, `${currentList.type}-${idx}`)}
+            {renderInlineMarkdownWithTags(item, `${currentList.type}-${idx}`, options)}
           </li>
         ))}
       </ListTag>
@@ -1181,7 +1267,7 @@ function renderMarkdownBlocks(text) {
                   fontWeight: '600',
                 }}
               >
-                {renderInlineMarkdown(header.trim(), `th-${idx}`)}
+                {renderInlineMarkdownWithTags(header.trim(), `th-${idx}`, options)}
               </th>
             ))}
           </tr>
@@ -1197,7 +1283,7 @@ function renderMarkdownBlocks(text) {
                     padding: '8px',
                   }}
                 >
-                  {renderInlineMarkdown(cell.trim(), `td-${rowIdx}-${cellIdx}`)}
+                  {renderInlineMarkdownWithTags(cell.trim(), `td-${rowIdx}-${cellIdx}`, options)}
                 </td>
               ))}
             </tr>
@@ -1275,9 +1361,9 @@ function renderMarkdownBlocks(text) {
               fontSize: `${20 - level * 2}px`,
               fontWeight: '700',
               color: '#3A3631',
-            },
           },
-          renderInlineMarkdown(headerMatch[2], `h${level}-${i}`)
+        },
+        renderInlineMarkdownWithTags(headerMatch[2], `h${level}-${i}`, options)
         )
       );
       i++;
@@ -1315,7 +1401,7 @@ function renderMarkdownBlocks(text) {
     if (trimmed.length > 0) {
       blocks.push(
         <p key={`p-${i}`} style={{ margin: '8px 0' }}>
-          {renderInlineMarkdown(trimmed, `p-${i}`)}
+          {renderInlineMarkdownWithTags(trimmed, `p-${i}`, options)}
         </p>
       );
     }
@@ -1434,6 +1520,22 @@ const getStyles = (colors) => ({
     border: '1px solid #E8E3D8',
     color: '#3A3631',
     borderBottomLeftRadius: '4px',
+  },
+  mentionTag: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '2px 6px',
+    borderRadius: '10px',
+    fontSize: '12px',
+    fontWeight: '600',
+    backgroundColor: colors.cloud,
+    color: colors.earth,
+    margin: '0 2px',
+    lineHeight: '1.3',
+  },
+  mentionTagClickable: {
+    cursor: 'pointer',
+    textDecoration: 'underline',
   },
   actionsContainer: {
     display: 'flex',
