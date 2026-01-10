@@ -10,6 +10,7 @@ import type { ToolMetadata, ToolCategory } from '../types';
 export { commentTool, CommentInput, type CommentInputType } from './comment';
 export { createProjectTool, CreateProjectInput, type CreateProjectInputType } from './createProject';
 export { createInitiativeTool, CreateInitiativeInput, type CreateInitiativeInputType } from './createInitiative';
+export { addProjectToInitiativeTool, AddProjectToInitiativeInput, type AddProjectToInitiativeInputType } from './addProjectToInitiative';
 export { addTaskTool, AddTaskInput, type AddTaskInputType } from './addTask';
 export { updateTaskTool, UpdateTaskInput, type UpdateTaskInputType } from './updateTask';
 export { addSubtaskTool, AddSubtaskInput, type AddSubtaskInputType } from './addSubtask';
@@ -25,6 +26,7 @@ export { askUserTool, AskUserInput, type AskUserInputType, ASK_USER_MARKER, isAs
 import { commentTool } from './comment';
 import { createProjectTool } from './createProject';
 import { createInitiativeTool } from './createInitiative';
+import { addProjectToInitiativeTool } from './addProjectToInitiative';
 import { addTaskTool } from './addTask';
 import { updateTaskTool } from './updateTask';
 import { addSubtaskTool } from './addSubtask';
@@ -43,6 +45,7 @@ export const allTools = [
   commentTool,
   createProjectTool,
   createInitiativeTool,
+  addProjectToInitiativeTool,
   addTaskTool,
   updateTaskTool,
   addSubtaskTool,
@@ -62,6 +65,7 @@ export type ToolName =
   | 'comment'
   | 'create_project'
   | 'create_initiative'
+  | 'add_project_to_initiative'
   | 'add_task'
   | 'update_task'
   | 'add_subtask'
@@ -77,6 +81,7 @@ export const toolNames: ToolName[] = [
   'comment',
   'create_project',
   'create_initiative',
+  'add_project_to_initiative',
   'add_task',
   'update_task',
   'add_subtask',
@@ -99,6 +104,7 @@ export const toolCategories: Record<ToolName, ToolMetadata> = {
   'comment': { name: 'comment', category: 'safe', description: 'Add a comment to a project' },
   'create_project': { name: 'create_project', category: 'safe', description: 'Create a new project' },
   'create_initiative': { name: 'create_initiative', category: 'safe', description: 'Create a new initiative (meta-project)' },
+  'add_project_to_initiative': { name: 'add_project_to_initiative', category: 'safe', description: 'Add a project to an initiative' },
   'add_task': { name: 'add_task', category: 'safe', description: 'Add a task to a project' },
   'update_task': { name: 'update_task', category: 'safe', description: 'Update a task' },
   'add_subtask': { name: 'add_subtask', category: 'safe', description: 'Add a subtask to a task' },

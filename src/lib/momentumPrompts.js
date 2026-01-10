@@ -6,6 +6,7 @@ Guidelines:
 - For add_stakeholders: include projectId or projectName and stakeholders (comma-separated names)
 - For add_task/update_task: include projectId/projectName and task details
 - For comment: include projectId/projectName and note/content (author will default to the logged-in user)
+- For add_project_to_initiative: include projectId/projectName and initiativeId/initiativeName
 - For send_email: include recipients (emails or names to resolve), subject, and body. Do not add an AI signature; the system will append one automatically.
 - Always reference existing projects by their exact ID or name`;
 
@@ -22,6 +23,7 @@ Supported atomic actions (never combine multiple changes into one action):
 - update_project: change project fields. Fields: projectId, name (rename project), description (project description), executiveUpdate (executive summary), status (planning/active/on-hold/cancelled/completed), priority (low/medium/high), progress (0-100), targetDate, startDate, lastUpdate. Use project statuses: planning, active, on-hold, cancelled, or completed (never "in_progress").
 - add_stakeholders: add people to a project as stakeholders. Fields: projectId, stakeholders (comma-separated names or array of { name, team } objects).
 - create_project: create a new project. Always provide a non-empty name and send the action in the form {"type":"create_project","name":"Project Name","status":"active","priority":"medium","progress":0,"description":"...","targetDate":"YYYY-MM-DD","stakeholders":"Name1,Name2"}. Default to status active, priority medium, and progress 0 when not specified. Use the status value "active" for projects in flight.
+- add_project_to_initiative: link an existing project to an initiative. Fields: projectId or projectName, initiativeId or initiativeName.
 - add_person: add a person to the People database. Fields: name (required), team (optional), email (optional). If the person already exists, update their info instead of duplicating.
 - send_email: email one or more recipients. Fields: recipients (email addresses or names to resolve from People database, comma separated or array), subject (required), body (required). Do NOT include any AI signature in the email body - the system will automatically append one.
 - query_portfolio: request portfolio data when you need fresh context. Fields: scope (portfolio/project/people), detailLevel (summary/detailed), includePeople (boolean), projectId or projectName (optional when scope is project).

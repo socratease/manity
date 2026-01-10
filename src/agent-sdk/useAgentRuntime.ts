@@ -58,6 +58,8 @@ export interface UseAgentRuntimeProps {
   sendEmail: (params: { recipients: string[]; subject: string; body: string }) => Promise<void>;
   /** Create initiative callback */
   createInitiative: (initiative: Partial<import('../types/portfolio').Initiative>) => Promise<import('../types/portfolio').Initiative>;
+  /** Add project to initiative callback */
+  addProjectToInitiative: (initiativeId: string, projectId: string | number) => Promise<import('../types/portfolio').Initiative>;
   /** Callback when projects are updated */
   onProjectsUpdate?: (projects: Project[]) => void;
   /** Agent configuration */
@@ -139,6 +141,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     createPerson,
     sendEmail,
     createInitiative,
+    addProjectToInitiative,
     config = defaultAgentConfig,
     initialConversationHistory = [],
     enableStreaming = true,
@@ -183,6 +186,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     createPerson,
     sendEmail,
     createInitiative,
+    addProjectToInitiative,
     buildThrustContext: () =>
       projects.map(project => ({
         id: project.id,
@@ -207,7 +211,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         })),
         recentActivity: project.recentActivity.slice(0, 3),
       })),
-  }), [createPerson, createInitiative, sendEmail, projects]);
+  }), [addProjectToInitiative, createPerson, createInitiative, sendEmail, projects]);
 
   // Build agent context
   const buildContext = useCallback((message: string): AgentContext => ({
