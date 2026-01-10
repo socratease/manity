@@ -72,7 +72,13 @@ export default function MomentumChatWithAgent({
   };
 
   const getStatusColor = (status) => {
-    const map = { active: colors.sage, planning: colors.amber, 'on-hold': colors.stone, completed: colors.earth };
+    const map = {
+      active: colors.sage,
+      planning: colors.amber,
+      'on-hold': colors.stone,
+      blocked: colors.coral,
+      completed: colors.earth,
+    };
     return map[status] || colors.stone;
   };
 

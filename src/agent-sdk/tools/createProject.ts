@@ -14,7 +14,7 @@ export const CreateProjectInput = z.object({
   projectName: z.string().optional().describe('Alternative field for project name'),
   description: z.string().optional().describe('Project description'),
   priority: z.enum(['high', 'medium', 'low']).optional().default('medium').describe('Project priority'),
-  status: z.enum(['planning', 'active', 'on-hold', 'cancelled', 'completed']).optional().default('active').describe('Project status'),
+  status: z.enum(['planning', 'active', 'on-hold', 'blocked', 'cancelled', 'completed']).optional().default('active').describe('Project status'),
   progress: z.number().min(0).max(100).optional().default(0).describe('Initial progress percentage'),
   targetDate: z.string().optional().describe('Target completion date (ISO format)'),
   startDate: z.string().optional().describe('Project start date (ISO format)'),

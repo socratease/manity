@@ -448,6 +448,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     switch (status) {
       case 'completed': return '#7A9B76';
       case 'in-progress': return '#E8A75D';
+      case 'blocked': return '#D9796A';
       default: return '#8B6F47';
     }
   };
