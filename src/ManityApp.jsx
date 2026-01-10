@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, Search, User, UserCircle } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
 import { callOpenAIChat } from './lib/llmClient';
@@ -10,8 +10,7 @@ import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 import { MOMENTUM_THRUST_SYSTEM_PROMPT } from './lib/momentumPrompts';
 import { verifyThrustActions } from './lib/momentumVerification';
-import SnowEffect from './components/SnowEffect';
-import ChristmasConfetti from './components/ChristmasConfetti';
+import { useSeasonalEffect, useSeasonalTheme } from './themes/hooks';
 import MomentumChatWithAgent from './components/MomentumChatWithAgent';
 import Slides from './components/Slides';
 import DataPage from './components/DataPage';
@@ -200,11 +199,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     nextUp: 3
   });
 
-  // Santa-fy mode state (default: enabled)
-  const [isSantafied, setIsSantafied] = useState(() => {
-    const saved = localStorage.getItem('manity_santafied');
-    return saved !== null ? saved === 'true' : true; // Default to true
-  });
+  const seasonalTheme = useSeasonalTheme();
+  const EffectComponent = useSeasonalEffect();
+  const showSeasonalBanner = seasonalTheme.id !== 'base';
+  const seasonalBannerGradient = `linear-gradient(90deg, ${seasonalTheme.colors.earth} 0%, ${seasonalTheme.colors.sage} 25%, ${seasonalTheme.colors.amber} 50%, ${seasonalTheme.colors.coral} 75%, ${seasonalTheme.colors.earth} 100%)`;
 
   const [showDataPage, setShowDataPage] = useState(() => {
     const saved = localStorage.getItem('manity_show_data_page');
@@ -405,11 +403,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       nextUp: 3
     });
   }, [currentSlideIndex, activeView]);
-
-  // Persist Santa-fy mode to localStorage
-  useEffect(() => {
-    localStorage.setItem('manity_santafied', isSantafied.toString());
-  }, [isSantafied]);
 
   useEffect(() => {
     localStorage.setItem('manity_show_data_page', showDataPage ? 'true' : 'false');
@@ -3987,23 +3980,23 @@ PEOPLE & EMAIL ADDRESSES:
         </div>
       )}
 
-      {/* Festive Banner */}
-      {isSantafied && (
+      {/* Seasonal Banner */}
+      {showSeasonalBanner && (
         <div style={{
           position: 'fixed',
           top: 0,
           left: 0,
           right: 0,
           height: '3px',
-          background: 'linear-gradient(90deg, #C41E3A 0%, #165B33 25%, #FFD700 50%, #C41E3A 75%, #165B33 100%)',
+          background: seasonalBannerGradient,
           backgroundSize: '200% 100%',
-          animation: 'festiveSlide 3s linear infinite',
+          animation: 'seasonalSlide 3s linear infinite',
           zIndex: 9999,
         }} />
       )}
       <style>
-        {isSantafied && `
-          @keyframes festiveSlide {
+        {showSeasonalBanner && `
+          @keyframes seasonalSlide {
             0% { background-position: 0% 0%; }
             100% { background-position: 200% 0%; }
           }
@@ -4012,18 +4005,16 @@ PEOPLE & EMAIL ADDRESSES:
 
       <div style={{
         ...styles.container,
-        ...(isSantafied && {
-          '--earth': '#C41E3A',     // Classic Christmas red
-          '--sage': '#165B33',      // Deep Christmas green
-          '--coral': '#FF6B6B',     // Bright festive red
-          '--amber': '#FFD700',     // Gold
-          '--cream': '#FFFAF0',     // Warm ivory
-          '--cloud': '#F0E6E6',     // Light pink-tinted cloud
-          '--stone': '#8B4513',     // Warm brown
-          '--charcoal': '#2C1810',  // Deep brown
-          backgroundColor: '#FFFAF0',  // Warm ivory background
-          transition: 'background-color 0.5s ease',
-        })
+        '--earth': seasonalTheme.colors.earth,
+        '--sage': seasonalTheme.colors.sage,
+        '--coral': seasonalTheme.colors.coral,
+        '--amber': seasonalTheme.colors.amber,
+        '--cream': seasonalTheme.colors.cream,
+        '--cloud': seasonalTheme.colors.cloud,
+        '--stone': seasonalTheme.colors.stone,
+        '--charcoal': seasonalTheme.colors.charcoal,
+        backgroundColor: seasonalTheme.colors.cream,
+        transition: 'background-color 0.5s ease',
       }}>
       {/* Daily Check-in Modal */}
       {showDailyCheckin && selectedProject && (
@@ -4519,18 +4510,6 @@ PEOPLE & EMAIL ADDRESSES:
                 </div>
               </div>
             )}
-            <button
-              onClick={() => setIsSantafied(!isSantafied)}
-              style={{
-                ...styles.settingsIconButton,
-                marginRight: '8px',
-                fontSize: '18px'
-              }}
-              title={isSantafied ? 'Disable Santa-fy mode' : 'Enable Santa-fy mode'}
-              aria-label={isSantafied ? 'Disable Santa-fy mode' : 'Enable Santa-fy mode'}
-            >
-              {isSantafied ? '🎅' : '❄️'}
-            </button>
             <button
               onClick={() => onOpenSettings({
                 loggedInUser,
@@ -6038,7 +6017,6 @@ PEOPLE & EMAIL ADDRESSES:
               onUndoAction={undoThrustAction}
               loggedInUser={loggedInUser}
               people={people}
-              isSantafied={isSantafied}
               recentlyUpdatedProjects={recentlyUpdatedProjects}
             />
           </div>
@@ -6099,7 +6077,6 @@ PEOPLE & EMAIL ADDRESSES:
               <PeopleProjectsJuggle
                 projects={visibleProjects}
                 people={people}
-                isSantafied={isSantafied}
               />
             </div>
             <header style={styles.header}>
@@ -6337,12 +6314,11 @@ PEOPLE & EMAIL ADDRESSES:
         onSave={handleCreateNewPerson}
       />
 
-      {/* Santa-fy Effects */}
-      {isSantafied && (
-        <>
-          <SnowEffect />
-          <ChristmasConfetti />
-        </>
+      {/* Seasonal Effects */}
+      {EffectComponent && (
+        <Suspense fallback={null}>
+          <EffectComponent />
+        </Suspense>
       )}
     </div>
     </>

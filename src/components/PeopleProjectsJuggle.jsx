@@ -1,14 +1,12 @@
 import React, { useRef, useEffect, useState, forwardRef, useImperativeHandle } from 'react';
-import { getTheme } from '../lib/theme';
-
-const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
+import { useSeasonalTheme } from '../themes/hooks';
 
 const PeopleProjectsJuggle = forwardRef(function PeopleProjectsJuggle({
   projects = [],
   people = [],
-  isSantafied = false,
 }, ref) {
-  const colors = getColors(isSantafied);
+  const theme = useSeasonalTheme();
+  const colors = theme.colors;
   const getPriorityColor = (priority) => {
     const priorityColors = {
       high: colors.coral,
@@ -300,8 +298,8 @@ const PeopleProjectsJuggle = forwardRef(function PeopleProjectsJuggle({
         ctx.textBaseline = 'middle';
         ctx.fillText(initials || '?', personState.x, drawY);
 
-        // Draw santa hat if santafied
-        if (isSantafied) {
+        // Draw a festive hat during the Christmas theme
+        if (theme.id === 'christmas') {
           const hatX = personState.x;
           const hatY = drawY - personState.radius;
           const hatWidth = personState.radius * 1.5;
@@ -351,7 +349,7 @@ const PeopleProjectsJuggle = forwardRef(function PeopleProjectsJuggle({
         animationRef.current = null;
       }
     };
-  }, [projects, people, canvasKey]);
+  }, [projects, people, canvasKey, colors, theme.id]);
 
   // Handle canvas click to navigate to project
   const handleCanvasClick = (e) => {
@@ -406,8 +404,8 @@ const PeopleProjectsJuggle = forwardRef(function PeopleProjectsJuggle({
         width: '100%',
         borderRadius: '16px',
         overflow: 'hidden',
-        backgroundColor: '#FAF8F3',
-        border: '1px solid #E8E3D8',
+        backgroundColor: colors.cream,
+        border: `1px solid ${colors.cloud}`,
         boxShadow: '0 4px 20px rgba(0, 0, 0, 0.08)',
       }}
     >
@@ -423,18 +421,18 @@ const PeopleProjectsJuggle = forwardRef(function PeopleProjectsJuggle({
         gap: '24px',
         padding: '12px 16px',
         backgroundColor: '#FFFFFF',
-        borderTop: '1px solid #E8E3D8',
+        borderTop: `1px solid ${colors.cloud}`,
       }}>
-        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontFamily: 'Inter, sans-serif', color: '#6B6554' }}>
-          <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#D67C5C' }} />
+        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontFamily: 'Inter, sans-serif', color: colors.stone }}>
+          <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: colors.coral }} />
           High Priority
         </span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontFamily: 'Inter, sans-serif', color: '#6B6554' }}>
-          <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#E8A75D' }} />
+        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontFamily: 'Inter, sans-serif', color: colors.stone }}>
+          <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: colors.amber }} />
           Medium
         </span>
-        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontFamily: 'Inter, sans-serif', color: '#6B6554' }}>
-          <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: '#7A9B76' }} />
+        <span style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontFamily: 'Inter, sans-serif', color: colors.stone }}>
+          <span style={{ width: '10px', height: '10px', borderRadius: '50%', backgroundColor: colors.sage }} />
           Low
         </span>
       </div>

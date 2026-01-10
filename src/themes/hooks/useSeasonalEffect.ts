@@ -1,4 +1,4 @@
-import { lazy, useMemo, ComponentType } from 'react';
+import { lazy, useMemo, createElement } from 'react';
 import { useSeasonalTheme } from './useSeasonalTheme';
 import type { ThemeEffect } from '../types';
 
@@ -45,7 +45,8 @@ export function useSeasonalEffect(dateOverride?: Date) {
         // ConfettiEffect requires emojis prop, so we create a configured wrapper
         if (!effect.emojis) return null;
         // Return a component that renders ConfettiEffect with the emojis
-        const ConfiguredConfetti = () => <ConfettiEffect emojis={effect.emojis || []} />;
+        const ConfiguredConfetti = () =>
+          createElement(ConfettiEffect, { emojis: effect.emojis || [] });
         // Set display name for debugging
         ConfiguredConfetti.displayName = 'ConfiguredConfetti';
         return ConfiguredConfetti;

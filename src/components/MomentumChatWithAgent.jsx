@@ -12,7 +12,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
 import { useInitiatives } from '../hooks/useInitiatives';
-import { getTheme } from '../lib/theme';
+import { useSeasonalTheme } from '../themes/hooks';
 
 // Import the new agent SDK
 import { useAgentRuntime } from '../agent-sdk';
@@ -22,9 +22,6 @@ import ThinkingProcess from './ThinkingProcess';
 import UserQuestionPrompt from './UserQuestionPrompt';
 import InitiativeContainer from './InitiativeContainer';
 
-// Default to base theme, can be overridden by props
-const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
-
 export default function MomentumChatWithAgent({
   messages = [],
   onSendMessage,
@@ -32,10 +29,10 @@ export default function MomentumChatWithAgent({
   onUndoAction,
   loggedInUser = 'You',
   people = [],
-  isSantafied = false,
   recentlyUpdatedProjects = {}
 }) {
-  const colors = getColors(isSantafied);
+  const theme = useSeasonalTheme();
+  const colors = theme.colors;
   const styles = getStyles(colors);
 
   const seededAgentHistory = useMemo(
@@ -1219,15 +1216,15 @@ const getStyles = (colors) => ({
     height: '100%',
     minHeight: 0,
     width: '100%',
-    backgroundColor: '#FAF8F3',
+    backgroundColor: colors.cream,
     fontFamily: "system-ui, -apple-system, sans-serif",
   },
   chatColumn: {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    borderRight: '1px solid #E8E3D8',
-    backgroundColor: '#FFFFFF',
+    borderRight: `1px solid ${colors.cloud}`,
+    backgroundColor: colors.cream,
     minWidth: 0,
   },
   chatHeader: {
@@ -1235,8 +1232,8 @@ const getStyles = (colors) => ({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '16px 24px',
-    borderBottom: '1px solid #E8E3D8',
-    backgroundColor: '#FDFCFA',
+    borderBottom: `1px solid ${colors.cloud}`,
+    backgroundColor: colors.cream,
   },
   headerLeft: {
     display: 'flex',
@@ -1248,17 +1245,17 @@ const getStyles = (colors) => ({
     fontSize: '20px',
     fontFamily: "Georgia, serif",
     fontWeight: '600',
-    color: '#3A3631',
+    color: colors.charcoal,
   },
   headerSubtitle: {
     fontSize: '12px',
-    color: '#6B6554',
+    color: colors.stone,
     paddingLeft: '12px',
-    borderLeft: '1px solid #E8E3D8',
+    borderLeft: `1px solid ${colors.cloud}`,
   },
   connectionStatus: {
     fontSize: '11px',
-    color: '#7A9B76',
+    color: colors.sage,
     fontWeight: '600',
   },
   messagesContainer: {
@@ -1284,7 +1281,7 @@ const getStyles = (colors) => ({
     width: '32px',
     height: '32px',
     borderRadius: '10px',
-    background: 'linear-gradient(135deg, #8B6F47, #E8A75D)',
+    background: `linear-gradient(135deg, ${colors.earth}, ${colors.amber})`,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1306,14 +1303,14 @@ const getStyles = (colors) => ({
     lineHeight: '1.5',
   },
   userText: {
-    background: 'linear-gradient(135deg, #8B6F47, #A68559)',
+    background: `linear-gradient(135deg, ${colors.earth}, ${colors.coral})`,
     color: '#FFFFFF',
     borderBottomRightRadius: '4px',
   },
   assistantText: {
-    background: '#F7F4EE',
-    border: '1px solid #E8E3D8',
-    color: '#3A3631',
+    background: colors.cream,
+    border: `1px solid ${colors.cloud}`,
+    color: colors.charcoal,
     borderBottomLeftRadius: '4px',
   },
   actionsContainer: {
@@ -1323,11 +1320,11 @@ const getStyles = (colors) => ({
     marginTop: '4px',
   },
   actionCard: {
-    backgroundColor: '#F9F7F3',
-    border: '1px solid #E8E3D8',
+    backgroundColor: colors.cream,
+    border: `1px solid ${colors.cloud}`,
     borderRadius: '10px',
     padding: '10px 12px',
-    borderLeft: '3px solid #E8A75D',
+    borderLeft: `3px solid ${colors.amber}`,
   },
   actionHeader: {
     display: 'flex',
@@ -1344,19 +1341,19 @@ const getStyles = (colors) => ({
     justifyContent: 'center',
     backgroundColor: '#FFF',
     borderRadius: '5px',
-    border: '1px solid #E8E3D8',
+    border: `1px solid ${colors.cloud}`,
   },
   actionLabel: {
     fontSize: '11px',
     fontWeight: '600',
-    color: '#6B6554',
+    color: colors.stone,
     textTransform: 'uppercase',
     letterSpacing: '0.3px',
   },
   actionProject: {
     fontSize: '12px',
     fontWeight: '700',
-    color: '#3A3631',
+    color: colors.charcoal,
   },
   actionStatus: {
     fontSize: '9px',
@@ -1369,27 +1366,27 @@ const getStyles = (colors) => ({
   actionContent: {
     marginTop: '6px',
     fontSize: '12px',
-    color: '#D67C5C',
+    color: colors.coral,
     paddingLeft: '8px',
-    borderLeft: '2px solid #E8E3D8',
+    borderLeft: `2px solid ${colors.cloud}`,
   },
   actionSecondary: {
     marginTop: '2px',
     fontSize: '11px',
-    color: '#3A3631',
+    color: colors.charcoal,
     paddingLeft: '28px',
   },
   actionDetail: {
     marginTop: '6px',
     fontSize: '11px',
-    color: '#6B6554',
+    color: colors.stone,
     paddingLeft: '8px',
-    borderLeft: '2px solid #E8A75D',
+    borderLeft: `2px solid ${colors.amber}`,
     fontStyle: 'italic',
   },
   timestamp: {
     fontSize: '10px',
-    color: '#6B6554',
+    color: colors.stone,
     marginTop: '2px',
   },
   typingWrapper: {
@@ -1402,14 +1399,14 @@ const getStyles = (colors) => ({
     alignItems: 'center',
     gap: '5px',
     padding: '14px 18px',
-    backgroundColor: '#F7F4EE',
+    backgroundColor: colors.cream,
     borderRadius: '18px',
   },
   typingDot: {
     width: '7px',
     height: '7px',
     borderRadius: '50%',
-    backgroundColor: '#8B6F47',
+    backgroundColor: colors.earth,
     animation: 'pulse 1s infinite',
   },
   inputContainer: {
@@ -1417,17 +1414,17 @@ const getStyles = (colors) => ({
     alignItems: 'center',
     gap: '10px',
     padding: '16px 24px',
-    borderTop: '1px solid #E8E3D8',
-    backgroundColor: '#FDFCFA',
+    borderTop: `1px solid ${colors.cloud}`,
+    backgroundColor: colors.cream,
   },
   input: {
     flex: 1,
     padding: '12px 16px',
     borderRadius: '14px',
-    border: '2px solid #E8E3D8',
+    border: `2px solid ${colors.cloud}`,
     backgroundColor: '#FFF',
     fontSize: '14px',
-    color: '#3A3631',
+    color: colors.charcoal,
     outline: 'none',
     resize: 'none',
     overflowY: 'auto',
@@ -1441,20 +1438,20 @@ const getStyles = (colors) => ({
     height: '44px',
     borderRadius: '12px',
     border: 'none',
-    background: 'linear-gradient(135deg, #8B6F47, #E8A75D)',
+    background: `linear-gradient(135deg, ${colors.earth}, ${colors.amber})`,
     color: '#FFF',
     fontSize: '18px',
     fontWeight: '700',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    boxShadow: '0 3px 10px rgba(139, 111, 71, 0.25)',
+    boxShadow: '0 3px 10px rgba(0, 0, 0, 0.12)',
   },
   canvasColumn: {
     width: '300px',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: '#FAF8F3',
+    backgroundColor: colors.cream,
     flexShrink: 0,
   },
   canvasHeader: {
@@ -1462,18 +1459,18 @@ const getStyles = (colors) => ({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '16px 20px',
-    borderBottom: '1px solid #E8E3D8',
+    borderBottom: `1px solid ${colors.cloud}`,
   },
   canvasTitle: {
     fontSize: '15px',
     fontFamily: 'Georgia, serif',
     fontWeight: '600',
-    color: '#3A3631',
+    color: colors.charcoal,
     margin: 0,
   },
   projectCount: {
     fontSize: '11px',
-    color: '#6B6554',
+    color: colors.stone,
   },
   projectsContainer: {
     flex: 1,
@@ -1486,12 +1483,12 @@ const getStyles = (colors) => ({
   ungroupedHeader: {
     marginTop: '16px',
     paddingBottom: '8px',
-    borderBottom: '1px solid #E8E3D8',
+    borderBottom: `1px solid ${colors.cloud}`,
   },
   ungroupedLabel: {
     fontSize: '12px',
     fontWeight: '600',
-    color: '#9B9488',
+    color: colors.stone,
     textTransform: 'uppercase',
     letterSpacing: '0.5px',
   },
@@ -1503,7 +1500,7 @@ const getStyles = (colors) => ({
   projectCard: {
     position: 'relative',
     backgroundColor: '#FFF',
-    border: '1px solid #E8E3D8',
+    border: `1px solid ${colors.cloud}`,
     borderRadius: '12px',
     padding: '12px 14px',
     cursor: 'pointer',
@@ -1511,7 +1508,7 @@ const getStyles = (colors) => ({
     animation: 'slideIn 0.4s ease backwards',
   },
   projectCardHovered: {
-    backgroundColor: '#FDFCFA',
+    backgroundColor: colors.cream,
     boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
     transform: 'translateX(-3px)',
   },
@@ -1542,7 +1539,7 @@ const getStyles = (colors) => ({
   projectName: {
     fontSize: '13px',
     fontWeight: '600',
-    color: '#3A3631',
+    color: colors.charcoal,
     flex: 1,
     minWidth: 0,
     whiteSpace: 'nowrap',
@@ -1561,18 +1558,18 @@ const getStyles = (colors) => ({
     position: 'absolute',
     fontSize: '8px',
     fontWeight: '700',
-    color: '#6B6554',
+    color: colors.stone,
   },
   projectExpanded: {
     marginTop: '12px',
     paddingTop: '12px',
-    borderTop: '1px solid #E8E3D8',
+    borderTop: `1px solid ${colors.cloud}`,
     animation: 'fadeIn 0.25s ease',
   },
   projectDescription: {
     margin: '0 0 10px',
     fontSize: '12px',
-    color: '#6B6554',
+    color: colors.stone,
     lineHeight: '1.45',
   },
   recentActivityPreview: {
@@ -1594,7 +1591,7 @@ const getStyles = (colors) => ({
   recentActivityText: {
     display: 'block',
     fontSize: '11px',
-    color: '#3A3631',
+    color: colors.charcoal,
     lineHeight: '1.4',
   },
   projectMeta: {
@@ -1612,7 +1609,7 @@ const getStyles = (colors) => ({
   },
   targetDate: {
     fontSize: '11px',
-    color: '#6B6554',
+    color: colors.stone,
   },
   stakeholderRow: {
     display: 'flex',
@@ -1623,8 +1620,8 @@ const getStyles = (colors) => ({
     fontSize: '10px',
     padding: '3px 8px',
     borderRadius: '6px',
-    backgroundColor: '#F7F4EE',
-    color: '#3A3631',
+    backgroundColor: colors.cream,
+    color: colors.charcoal,
     fontWeight: '500',
   },
   canvasLegend: {
@@ -1632,7 +1629,7 @@ const getStyles = (colors) => ({
     justifyContent: 'center',
     gap: '16px',
     padding: '14px',
-    borderTop: '1px solid #E8E3D8',
+    borderTop: `1px solid ${colors.cloud}`,
     backgroundColor: '#FFF',
   },
   legendItem: {
@@ -1640,7 +1637,7 @@ const getStyles = (colors) => ({
     alignItems: 'center',
     gap: '5px',
     fontSize: '10px',
-    color: '#6B6554',
+    color: colors.stone,
   },
   legendDot: {
     width: '7px',
