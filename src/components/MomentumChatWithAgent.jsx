@@ -12,6 +12,7 @@
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
 import { useInitiatives } from '../hooks/useInitiatives';
+import { getAllTags } from '../lib/tagging';
 import { getTheme } from '../lib/theme';
 
 // Import the new agent SDK
@@ -271,53 +272,7 @@ export default function MomentumChatWithAgent({
     }
   }, [inputValue]);
 
-  const allTags = useMemo(() => {
-    const tags = [];
-    const knownPeople = new Set();
-
-    people.forEach(person => {
-      const display = `${person.name} (${person.team || 'Contributor'})`;
-      knownPeople.add(display);
-      tags.push({ type: 'person', value: person.id, display });
-    });
-
-    const stakeholderSet = new Set();
-    projects.forEach(project => {
-      (project.stakeholders || []).forEach(stakeholder => {
-        const display = `${stakeholder.name} (${stakeholder.team || 'Contributor'})`;
-        if (!knownPeople.has(display)) {
-          stakeholderSet.add(display);
-        }
-      });
-    });
-
-    stakeholderSet.forEach(display => {
-      tags.push({ type: 'person', value: display, display });
-    });
-
-    projects.forEach(project => {
-      tags.push({ type: 'project', value: project.id, display: project.name });
-      (project.plan || []).forEach(task => {
-        tags.push({
-          type: 'task',
-          value: task.id,
-          display: `${project.name} → ${task.title}`,
-          projectId: project.id,
-        });
-        (task.subtasks || []).forEach(subtask => {
-          tags.push({
-            type: 'subtask',
-            value: subtask.id,
-            display: `${project.name} → ${task.title} → ${subtask.title}`,
-            projectId: project.id,
-            taskId: task.id,
-          });
-        });
-      });
-    });
-
-    return tags;
-  }, [people, projects]);
+  const allTags = useMemo(() => getAllTags(people, projects), [people, projects]);
 
   const filteredTags = useMemo(() => {
     if (!showTagSuggestions) return [];
