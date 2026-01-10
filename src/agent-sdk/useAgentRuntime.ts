@@ -10,7 +10,7 @@
  * - Human-in-the-loop support via ask_user tool
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createProjectManagementAgent, defaultAgentConfig, type AgentConfig } from './agent';
 import {
   createToolExecutionContext,
@@ -145,7 +145,11 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
   } = props;
 
   // Create undo manager
-  const undoManager = useMemo(() => new UndoManager(), []);
+  const undoManagerRef = useRef<UndoManager | null>(null);
+  if (!undoManagerRef.current) {
+    undoManagerRef.current = new UndoManager();
+  }
+  const undoManager = undoManagerRef.current;
 
   // State for human-in-the-loop
   const [isAwaitingUser, setIsAwaitingUser] = useState(false);
