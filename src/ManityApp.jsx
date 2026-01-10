@@ -3388,7 +3388,7 @@ PEOPLE & EMAIL ADDRESSES:
     return colors[priority] || 'var(--stone)';
   };
 
-  const getIniativeStatusColor = (status) => {
+  const getInitiativeStatusColor = (status) => {
     const colors = {
       planning: 'var(--amber)',
       active: 'var(--sage)',
@@ -4649,8 +4649,8 @@ PEOPLE & EMAIL ADDRESSES:
                     ) : (
                       <span style={{
                         ...styles.statusBadgeSmall,
-                        backgroundColor: getIniativeStatusColor(viewingProject.status) + '20',
-                        color: getIniativeStatusColor(viewingProject.status),
+                        backgroundColor: getInitiativeStatusColor(viewingProject.status) + '20',
+                        color: getInitiativeStatusColor(viewingProject.status),
                       }}>
                         {viewingProject.status}
                       </span>
