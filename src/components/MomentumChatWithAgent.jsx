@@ -1040,28 +1040,38 @@ export default function MomentumChatWithAgent({
         </div>
         <div style={styles.projectsContainer}>
           {/* Render initiatives with their grouped projects */}
-          {initiativeGroups.map(({ initiative, projects: initiativeProjects }) => (
-            <InitiativeContainer
-              key={initiative.id}
-              initiative={{
-                ...initiative,
-                projects: initiativeProjects,
-              }}
-              getPriorityColor={getPriorityColor}
-              getStatusColor={getStatusColor}
-            >
-              {[...initiativeProjects]
-                .sort((a, b) => {
-                  const aTime = recentlyUpdatedProjects[a.id] || 0;
-                  const bTime = recentlyUpdatedProjects[b.id] || 0;
-                  if (aTime !== bTime) return bTime - aTime;
-                  const priorityOrder = { high: 3, medium: 2, low: 1 };
-                  return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
-                })
-                .map((p, i) => renderProjectCard(p, i))
-              }
-            </InitiativeContainer>
-          ))}
+          {[...initiativeGroups]
+            .sort((a, b) => {
+              // Sort initiatives by their most recently updated project
+              const getMaxUpdateTime = (projects) => {
+                return Math.max(0, ...projects.map(p => recentlyUpdatedProjects[p.id] || 0));
+              };
+              const aTime = getMaxUpdateTime(a.projects);
+              const bTime = getMaxUpdateTime(b.projects);
+              return bTime - aTime;
+            })
+            .map(({ initiative, projects: initiativeProjects }) => (
+              <InitiativeContainer
+                key={initiative.id}
+                initiative={{
+                  ...initiative,
+                  projects: initiativeProjects,
+                }}
+                getPriorityColor={getPriorityColor}
+                getStatusColor={getStatusColor}
+              >
+                {[...initiativeProjects]
+                  .sort((a, b) => {
+                    const aTime = recentlyUpdatedProjects[a.id] || 0;
+                    const bTime = recentlyUpdatedProjects[b.id] || 0;
+                    if (aTime !== bTime) return bTime - aTime;
+                    const priorityOrder = { high: 3, medium: 2, low: 1 };
+                    return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
+                  })
+                  .map((p, i) => renderProjectCard(p, i))
+                }
+              </InitiativeContainer>
+            ))}
 
           {/* Render ungrouped projects */}
           {ungroupedProjects.length > 0 && (

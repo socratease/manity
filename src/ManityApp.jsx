@@ -6068,14 +6068,14 @@ PEOPLE & EMAIL ADDRESSES:
                     onClick={() => setShowNewInitiative(prev => !prev)}
                     style={styles.secondaryButton}
                   >
-                    <Plus size={18} />
+                    <Plus size={16} />
                     New Initiative
                   </button>
                   <button
                     onClick={() => setShowNewProject(prev => !prev)}
                     style={styles.newProjectButton}
                   >
-                    <Plus size={18} />
+                    <Plus size={16} />
                     New Project
                   </button>
                 </div>
@@ -6655,21 +6655,21 @@ const styles = {
   },
 
   newProjectButton: {
-    padding: '12px 18px',
+    padding: '8px 14px',
     border: '1px solid var(--earth)',
     backgroundColor: 'var(--earth)',
     color: '#FFFFFF',
-    fontSize: '15px',
+    fontSize: '13px',
     fontFamily: "'Inter', sans-serif",
     cursor: 'pointer',
-    borderRadius: '999px',
+    borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '8px',
+    gap: '6px',
     transition: 'all 0.2s ease',
-    fontWeight: '700',
-    boxShadow: '0 10px 30px rgba(139, 111, 71, 0.25)',
+    fontWeight: '600',
+    boxShadow: '0 2px 8px rgba(139, 111, 71, 0.15)',
   },
 
   settingsIconButton: {
@@ -7795,16 +7795,19 @@ const styles = {
   },
 
   secondaryButton: {
-    padding: '12px 16px',
-    borderRadius: '10px',
-    border: '1px solid var(--cloud)',
-    backgroundColor: '#FFFFFF',
-    color: 'var(--charcoal)',
-    fontSize: '14px',
+    padding: '8px 14px',
+    borderRadius: '8px',
+    border: '1px solid #E8E3D8',
+    backgroundColor: '#FAFAF8',
+    color: '#6B6554',
+    fontSize: '13px',
     fontFamily: "'Inter', sans-serif",
     fontWeight: '600',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
   },
 
   dangerButton: {
