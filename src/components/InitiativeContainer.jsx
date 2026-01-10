@@ -63,7 +63,6 @@ const InitiativeContainer = ({
                 }}
               />
             </div>
-            <span style={styles.progressText}>{avgProgress}%</span>
           </div>
 
           {/* Project count */}
@@ -173,12 +172,6 @@ const styles = {
     height: '100%',
     borderRadius: '3px',
     transition: 'width 0.3s ease',
-  },
-  progressText: {
-    fontSize: '11px',
-    fontWeight: '600',
-    color: '#6B6554',
-    minWidth: '32px',
   },
   projectCount: {
     fontSize: '11px',
