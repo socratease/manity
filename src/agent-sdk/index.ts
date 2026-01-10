@@ -49,6 +49,8 @@ export {
   // Individual tools
   commentTool,
   createProjectTool,
+  createInitiativeTool,
+  addProjectToInitiativeTool,
   addTaskTool,
   updateTaskTool,
   addSubtaskTool,
@@ -61,6 +63,8 @@ export {
   // Input types
   CommentInput,
   CreateProjectInput,
+  CreateInitiativeInput,
+  AddProjectToInitiativeInput,
   AddTaskInput,
   UpdateTaskInput,
   AddSubtaskInput,

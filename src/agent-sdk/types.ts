@@ -57,6 +57,8 @@ export interface ToolServices {
   sendEmail: (params: { recipients: string[]; subject: string; body: string }) => Promise<void>;
   /** Create an initiative in the database */
   createInitiative: (initiative: Partial<import('../types/portfolio').Initiative>) => Promise<import('../types/portfolio').Initiative>;
+  /** Add a project to an initiative */
+  addProjectToInitiative: (initiativeId: string, projectId: string | number) => Promise<import('../types/portfolio').Initiative>;
   /** Build portfolio context for queries */
   buildThrustContext: () => import('../agent/types').PortfolioSummary[];
 }

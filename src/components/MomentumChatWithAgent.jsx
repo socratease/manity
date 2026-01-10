@@ -52,7 +52,7 @@ export default function MomentumChatWithAgent({
   } = usePortfolioData();
 
   // Get initiatives
-  const { initiatives, createInitiative } = useInitiatives();
+  const { initiatives, createInitiative, addProjectToInitiative } = useInitiatives();
 
   const seededAgentHistory = useMemo(
     () =>
@@ -175,6 +175,7 @@ export default function MomentumChatWithAgent({
     createPerson,
     sendEmail,
     createInitiative,
+    addProjectToInitiative,
     initialConversationHistory: seededAgentHistory,
   });
 
