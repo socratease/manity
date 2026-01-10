@@ -4,8 +4,9 @@ import { useSeasonalTheme } from '../themes/hooks';
 const PeopleProjectsJuggle = forwardRef(function PeopleProjectsJuggle({
   projects = [],
   people = [],
+  seasonalThemeEnabled = true,
 }, ref) {
-  const theme = useSeasonalTheme();
+  const theme = useSeasonalTheme(undefined, seasonalThemeEnabled);
   const colors = theme.colors;
   const getPriorityColor = (priority) => {
     const priorityColors = {

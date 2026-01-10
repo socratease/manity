@@ -31,9 +31,10 @@ export default function MomentumChatWithAgent({
   onUndoAction,
   loggedInUser = 'You',
   people = [],
-  recentlyUpdatedProjects = {}
+  recentlyUpdatedProjects = {},
+  seasonalThemeEnabled = true,
 }) {
-  const theme = useSeasonalTheme();
+  const theme = useSeasonalTheme(undefined, seasonalThemeEnabled);
   const colors = theme.colors;
   const styles = getStyles(colors);
 
