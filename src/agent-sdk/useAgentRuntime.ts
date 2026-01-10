@@ -133,10 +133,12 @@ function getToolDefinitions(tools: FunctionTool[]): ToolDefinition[] {
 export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeReturn {
   const {
     projects,
+    initiatives,
     people,
     loggedInUser,
     createPerson,
     sendEmail,
+    createInitiative,
     config = defaultAgentConfig,
     initialConversationHistory = [],
     enableStreaming = true,
