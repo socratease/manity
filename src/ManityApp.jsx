@@ -11,6 +11,8 @@ import { supportedMomentumActions, validateThrustActions as validateThrustAction
 import { MOMENTUM_THRUST_SYSTEM_PROMPT } from './lib/momentumPrompts';
 import { verifyThrustActions } from './lib/momentumVerification';
 import { useSeasonalEffect, useSeasonalTheme } from './themes/hooks';
+import { parseTaggedText } from './lib/taggedText';
+import { getAllTags } from './lib/tagging';
 import MomentumChatWithAgent from './components/MomentumChatWithAgent';
 import Slides from './components/Slides';
 import DataPage from './components/DataPage';
@@ -1510,53 +1512,6 @@ Write a professional executive summary that highlights the project's current sta
     return tasks.sort((a, b) => new Date(a.dueDate || 0) - new Date(b.dueDate || 0));
   };
 
-  // Get all possible tags for autocomplete
-  const getAllTags = () => {
-    const tags = [];
-
-    // Add all people from the database
-    people.forEach(person => {
-      const personString = `${person.name} (${person.team})`;
-      tags.push({ type: 'person', value: person.id, display: personString });
-    });
-
-    // Also add unique stakeholders from projects (for backwards compatibility)
-    const allStakeholders = new Set();
-    visibleProjects.forEach(p => {
-      p.stakeholders.forEach(s => {
-        const stakeholderString = `${s.name} (${s.team})`;
-        if (!people.find(person => person.name === s.name && person.team === s.team)) {
-          allStakeholders.add(stakeholderString);
-        }
-      });
-    });
-    allStakeholders.forEach(name => {
-      tags.push({ type: 'person', value: name, display: name });
-    });
-
-    // Add all projects
-    visibleProjects.forEach(p => {
-      tags.push({ type: 'project', value: p.id, display: p.name });
-
-      // Add all tasks and subtasks
-      p.plan.forEach(task => {
-        tags.push({ type: 'task', value: task.id, display: `${p.name} → ${task.title}`, projectId: p.id });
-        
-        task.subtasks.forEach(subtask => {
-          tags.push({ 
-            type: 'subtask', 
-            value: subtask.id, 
-            display: `${p.name} → ${task.title} → ${subtask.title}`,
-            projectId: p.id,
-            taskId: task.id
-          });
-        });
-      });
-    });
-    
-    return tags;
-  };
-
   // Global search - get filtered results based on query
   const getGlobalSearchResults = (query) => {
     if (!query.trim()) return [];
@@ -1773,62 +1728,6 @@ Write a professional executive summary that highlights the project's current sta
     setCheckinNote(newText);
     setShowCheckinTagSuggestions(false);
     setCheckinTagSearchTerm('');
-  };
-
-  const parseTaggedText = (text) => {
-    if (!text) return [];
-
-    // Parse text with tags in both old format @[Display Name](type:value) and new format @Display
-    const parts = [];
-    let currentIndex = 0;
-
-    // Combined regex: match old format or new format
-    // Old format: @[Display Name](type:value)
-    // New format: @DisplayName (word characters, spaces, and parentheses until space or end)
-    // Mentions must start at the beginning of the string or after whitespace to avoid matching emails
-    const combinedRegex = /(?<!\S)@\[([^\]]+)\]\(([^:]+):([^)]+)\)|(?<!\S)@([\w\s\(\),→.'-]+)(?=\s|$|[.!?])/g;
-    let match;
-
-    while ((match = combinedRegex.exec(text)) !== null) {
-      // Add text before the tag
-      if (match.index > currentIndex) {
-        parts.push({
-          type: 'text',
-          content: text.substring(currentIndex, match.index)
-        });
-      }
-
-      // Add the tag
-      if (match[1]) {
-        // Old format: @[Display](type:value)
-        parts.push({
-          type: 'tag',
-          tagType: match[2],
-          display: match[1],
-          value: match[3]
-        });
-      } else if (match[4]) {
-        // New format: @Display
-        parts.push({
-          type: 'tag',
-          tagType: 'unknown',
-          display: match[4],
-          value: match[4]
-        });
-      }
-
-      currentIndex = match.index + match[0].length;
-    }
-
-    // Add remaining text
-    if (currentIndex < text.length) {
-      parts.push({
-        type: 'text',
-        content: text.substring(currentIndex)
-      });
-    }
-
-    return parts.length > 0 ? parts : [{ type: 'text', content: text }];
   };
 
   const cloneProjectDeep = (project) => ({
@@ -2959,6 +2858,7 @@ Write a professional executive summary that highlights the project's current sta
 
   // Show all projects, but organize by who is on them
   const visibleProjects = projects.filter(project => project.status !== 'deleted');
+  const allTags = useMemo(() => getAllTags(people, visibleProjects), [people, visibleProjects]);
 
   // Filter projects by search query (when search is open) or portfolio filter (persistent)
   const searchFilterProjects = (projectList) => {
@@ -4112,7 +4012,7 @@ PEOPLE & EMAIL ADDRESSES:
                   onChange={handleCheckinNoteChange}
                   onKeyDown={(e) => {
                     if (showCheckinTagSuggestions) {
-                      const filteredTags = getAllTags()
+                      const filteredTags = allTags
                         .filter(tag =>
                           tag.display.toLowerCase().includes(checkinTagSearchTerm.toLowerCase())
                         )
@@ -4151,7 +4051,7 @@ PEOPLE & EMAIL ADDRESSES:
                 {/* Tag Suggestions Dropdown for Daily Check-in */}
                 {showCheckinTagSuggestions && (
                   <div style={styles.tagSuggestions}>
-                    {getAllTags()
+                    {allTags
                       .filter(tag =>
                         tag.display.toLowerCase().includes(checkinTagSearchTerm.toLowerCase())
                       )
@@ -5623,7 +5523,7 @@ PEOPLE & EMAIL ADDRESSES:
                       onBlur={() => setFocusedField(null)}
                       onKeyDown={(e) => {
                         if (showProjectTagSuggestions) {
-                          const filteredTags = getAllTags()
+                          const filteredTags = allTags
                             .filter(tag =>
                               tag.display.toLowerCase().includes(projectTagSearchTerm.toLowerCase())
                             )
@@ -5661,7 +5561,7 @@ PEOPLE & EMAIL ADDRESSES:
                   {/* Tag Suggestions Dropdown */}
                   {showProjectTagSuggestions && (
                       <div style={styles.tagSuggestions}>
-                        {getAllTags()
+                        {allTags
                           .filter(tag =>
                             tag.display.toLowerCase().includes(projectTagSearchTerm.toLowerCase())
                           )
@@ -5812,7 +5712,7 @@ PEOPLE & EMAIL ADDRESSES:
                     onBlur={() => setFocusedField(null)}
                     onKeyDown={(e) => {
                       if (showTagSuggestions) {
-                        const filteredTags = getAllTags()
+                        const filteredTags = allTags
                           .filter(tag =>
                             tag.display.toLowerCase().includes(tagSearchTerm.toLowerCase())
                           )
@@ -5850,7 +5750,7 @@ PEOPLE & EMAIL ADDRESSES:
                   {/* Tag Suggestions Dropdown */}
                   {showTagSuggestions && (
                     <div style={styles.tagSuggestions}>
-                      {getAllTags()
+                      {allTags
                         .filter(tag =>
                           tag.display.toLowerCase().includes(tagSearchTerm.toLowerCase())
                         )

@@ -13,6 +13,8 @@ import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { usePortfolioData } from '../hooks/usePortfolioData';
 import { useInitiatives } from '../hooks/useInitiatives';
 import { useSeasonalTheme } from '../themes/hooks';
+import { getAllTags } from '../lib/tagging';
+import { parseTaggedText } from '../lib/taggedText';
 
 // Import the new agent SDK
 import { useAgentRuntime } from '../agent-sdk';
@@ -56,6 +58,47 @@ export default function MomentumChatWithAgent({
     return map[status] || colors.stone;
   };
 
+  const findProjectForTag = useCallback(
+    (tag) => {
+      if (!tag?.value) return null;
+      if (tag.tagType === 'task') {
+        return projects.find((project) =>
+          project.plan?.some((task) => `${task.id}` === `${tag.value}`)
+        );
+      }
+      if (tag.tagType === 'subtask') {
+        return projects.find((project) =>
+          project.plan?.some((task) =>
+            task.subtasks?.some((subtask) => `${subtask.id}` === `${tag.value}`)
+          )
+        );
+      }
+      return null;
+    },
+    [projects]
+  );
+
+  const handleMentionClick = useCallback(
+    (tag) => {
+      if (!tag?.tagType) return;
+      if (tag.tagType === 'project') {
+        window.location.hash = `#/project/${tag.value}`;
+        return;
+      }
+      if (tag.tagType === 'person') {
+        window.location.hash = '#/people';
+        return;
+      }
+      if (tag.tagType === 'task' || tag.tagType === 'subtask') {
+        const project = findProjectForTag(tag);
+        if (project?.id) {
+          window.location.hash = `#/project/${project.id}`;
+        }
+      }
+    },
+    [findProjectForTag]
+  );
+
   // Get data and services from portfolio hook
   const {
     projects,
@@ -71,7 +114,7 @@ export default function MomentumChatWithAgent({
   } = usePortfolioData();
 
   // Get initiatives
-  const { initiatives } = useInitiatives();
+  const { initiatives, createInitiative } = useInitiatives();
 
   // Group projects by initiative for display
   const { initiativeGroups, ungroupedProjects } = useMemo(() => {
@@ -105,6 +148,10 @@ export default function MomentumChatWithAgent({
   const [hoveredProject, setHoveredProject] = useState(null);
   const [linkedMessageId, setLinkedMessageId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
+  const [showTagSuggestions, setShowTagSuggestions] = useState(false);
+  const [tagSearchTerm, setTagSearchTerm] = useState('');
+  const [selectedTagIndex, setSelectedTagIndex] = useState(0);
+  const [cursorPosition, setCursorPosition] = useState(0);
   const [projectPositions, setProjectPositions] = useState({});
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
@@ -122,10 +169,12 @@ export default function MomentumChatWithAgent({
     pendingQuestion,
   } = useAgentRuntime({
     projects,
+    initiatives,
     people,
     loggedInUser,
     createPerson,
     sendEmail,
+    createInitiative,
     initialConversationHistory: seededAgentHistory,
   });
 
@@ -262,6 +311,61 @@ export default function MomentumChatWithAgent({
     }
   }, [inputValue]);
 
+  const allTags = useMemo(() => getAllTags(people, projects), [people, projects]);
+
+  const filteredTags = useMemo(() => {
+    if (!showTagSuggestions) return [];
+    const lowerSearch = tagSearchTerm.toLowerCase();
+    return allTags
+      .filter(tag => tag.display.toLowerCase().includes(lowerSearch))
+      .slice(0, 8);
+  }, [allTags, showTagSuggestions, tagSearchTerm]);
+
+  const handleInputChange = (e) => {
+    const text = e.target.value;
+    const cursorPos = e.target.selectionStart;
+
+    setInputValue(text);
+    setCursorPosition(cursorPos);
+
+    const textUpToCursor = text.substring(0, cursorPos);
+    const lastAtSymbol = textUpToCursor.lastIndexOf('@');
+
+    if (lastAtSymbol !== -1) {
+      const textAfterAt = textUpToCursor.substring(lastAtSymbol + 1);
+      if (!textAfterAt.includes(' ')) {
+        setTagSearchTerm(textAfterAt);
+        setShowTagSuggestions(true);
+        setSelectedTagIndex(0);
+      } else {
+        setShowTagSuggestions(false);
+      }
+    } else {
+      setShowTagSuggestions(false);
+    }
+  };
+
+  const insertTag = (tag) => {
+    const textBeforeCursor = inputValue.substring(0, cursorPosition);
+    const textAfterCursor = inputValue.substring(cursorPosition);
+    const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
+    if (lastAtSymbol === -1) {
+      return;
+    }
+
+    const beforeAt = inputValue.substring(0, lastAtSymbol);
+    const tagText = `@${tag.display}`;
+    const newText = beforeAt + tagText + ' ' + textAfterCursor;
+
+    setInputValue(newText);
+    setShowTagSuggestions(false);
+    setTagSearchTerm('');
+
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  };
+
   const displayedMessages = useMemo(() => {
     if (!inProgressAssistantMessage) return messages;
 
@@ -327,6 +431,10 @@ export default function MomentumChatWithAgent({
     }
 
     setInputValue('');
+    setShowTagSuggestions(false);
+    setTagSearchTerm('');
+    setSelectedTagIndex(0);
+    setCursorPosition(0);
     setIsTyping(true);
     setStreamingThinkingSteps([]); // Reset thinking steps
     const assistantId = `msg-${Date.now() + 1}`;
@@ -626,7 +734,11 @@ export default function MomentumChatWithAgent({
                   ...(isUser ? styles.userText : styles.assistantText),
                 }}
               >
-                {renderMarkdownBlocks(message.note || message.content)}
+                {renderMarkdownBlocks(message.note || message.content, {
+                  onMentionClick: handleMentionClick,
+                  mentionStyle: styles.mentionTag,
+                  mentionClickableStyle: styles.mentionTagClickable,
+                })}
               </div>
             )}
             {/* User Question Prompt - when agent needs clarification */}
@@ -831,9 +943,28 @@ export default function MomentumChatWithAgent({
           <textarea
             ref={textareaRef}
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
+            onChange={handleInputChange}
             onKeyDown={(e) => {
-              if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+              if (showTagSuggestions) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setSelectedTagIndex(prev =>
+                    prev < filteredTags.length - 1 ? prev + 1 : prev
+                  );
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setSelectedTagIndex(prev => (prev > 0 ? prev - 1 : 0));
+                } else if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (filteredTags[selectedTagIndex]) {
+                    insertTag(filteredTags[selectedTagIndex]);
+                  }
+                  return;
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setShowTagSuggestions(false);
+                }
+              } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
                 e.preventDefault();
                 handleSend();
               }
@@ -842,6 +973,40 @@ export default function MomentumChatWithAgent({
             style={styles.input}
             rows={1}
           />
+          {showTagSuggestions && filteredTags.length > 0 && (
+            <div style={styles.tagSuggestions}>
+              {filteredTags.map((tag, idx) => (
+                <div
+                  key={`${tag.type}-${tag.value}-${idx}`}
+                  style={{
+                    ...styles.tagSuggestionItem,
+                    backgroundColor: idx === selectedTagIndex ? '#F6F1E7' : '#FFFFFF',
+                  }}
+                  onClick={() => insertTag(tag)}
+                  onMouseEnter={() => setSelectedTagIndex(idx)}
+                >
+                  <span
+                    style={{
+                      ...styles.tagTypeLabel,
+                      backgroundColor:
+                        tag.type === 'person' ? `${colors.sage}20` :
+                        tag.type === 'project' ? `${colors.earth}20` :
+                        tag.type === 'task' ? `${colors.amber}20` :
+                        `${colors.coral}20`,
+                      color:
+                        tag.type === 'person' ? colors.sage :
+                        tag.type === 'project' ? colors.earth :
+                        tag.type === 'task' ? colors.amber :
+                        colors.coral,
+                    }}
+                  >
+                    {tag.type}
+                  </span>
+                  <span style={styles.tagSuggestionDisplay}>{tag.display}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <button
             onClick={handleSend}
             disabled={!inputValue.trim() || isTyping}
@@ -982,7 +1147,47 @@ function renderInlineMarkdown(text, keyPrefix) {
   return segments.length > 0 ? segments : [text];
 }
 
-function renderMarkdownBlocks(text) {
+function renderInlineMarkdownWithTags(text, keyPrefix, options = {}) {
+  const parts = parseTaggedText(text);
+  const segments = [];
+
+  parts.forEach((part, idx) => {
+    if (part.type === 'tag') {
+      const handleClick = options.onMentionClick ? () => options.onMentionClick(part) : null;
+      const isClickable = Boolean(handleClick);
+      segments.push(
+        <span
+          key={`${keyPrefix}-tag-${idx}`}
+          onClick={handleClick || undefined}
+          onKeyDown={
+            isClickable
+              ? (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    handleClick();
+                  }
+                }
+              : undefined
+          }
+          role={isClickable ? 'button' : undefined}
+          tabIndex={isClickable ? 0 : undefined}
+          style={{
+            ...options.mentionStyle,
+            ...(isClickable ? options.mentionClickableStyle : {}),
+          }}
+        >
+          {part.display}
+        </span>
+      );
+    } else {
+      segments.push(...renderInlineMarkdown(part.content, `${keyPrefix}-text-${idx}`));
+    }
+  });
+
+  return segments.length > 0 ? segments : [text];
+}
+
+function renderMarkdownBlocks(text, options = {}) {
   const lines = text.split(/\r?\n/);
   const blocks = [];
   let currentList = null;
@@ -997,7 +1202,7 @@ function renderMarkdownBlocks(text) {
       <ListTag key={`list-${blocks.length}`} style={{ paddingLeft: 20, margin: '8px 0' }}>
         {currentList.items.map((item, idx) => (
           <li key={`${currentList.type}-${idx}`} style={{ marginBottom: 4 }}>
-            {renderInlineMarkdown(item, `${currentList.type}-${idx}`)}
+            {renderInlineMarkdownWithTags(item, `${currentList.type}-${idx}`, options)}
           </li>
         ))}
       </ListTag>
@@ -1059,7 +1264,7 @@ function renderMarkdownBlocks(text) {
                   fontWeight: '600',
                 }}
               >
-                {renderInlineMarkdown(header.trim(), `th-${idx}`)}
+                {renderInlineMarkdownWithTags(header.trim(), `th-${idx}`, options)}
               </th>
             ))}
           </tr>
@@ -1075,7 +1280,7 @@ function renderMarkdownBlocks(text) {
                     padding: '8px',
                   }}
                 >
-                  {renderInlineMarkdown(cell.trim(), `td-${rowIdx}-${cellIdx}`)}
+                  {renderInlineMarkdownWithTags(cell.trim(), `td-${rowIdx}-${cellIdx}`, options)}
                 </td>
               ))}
             </tr>
@@ -1153,9 +1358,9 @@ function renderMarkdownBlocks(text) {
               fontSize: `${20 - level * 2}px`,
               fontWeight: '700',
               color: '#3A3631',
-            },
           },
-          renderInlineMarkdown(headerMatch[2], `h${level}-${i}`)
+        },
+        renderInlineMarkdownWithTags(headerMatch[2], `h${level}-${i}`, options)
         )
       );
       i++;
@@ -1193,7 +1398,7 @@ function renderMarkdownBlocks(text) {
     if (trimmed.length > 0) {
       blocks.push(
         <p key={`p-${i}`} style={{ margin: '8px 0' }}>
-          {renderInlineMarkdown(trimmed, `p-${i}`)}
+          {renderInlineMarkdownWithTags(trimmed, `p-${i}`, options)}
         </p>
       );
     }
@@ -1313,6 +1518,22 @@ const getStyles = (colors) => ({
     color: colors.charcoal,
     borderBottomLeftRadius: '4px',
   },
+  mentionTag: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '2px 6px',
+    borderRadius: '10px',
+    fontSize: '12px',
+    fontWeight: '600',
+    backgroundColor: colors.cloud,
+    color: colors.earth,
+    margin: '0 2px',
+    lineHeight: '1.3',
+  },
+  mentionTagClickable: {
+    cursor: 'pointer',
+    textDecoration: 'underline',
+  },
   actionsContainer: {
     display: 'flex',
     flexDirection: 'column',
@@ -1416,6 +1637,7 @@ const getStyles = (colors) => ({
     padding: '16px 24px',
     borderTop: `1px solid ${colors.cloud}`,
     backgroundColor: colors.cream,
+    position: 'relative',
   },
   input: {
     flex: 1,
@@ -1432,6 +1654,42 @@ const getStyles = (colors) => ({
     maxHeight: '200px',
     lineHeight: '1.5',
     fontFamily: 'inherit',
+  },
+  tagSuggestions: {
+    position: 'absolute',
+    top: '100%',
+    marginTop: '8px',
+    left: '24px',
+    right: '78px',
+    backgroundColor: '#FFFFFF',
+    border: '1px solid #E8E3D8',
+    borderRadius: '12px',
+    boxShadow: '0 6px 16px rgba(139, 111, 71, 0.12)',
+    maxHeight: '220px',
+    overflowY: 'auto',
+    zIndex: 20,
+  },
+  tagSuggestionItem: {
+    padding: '8px 12px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    borderBottom: '1px solid #EFE6D8',
+    transition: 'background-color 0.15s ease',
+  },
+  tagTypeLabel: {
+    padding: '2px 6px',
+    borderRadius: '4px',
+    fontSize: '9px',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: '0.3px',
+  },
+  tagSuggestionDisplay: {
+    fontSize: '13px',
+    color: '#3A3631',
+    fontWeight: '500',
   },
   sendButton: {
     width: '44px',
