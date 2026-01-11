@@ -89,11 +89,12 @@ const InitiativeContainer = ({
 
         {isExpanded && (
           <div style={styles.content} className="initiative-content">
-            <div style={styles.projectsGrid}>
-              {children}
-            </div>
-            {projects.length === 0 && (
+            {projects.length === 0 ? (
               <p style={styles.emptyState}>No projects in this initiative yet.</p>
+            ) : (
+              <div style={styles.projectsGrid}>
+                {children}
+              </div>
             )}
           </div>
         )}
@@ -165,8 +166,8 @@ const styles = {
   },
   projectsGrid: {
     display: 'grid',
-    gridTemplateColumns: 'repeat(auto-fill, minmax(200px, 1fr))',
-    gap: '12px',
+    gridTemplateColumns: 'repeat(auto-fill, minmax(380px, 1fr))',
+    gap: '24px',
   },
   emptyState: {
     fontSize: '11px',
