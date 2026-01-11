@@ -1441,6 +1441,9 @@ const getStyles = (colors) => ({
     width: '100%',
     backgroundColor: colors.cream,
     fontFamily: "system-ui, -apple-system, sans-serif",
+    borderRadius: '18px',
+    border: `1px solid ${colors.cloud}`,
+    overflow: 'hidden',
   },
   chatColumn: {
     flex: 1,
@@ -1464,10 +1467,11 @@ const getStyles = (colors) => ({
     gap: '12px',
   },
   logoText: {
-    fontSize: '20px',
+    fontSize: '28px',
     fontWeight: '600',
     color: colors.charcoal,
     letterSpacing: '-0.5px',
+    fontFamily: "'Crimson Pro', Georgia, serif",
   },
   headerSubtitle: {
     fontSize: '12px',
@@ -1739,11 +1743,12 @@ const getStyles = (colors) => ({
     borderBottom: `1px solid ${colors.cloud}`,
   },
   canvasTitle: {
-    fontSize: '15px',
+    fontSize: '28px',
     fontWeight: '600',
     color: colors.charcoal,
     margin: 0,
-    letterSpacing: '-0.3px',
+    letterSpacing: '-0.5px',
+    fontFamily: "'Crimson Pro', Georgia, serif",
   },
   projectCount: {
     fontSize: '11px',
