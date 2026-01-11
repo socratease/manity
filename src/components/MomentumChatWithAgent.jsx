@@ -902,9 +902,8 @@ export default function MomentumChatWithAgent({
       <div style={styles.chatColumn}>
         <div style={styles.chatHeader} className="momentum-chat-header">
           <div style={styles.headerLeft}>
-            <span style={styles.logoIcon}>⚡</span>
             <span style={styles.logoText}>Momentum</span>
-            <span style={styles.headerSubtitle}>AI Project Assistant</span>
+            <span style={styles.headerSubtitle}>Dialectic Project Planning</span>
           </div>
           <span style={styles.connectionStatus}>● Connected</span>
         </div>
@@ -1464,12 +1463,11 @@ const getStyles = (colors) => ({
     alignItems: 'center',
     gap: '12px',
   },
-  logoIcon: { fontSize: '22px' },
   logoText: {
     fontSize: '20px',
-    fontFamily: "Georgia, serif",
     fontWeight: '600',
     color: colors.charcoal,
+    letterSpacing: '-0.5px',
   },
   headerSubtitle: {
     fontSize: '12px',
@@ -1742,10 +1740,10 @@ const getStyles = (colors) => ({
   },
   canvasTitle: {
     fontSize: '15px',
-    fontFamily: 'Georgia, serif',
     fontWeight: '600',
     color: colors.charcoal,
     margin: 0,
+    letterSpacing: '-0.3px',
   },
   projectCount: {
     fontSize: '11px',

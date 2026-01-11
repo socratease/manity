@@ -13,6 +13,8 @@ const InitiativeContainer = ({
   children,
   getPriorityColor,
   getStatusColor,
+  deletionEnabled = false,
+  onDelete = null,
 }) => {
   const { expandedInitiatives, toggleInitiative } = useProjectStore();
   const isExpanded = expandedInitiatives[initiative.id] !== false; // Default to expanded
@@ -44,31 +46,45 @@ const InitiativeContainer = ({
         borderColor: getStatusColor(initiative.status) + '60',
       }}>
         <legend style={styles.legend}>
-          <button
-            onClick={() => toggleInitiative(initiative.id)}
-            onMouseEnter={() => setIsHovered(true)}
-            onMouseLeave={() => setIsHovered(false)}
-            style={{
-              ...styles.legendButton,
-              opacity: isHovered ? 0.7 : 1,
-            }}
-            aria-label={isExpanded ? 'Collapse' : 'Expand'}
-          >
-            <span style={styles.expandIcon}>
-              {isExpanded ? '−' : '+'}
-            </span>
-            <span style={styles.initiativeName}>{initiative.name}</span>
-            <span style={{
-              ...styles.statusBadge,
-              backgroundColor: getStatusColor(initiative.status) + '15',
-              color: getStatusColor(initiative.status),
-            }}>
-              {initiative.status}
-            </span>
-            <span style={styles.projectCount}>
-              {completedProjects}/{projects.length}
-            </span>
-          </button>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <button
+              onClick={() => toggleInitiative(initiative.id)}
+              onMouseEnter={() => setIsHovered(true)}
+              onMouseLeave={() => setIsHovered(false)}
+              style={{
+                ...styles.legendButton,
+                opacity: isHovered ? 0.7 : 1,
+              }}
+              aria-label={isExpanded ? 'Collapse' : 'Expand'}
+            >
+              <span style={styles.expandIcon}>
+                {isExpanded ? '−' : '+'}
+              </span>
+              <span style={styles.initiativeName}>{initiative.name}</span>
+              <span style={{
+                ...styles.statusBadge,
+                backgroundColor: getStatusColor(initiative.status) + '15',
+                color: getStatusColor(initiative.status),
+              }}>
+                {initiative.status}
+              </span>
+              <span style={styles.projectCount}>
+                {completedProjects}/{projects.length}
+              </span>
+            </button>
+            {deletionEnabled && onDelete && (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onDelete(initiative);
+                }}
+                style={styles.deleteButton}
+                title={`Delete ${initiative.name}`}
+              >
+                ×
+              </button>
+            )}
+          </div>
         </legend>
 
         {isExpanded && (
@@ -159,6 +175,21 @@ const styles = {
     padding: '40px 20px',
     margin: 0,
     fontStyle: 'italic',
+  },
+  deleteButton: {
+    background: 'none',
+    border: 'none',
+    color: '#D67C5C',
+    fontSize: '16px',
+    fontWeight: '700',
+    cursor: 'pointer',
+    padding: '0 4px',
+    lineHeight: '1',
+    transition: 'opacity 0.2s ease',
+    opacity: 0.6,
+    ':hover': {
+      opacity: 1,
+    },
   },
 };
 
