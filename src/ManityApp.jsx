@@ -15,6 +15,7 @@ import { useSeasonalEffect, useSeasonalTheme } from './themes/hooks';
 import { parseTaggedText } from './lib/taggedText';
 import { getAllTags } from './lib/tagging';
 import MomentumChatWithAgent from './components/MomentumChatWithAgent';
+import InitiativeContainer from './components/InitiativeContainer';
 import Slides from './components/Slides';
 import DataPage from './components/DataPage';
 
@@ -2911,6 +2912,33 @@ Write a professional executive summary that highlights the project's current sta
   // Show all projects, but organize by who is on them
   const visibleProjects = projects.filter(project => project.status !== 'deleted');
   const allTags = useMemo(() => getAllTags(people, visibleProjects), [people, visibleProjects]);
+
+  // Group projects by initiative for display
+  const { initiativeGroups, ungroupedProjects } = useMemo(() => {
+    const grouped = {};
+    const ungrouped = [];
+
+    // Create a map of initiative ID to initiative
+    const initiativeMap = {};
+    initiatives.forEach(init => {
+      initiativeMap[init.id] = init;
+      grouped[init.id] = { initiative: init, projects: [] };
+    });
+
+    // Group projects
+    visibleProjects.forEach(project => {
+      if (project.initiativeId && grouped[project.initiativeId]) {
+        grouped[project.initiativeId].projects.push(project);
+      } else {
+        ungrouped.push(project);
+      }
+    });
+
+    return {
+      initiativeGroups: Object.values(grouped).filter(g => g.projects.length > 0 || g.initiative),
+      ungroupedProjects: ungrouped,
+    };
+  }, [visibleProjects, initiatives]);
 
   // Filter projects by search query (when search is open) or portfolio filter (persistent)
   const searchFilterProjects = (projectList) => {
@@ -6078,23 +6106,22 @@ PEOPLE & EMAIL ADDRESSES:
                     <Plus size={16} />
                     New Project
                   </button>
-                </div>
-                <div style={styles.lockControlGroup}>
-                  <div style={styles.lockHint}>
-                    <span style={styles.lockHintTitle}>Delete projects</span>
-                    <span style={styles.lockHintSubtitle}>Unlock to enable deletion</span>
-                  </div>
                   <button
-                    onClick={() => setProjectDeletionEnabled(prev => !prev)}
-                    style={{
-                      ...styles.activityLockButton,
-                      backgroundColor: projectDeletionEnabled ? 'var(--coral)' + '12' : '#FFFFFF',
-                      borderColor: projectDeletionEnabled ? 'var(--coral)' : 'var(--cloud)',
-                      color: projectDeletionEnabled ? 'var(--coral)' : 'var(--charcoal)'
+                    onClick={() => {
+                      const newValue = !projectDeletionEnabled;
+                      setProjectDeletionEnabled(newValue);
+                      setInitiativeDeletionEnabled(newValue);
                     }}
-                    title={projectDeletionEnabled ? 'Lock to disable project deletion' : 'Unlock to delete projects'}
+                    style={{
+                      ...styles.secondaryButton,
+                      backgroundColor: projectDeletionEnabled ? 'var(--coral)' + '15' : '#FAFAF8',
+                      borderColor: projectDeletionEnabled ? 'var(--coral)' : '#E8E3D8',
+                      color: projectDeletionEnabled ? 'var(--coral)' : '#6B6554'
+                    }}
+                    title={projectDeletionEnabled ? 'Lock to disable deletion' : 'Unlock to delete projects & initiatives'}
                   >
-                    {projectDeletionEnabled ? <Unlock size={18} /> : <Lock size={18} />}
+                    {projectDeletionEnabled ? <Unlock size={16} /> : <Lock size={16} />}
+                    Delete
                   </button>
                 </div>
               </div>
@@ -6201,96 +6228,6 @@ PEOPLE & EMAIL ADDRESSES:
                 </div>
               </div>
             )}
-
-            <div style={styles.initiativesSection}>
-              <div style={styles.sectionHeaderRow}>
-                <div>
-                  <h3 style={styles.sectionTitle}>Initiatives</h3>
-                  <p style={styles.sectionSubtitle}>{initiatives.length} total</p>
-                </div>
-                <div style={styles.lockControlGroup}>
-                  <div style={styles.lockHint}>
-                    <span style={styles.lockHintTitle}>Delete initiatives</span>
-                    <span style={styles.lockHintSubtitle}>Unlock to enable deletion</span>
-                  </div>
-                  <button
-                    onClick={() => setInitiativeDeletionEnabled(prev => !prev)}
-                    style={{
-                      ...styles.activityLockButton,
-                      backgroundColor: initiativeDeletionEnabled ? 'var(--coral)' + '12' : '#FFFFFF',
-                      borderColor: initiativeDeletionEnabled ? 'var(--coral)' : 'var(--cloud)',
-                      color: initiativeDeletionEnabled ? 'var(--coral)' : 'var(--charcoal)'
-                    }}
-                    title={initiativeDeletionEnabled ? 'Lock to disable initiative deletion' : 'Unlock to delete initiatives'}
-                  >
-                    {initiativeDeletionEnabled ? <Unlock size={18} /> : <Lock size={18} />}
-                  </button>
-                </div>
-              </div>
-
-              {initiatives.length === 0 ? (
-                <div style={styles.emptyState}>
-                  No initiatives yet. Create one to group related projects.
-                </div>
-              ) : (
-                <div style={styles.initiativesGrid}>
-                  {initiatives.map((initiative) => (
-                    <div key={initiative.id} style={styles.initiativeCard}>
-                      <div style={styles.initiativeCardHeader}>
-                        <div>
-                          <h4 style={styles.initiativeTitle}>{initiative.name}</h4>
-                          <p style={styles.initiativeDescription}>
-                            {initiative.description || 'No description yet.'}
-                          </p>
-                        </div>
-                        <div style={styles.initiativeBadgeRow}>
-                          <span
-                            style={{
-                              ...styles.statusBadgeSmall,
-                              backgroundColor: `${getInitiativeStatusColor(initiative.status)}20`,
-                              color: getInitiativeStatusColor(initiative.status),
-                            }}
-                          >
-                            {initiative.status}
-                          </span>
-                          <span
-                            style={{
-                              ...styles.statusBadgeSmall,
-                              backgroundColor: `${getPriorityColor(initiative.priority)}20`,
-                              color: getPriorityColor(initiative.priority),
-                            }}
-                          >
-                            {initiative.priority} priority
-                          </span>
-                        </div>
-                      </div>
-                      <div style={styles.initiativeMetaRow}>
-                        <span style={styles.initiativeMetaItem}>
-                          {initiative.projects?.length || 0} projects
-                        </span>
-                        {initiative.targetDate && (
-                          <span style={styles.initiativeMetaItem}>
-                            Target {new Date(initiative.targetDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
-                          </span>
-                        )}
-                      </div>
-                      {initiativeDeletionEnabled && (
-                        <div style={styles.initiativeActions}>
-                          <button
-                            onClick={() => handleDeleteInitiative(initiative)}
-                            style={styles.cardDeleteButton}
-                            title={`Delete ${initiative.name}`}
-                          >
-                            <Trash2 size={14} />
-                            Delete
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
 
             {showNewProject && (
               <div style={styles.newProjectPanel}>
@@ -6414,67 +6351,44 @@ PEOPLE & EMAIL ADDRESSES:
                 </div>
               ) : (
                 <>
-                  {/* Your Active Projects */}
-                  <div style={styles.sectionHeaderRow}>
-                    <div>
-                      <h3 style={styles.sectionTitle}>Your Active Projects</h3>
-                      <p style={styles.sectionSubtitle}>{userActiveProjects.length} in progress</p>
-                    </div>
-                  </div>
+                  {/* Render initiatives with their grouped projects */}
+                  {initiativeGroups.map(({ initiative, projects: initiativeProjects }) => {
+                    const filteredProjects = searchFilterProjects(initiativeProjects);
+                    if (filteredProjects.length === 0) return null;
 
-                  {userActiveProjects.length === 0 ? (
-                    <div style={styles.emptyState}>
-                      {loggedInUser ? `No active projects for ${loggedInUser}.` : 'No active projects for you.'}
-                    </div>
-                  ) : (
-                    <div style={styles.projectsGrid}>
-                      {userActiveProjects.map((project, index) => renderProjectCard(project, index))}
-                    </div>
-                  )}
-
-                  {/* Other Active Projects */}
-                  {otherActiveProjects.length > 0 && (
-                    <div style={{ marginTop: '32px' }}>
-                      <div style={styles.sectionHeaderRow}>
-                        <div>
-                          <h3 style={styles.sectionTitle}>Other Active Projects</h3>
-                          <p style={styles.sectionSubtitle}>{otherActiveProjects.length} in progress</p>
+                    return (
+                      <InitiativeContainer
+                        key={initiative.id}
+                        initiative={{
+                          ...initiative,
+                          projects: filteredProjects,
+                        }}
+                        getPriorityColor={getPriorityColor}
+                        getStatusColor={getInitiativeStatusColor}
+                        deletionEnabled={initiativeDeletionEnabled}
+                        onDelete={handleDeleteInitiative}
+                      >
+                        <div style={styles.projectsGrid}>
+                          {filteredProjects.map((project, index) => renderProjectCard(project, index))}
                         </div>
-                      </div>
-                      <div style={styles.projectsGrid}>
-                        {otherActiveProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length))}
-                      </div>
-                    </div>
-                  )}
+                      </InitiativeContainer>
+                    );
+                  })}
 
-                  {/* Your Completed Projects */}
-                  {userCompletedProjects.length > 0 && (
-                    <div style={{ marginTop: '32px' }}>
-                      <div style={styles.sectionHeaderRow}>
-                        <div>
-                          <h3 style={styles.sectionTitle}>Your Completed & Closed</h3>
-                          <p style={styles.sectionSubtitle}>{userCompletedProjects.length} wrapped up</p>
+                  {/* Render ungrouped projects */}
+                  {searchFilterProjects(ungroupedProjects).length > 0 && (
+                    <>
+                      {initiativeGroups.length > 0 && (
+                        <div style={{ marginTop: '24px', marginBottom: '12px' }}>
+                          <h3 style={{ ...styles.sectionTitle, fontSize: '12px', color: '#9B9488', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                            Ungrouped Projects
+                          </h3>
                         </div>
-                      </div>
+                      )}
                       <div style={styles.projectsGrid}>
-                        {userCompletedProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length + otherActiveProjects.length))}
+                        {searchFilterProjects(ungroupedProjects).map((project, index) => renderProjectCard(project, index))}
                       </div>
-                    </div>
-                  )}
-
-                  {/* Other Completed Projects */}
-                  {otherCompletedProjects.length > 0 && (
-                    <div style={{ marginTop: '32px' }}>
-                      <div style={styles.sectionHeaderRow}>
-                        <div>
-                          <h3 style={styles.sectionTitle}>Other Completed & Closed</h3>
-                          <p style={styles.sectionSubtitle}>{otherCompletedProjects.length} wrapped up</p>
-                        </div>
-                      </div>
-                      <div style={styles.projectsGrid}>
-                        {otherCompletedProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length + otherActiveProjects.length + userCompletedProjects.length))}
-                      </div>
-                    </div>
+                    </>
                   )}
                 </>
               )}
