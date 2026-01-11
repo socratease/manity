@@ -3798,7 +3798,16 @@ PEOPLE & EMAIL ADDRESSES:
   };
 
   return (
-    <>
+    <div style={{
+      '--earth': seasonalTheme.colors.earth,
+      '--sage': seasonalTheme.colors.sage,
+      '--coral': seasonalTheme.colors.coral,
+      '--amber': seasonalTheme.colors.amber,
+      '--cream': seasonalTheme.colors.cream,
+      '--cloud': seasonalTheme.colors.cloud,
+      '--stone': seasonalTheme.colors.stone,
+      '--charcoal': seasonalTheme.colors.charcoal
+    }}>
       <style>{`
         @keyframes fadeInUp {
           from {
@@ -4017,14 +4026,6 @@ PEOPLE & EMAIL ADDRESSES:
 
       <div style={{
         ...styles.container,
-        '--earth': seasonalTheme.colors.earth,
-        '--sage': seasonalTheme.colors.sage,
-        '--coral': seasonalTheme.colors.coral,
-        '--amber': seasonalTheme.colors.amber,
-        '--cream': seasonalTheme.colors.cream,
-        '--cloud': seasonalTheme.colors.cloud,
-        '--stone': seasonalTheme.colors.stone,
-        '--charcoal': seasonalTheme.colors.charcoal,
         backgroundColor: seasonalTheme.colors.cream,
         transition: 'background-color 0.5s ease',
       }}>
@@ -6481,7 +6482,7 @@ PEOPLE & EMAIL ADDRESSES:
         </Suspense>
       )}
     </div>
-    </>
+    </div>
   );
 }
 
