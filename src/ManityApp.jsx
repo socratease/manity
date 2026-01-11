@@ -3956,7 +3956,7 @@ PEOPLE & EMAIL ADDRESSES:
                       data-search-index={idx}
                       style={{
                         ...styles.globalSearchResultItem,
-                        backgroundColor: idx === globalSearchSelectedIndex ? 'var(--cream)' : 'transparent'
+                        backgroundColor: idx === globalSearchSelectedIndex ? 'var(--cloud)' : 'transparent'
                       }}
                       onClick={() => handleGlobalSearchSelect(result)}
                       onMouseEnter={() => setGlobalSearchSelectedIndex(idx)}
