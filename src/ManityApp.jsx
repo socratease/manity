@@ -3429,6 +3429,25 @@ PEOPLE & EMAIL ADDRESSES:
     return colors[status] || 'var(--stone)';
   };
 
+  // Generate unique color for each initiative from a harmonious palette
+  const getInitiativeColor = (initiativeId) => {
+    const palette = [
+      '#8B6F47', // earth
+      '#7A9B76', // sage
+      '#D67C5C', // coral
+      '#E8A75D', // amber
+      '#6B8B9B', // slate blue
+      '#9B7B8B', // mauve
+      '#8B9B6F', // olive
+      '#9B8B6F', // tan
+      '#7B8B9B', // steel
+      '#8B7B6F', // taupe
+    ];
+    // Use initiative ID to deterministically pick a color
+    const hash = initiativeId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return palette[hash % palette.length];
+  };
+
   const handleSlideAdvance = (direction) => {
     if (visibleProjects.length === 0) return;
 
@@ -6351,45 +6370,96 @@ PEOPLE & EMAIL ADDRESSES:
                 </div>
               ) : (
                 <>
-                  {/* Render initiatives with their grouped projects */}
-                  {initiativeGroups.map(({ initiative, projects: initiativeProjects }) => {
-                    const filteredProjects = searchFilterProjects(initiativeProjects);
-                    if (filteredProjects.length === 0) return null;
+                  {/* Active Projects Section */}
+                  <>
+                    {/* Render active initiatives with their active projects */}
+                    {initiativeGroups.map(({ initiative, projects: initiativeProjects }) => {
+                      const activeProjects = searchFilterProjects(
+                        initiativeProjects.filter(p => !['completed', 'closed'].includes(p.status))
+                      );
+                      if (activeProjects.length === 0) return null;
+
+                      return (
+                        <InitiativeContainer
+                          key={`${initiative.id}-active`}
+                          initiative={{
+                            ...initiative,
+                            projects: activeProjects,
+                          }}
+                          getPriorityColor={getPriorityColor}
+                          getStatusColor={() => getInitiativeColor(initiative.id)}
+                          deletionEnabled={initiativeDeletionEnabled}
+                          onDelete={handleDeleteInitiative}
+                        >
+                          {activeProjects.map((project, index) => renderProjectCard(project, index))}
+                        </InitiativeContainer>
+                      );
+                    })}
+
+                    {/* Render active ungrouped projects */}
+                    {(() => {
+                      const activeUngrouped = searchFilterProjects(
+                        ungroupedProjects.filter(p => !['completed', 'closed'].includes(p.status))
+                      );
+                      if (activeUngrouped.length === 0) return null;
+                      return (
+                        <div style={styles.projectsGrid}>
+                          {activeUngrouped.map((project, index) => renderProjectCard(project, index))}
+                        </div>
+                      );
+                    })()}
+                  </>
+
+                  {/* Closed/Completed Projects Section */}
+                  {(() => {
+                    const hasClosedProjects = visibleProjects.some(p => ['completed', 'closed'].includes(p.status));
+                    if (!hasClosedProjects) return null;
 
                     return (
-                      <InitiativeContainer
-                        key={initiative.id}
-                        initiative={{
-                          ...initiative,
-                          projects: filteredProjects,
-                        }}
-                        getPriorityColor={getPriorityColor}
-                        getStatusColor={getInitiativeStatusColor}
-                        deletionEnabled={initiativeDeletionEnabled}
-                        onDelete={handleDeleteInitiative}
-                      >
-                        <div style={styles.projectsGrid}>
-                          {filteredProjects.map((project, index) => renderProjectCard(project, index))}
+                      <>
+                        <div style={{ marginTop: '48px', marginBottom: '24px' }}>
+                          <h3 style={styles.sectionTitle}>Completed & Closed Projects</h3>
                         </div>
-                      </InitiativeContainer>
-                    );
-                  })}
 
-                  {/* Render ungrouped projects */}
-                  {searchFilterProjects(ungroupedProjects).length > 0 && (
-                    <>
-                      {initiativeGroups.length > 0 && (
-                        <div style={{ marginTop: '24px', marginBottom: '12px' }}>
-                          <h3 style={{ ...styles.sectionTitle, fontSize: '12px', color: '#9B9488', textTransform: 'uppercase', letterSpacing: '0.5px' }}>
-                            Ungrouped Projects
-                          </h3>
-                        </div>
-                      )}
-                      <div style={styles.projectsGrid}>
-                        {searchFilterProjects(ungroupedProjects).map((project, index) => renderProjectCard(project, index))}
-                      </div>
-                    </>
-                  )}
+                        {/* Render closed initiatives with their closed projects */}
+                        {initiativeGroups.map(({ initiative, projects: initiativeProjects }) => {
+                          const closedProjects = searchFilterProjects(
+                            initiativeProjects.filter(p => ['completed', 'closed'].includes(p.status))
+                          );
+                          if (closedProjects.length === 0) return null;
+
+                          return (
+                            <InitiativeContainer
+                              key={`${initiative.id}-closed`}
+                              initiative={{
+                                ...initiative,
+                                projects: closedProjects,
+                              }}
+                              getPriorityColor={getPriorityColor}
+                              getStatusColor={() => getInitiativeColor(initiative.id)}
+                              deletionEnabled={initiativeDeletionEnabled}
+                              onDelete={handleDeleteInitiative}
+                            >
+                              {closedProjects.map((project, index) => renderProjectCard(project, index))}
+                            </InitiativeContainer>
+                          );
+                        })}
+
+                        {/* Render closed ungrouped projects */}
+                        {(() => {
+                          const closedUngrouped = searchFilterProjects(
+                            ungroupedProjects.filter(p => ['completed', 'closed'].includes(p.status))
+                          );
+                          if (closedUngrouped.length === 0) return null;
+                          return (
+                            <div style={styles.projectsGrid}>
+                              {closedUngrouped.map((project, index) => renderProjectCard(project, index))}
+                            </div>
+                          );
+                        })()}
+                      </>
+                    );
+                  })()}
                 </>
               )}
             </div>
