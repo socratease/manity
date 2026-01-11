@@ -18,6 +18,7 @@ import MomentumChatWithAgent from './components/MomentumChatWithAgent';
 import InitiativeContainer from './components/InitiativeContainer';
 import Slides from './components/Slides';
 import DataPage from './components/DataPage';
+import AICheckIn from './components/AICheckIn';
 
 const generateActivityId = () => `act-${Math.random().toString(36).slice(2, 9)}`;
 
@@ -4029,248 +4030,23 @@ PEOPLE & EMAIL ADDRESSES:
         backgroundColor: seasonalTheme.colors.cream,
         transition: 'background-color 0.5s ease',
       }}>
-      {/* Daily Check-in Modal */}
+      {/* AI-Powered Daily Check-in Modal */}
       {showDailyCheckin && selectedProject && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modal}>
-            <div style={styles.modalHeader}>
-              <div style={styles.modalIconWrapper}>
-                <Sparkles size={24} style={{ color: 'var(--amber)' }} />
-              </div>
-              <h2 style={styles.modalTitle}>Good Morning! Let's catch up on your projects</h2>
-              <p style={styles.modalSubtitle}>
-                What happened yesterday on <strong>{selectedProject.name}</strong>?
-              </p>
-            </div>
-
-            <div style={styles.modalBody}>
-              {/* Last 3 Updates */}
-              {selectedProject.recentActivity.length > 0 && (
-                <div style={styles.recentUpdatesSection}>
-                  <h4 style={styles.recentUpdatesTitle}>Recent Updates</h4>
-                  {selectedProject.recentActivity.slice(0, 3).map((activity, idx) => (
-                    <div 
-                      key={idx} 
-                      style={{
-                        ...styles.recentUpdateItem,
-                        borderBottom: idx === Math.min(2, selectedProject.recentActivity.length - 1) ? 'none' : '1px solid var(--cloud)',
-                        marginBottom: idx === Math.min(2, selectedProject.recentActivity.length - 1) ? '0' : '12px',
-                        paddingBottom: idx === Math.min(2, selectedProject.recentActivity.length - 1) ? '0' : '12px'
-                      }}
-                    >
-                      <div style={styles.recentUpdateHeader}>
-                        <span style={styles.recentUpdateAuthor}>{activity.author}</span>
-                        <span style={styles.recentUpdateTime}>{formatDateTime(activity.date)}</span>
-                      </div>
-                      <p style={styles.recentUpdateText}>{activity.note}</p>
-                    </div>
-                  ))}
-                </div>
-              )}
-
-              {/* Overdue and Upcoming Tasks */}
-              {(() => {
-                const allTasks = [];
-                selectedProject.plan.forEach(task => {
-                  task.subtasks.forEach(subtask => {
-                    if (subtask.status !== 'completed') {
-                      const dueDateInfo = formatDueDate(subtask.dueDate, subtask.status, subtask.completedDate);
-                      if (dueDateInfo.isOverdue || dueDateInfo.isDueSoon) {
-                        allTasks.push({
-                          title: subtask.title,
-                          taskTitle: task.title,
-                          dueDateInfo: dueDateInfo
-                        });
-                      }
-                    }
-                  });
-                });
-                
-                if (allTasks.length > 0) {
-                  return (
-                    <div style={styles.tasksSection}>
-                      <h4 style={styles.tasksSectionTitle}>Tasks Needing Attention</h4>
-                      {allTasks.map((task, idx) => (
-                        <div 
-                          key={idx} 
-                          style={{
-                            ...styles.taskNeedingAttention,
-                            borderBottom: idx === allTasks.length - 1 ? 'none' : '1px solid #F5E6D3',
-                            paddingBottom: idx === allTasks.length - 1 ? '0' : '8px'
-                          }}
-                        >
-                          <div style={styles.taskNeedingAttentionContent}>
-                            <span style={styles.taskNeedingAttentionTitle}>{task.title}</span>
-                            <span style={styles.taskNeedingAttentionTask}>in {task.taskTitle}</span>
-                            <span style={styles.taskNeedingAttentionDate}>Due {task.dueDateInfo.formattedDate}</span>
-                          </div>
-                          <span style={{
-                            ...styles.taskNeedingAttentionDue,
-                            color: task.dueDateInfo.color,
-                            fontWeight: task.dueDateInfo.isOverdue ? '700' : '600'
-                          }}>
-                            {task.dueDateInfo.text}
-                          </span>
-                        </div>
-                      ))}
-                    </div>
-                  );
-                }
-                return null;
-              })()}
-
-              <div style={{ position: 'relative' }}>
-                <textarea
-                  value={checkinNote}
-                  onChange={handleCheckinNoteChange}
-                  onKeyDown={(e) => {
-                    if (showCheckinTagSuggestions) {
-                      const filteredTags = allTags
-                        .filter(tag =>
-                          tag.display.toLowerCase().includes(checkinTagSearchTerm.toLowerCase())
-                        )
-                        .slice(0, 8);
-
-                      if (e.key === 'ArrowDown') {
-                        e.preventDefault();
-                        setSelectedCheckinTagIndex(prev =>
-                          prev < filteredTags.length - 1 ? prev + 1 : prev
-                        );
-                      } else if (e.key === 'ArrowUp') {
-                        e.preventDefault();
-                        setSelectedCheckinTagIndex(prev => prev > 0 ? prev - 1 : 0);
-                      } else if (e.key === 'Enter') {
-                        e.preventDefault();
-                        if (filteredTags[selectedCheckinTagIndex]) {
-                          insertCheckinTag(filteredTags[selectedCheckinTagIndex]);
-                        }
-                        return;
-                      } else if (e.key === 'Escape') {
-                        e.preventDefault();
-                        setShowCheckinTagSuggestions(false);
-                      }
-                    } else if (e.ctrlKey && e.key === 'Enter') {
-                      e.preventDefault();
-                      handleDailyCheckin(selectedProject.id);
-                    }
-                  }}
-                  onFocus={() => setFocusedField('daily-checkin')}
-                  onBlur={() => setFocusedField(null)}
-                  placeholder="Share any updates, blockers, or progress made... Use @ to tag people, projects, or tasks"
-                  style={styles.textarea}
-                  autoFocus
-                />
-
-                {/* Tag Suggestions Dropdown for Daily Check-in */}
-                {showCheckinTagSuggestions && (
-                  <div style={styles.tagSuggestions}>
-                    {allTags
-                      .filter(tag =>
-                        tag.display.toLowerCase().includes(checkinTagSearchTerm.toLowerCase())
-                      )
-                      .slice(0, 8)
-                      .map((tag, idx) => (
-                        <div
-                          key={idx}
-                          style={{
-                            ...styles.tagSuggestionItem,
-                            backgroundColor: idx === selectedCheckinTagIndex ? 'var(--cream)' : '#FFFFFF'
-                          }}
-                          onClick={() => insertCheckinTag(tag)}
-                          onMouseEnter={() => setSelectedCheckinTagIndex(idx)}
-                        >
-                          <span style={{
-                            ...styles.tagTypeLabel,
-                            backgroundColor:
-                              tag.type === 'person' ? 'var(--sage)' + '20' :
-                              tag.type === 'project' ? 'var(--earth)' + '20' :
-                              tag.type === 'task' ? 'var(--amber)' + '20' :
-                              'var(--coral)' + '20',
-                            color:
-                              tag.type === 'person' ? 'var(--sage)' :
-                              tag.type === 'project' ? 'var(--earth)' :
-                              tag.type === 'task' ? 'var(--amber)' :
-                              'var(--coral)'
-                          }}>
-                            {tag.type}
-                          </span>
-                          <span style={styles.tagSuggestionDisplay}>{tag.display}</span>
-                        </div>
-                      ))}
-                  </div>
-                )}
-
-                {renderEditingHint('daily-checkin')}
-              </div>
-
-              <div style={styles.modalActions}>
-                <button
-                  onClick={() => handleDailyCheckin(selectedProject.id)}
-                  style={styles.primaryButton}
-                  disabled={!checkinNote.trim()}
-                >
-                  Continue
-                  <ChevronRight size={18} />
-                </button>
-                <button
-                  onClick={() => {
-                    // Skip to next project the user is a contributor on
-                    const currentIndex = userActiveProjects.findIndex(p => p.id === selectedProject.id);
-                    if (currentIndex < userActiveProjects.length - 1) {
-                      setSelectedProject(userActiveProjects[currentIndex + 1]);
-                      setCheckinNote('');
-                    } else {
-                      setShowDailyCheckin(false);
-                      setSelectedProject(null);
-                    }
-                  }}
-                  style={styles.skipButton}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = 'var(--cream)';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#FFFFFF';
-                  }}
-                >
-                  Skip This Project
-                </button>
-                <button
-                  onClick={() => {
-                    setShowDailyCheckin(false);
-                    setSelectedProject(null);
-                    setCheckinNote('');
-                  }}
-                  style={styles.skipAllButton}
-                  onMouseEnter={(e) => {
-                    e.currentTarget.style.backgroundColor = 'var(--coral)' + '10';
-                  }}
-                  onMouseLeave={(e) => {
-                    e.currentTarget.style.backgroundColor = '#FFFFFF';
-                  }}
-                >
-                  Skip All for Today
-                </button>
-              </div>
-
-              <p style={styles.keyboardHint}>
-                💡 Press <strong>Ctrl+Enter</strong> to submit and continue
-              </p>
-
-              <div style={styles.progressIndicator}>
-                {userActiveProjects.map((p, idx) => (
-                  <div
-                    key={p.id}
-                    style={{
-                      ...styles.progressDot,
-                      backgroundColor: p.id === selectedProject.id ? 'var(--amber)' : 'var(--cloud)',
-                      opacity: idx <= userActiveProjects.indexOf(selectedProject) ? 1 : 0.3
-                    }}
-                  />
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
+        <AICheckIn
+          projects={userActiveProjects}
+          selectedProject={selectedProject}
+          setSelectedProject={setSelectedProject}
+          onClose={() => {
+            setShowDailyCheckin(false);
+            setSelectedProject(null);
+            setCheckinNote('');
+          }}
+          onSaveActivity={async (projectId, activity) => {
+            await addActivity(projectId, activity);
+          }}
+          loggedInUser={loggedInUser}
+          activityAuthor={activityAuthor}
+        />
       )}
 
       {projectToDelete && (
