@@ -1116,7 +1116,13 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
             title: subtask.title,
             status: subtask.status,
             dueDate: fieldToUpdate === 'dueDate' ? tempDueDate : subtask.dueDate,
-            completedDate: fieldToUpdate === 'completedDate' ? tempDueDate : subtask.completedDate
+            completedDate: fieldToUpdate === 'completedDate' ? tempDueDate : subtask.completedDate,
+            ...(Object.prototype.hasOwnProperty.call(subtask, 'assignee')
+              ? { assignee: subtask.assignee }
+              : {}),
+            ...(Object.prototype.hasOwnProperty.call(subtask, 'assigneeId')
+              ? { assigneeId: subtask.assigneeId }
+              : {})
           });
         } else {
           await updateTask(viewingProjectId, taskId, {
