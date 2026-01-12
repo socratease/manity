@@ -921,7 +921,7 @@ class SubtaskPayload(SubtaskBase):
 
 class TaskPayload(TaskBase):
     id: Optional[str] = None
-    subtasks: List[SubtaskPayload] = Field(default_factory=list)
+    subtasks: Optional[List[SubtaskPayload]] = None
     assignee: Optional[AssigneePayload] = None
 
 
@@ -1582,40 +1582,41 @@ def apply_task_payload(task: Task, payload: TaskPayload, session: Session | None
                 task.assignee_id = assignee.id if assignee else None
 
     # --- Subtasks ---
-    if task.subtasks is None:
-        task.subtasks = []
-    else:
-        task.subtasks.clear()
+    if payload.subtasks is not None:
+        if task.subtasks is None:
+            task.subtasks = []
+        else:
+            task.subtasks.clear()
 
-    for subtask_payload in payload.subtasks:
-        subtask = Subtask(
-            id=subtask_payload.id or generate_id("subtask"),
-            title=subtask_payload.title,
-            status=subtask_payload.status,
-            dueDate=subtask_payload.dueDate,
-            completedDate=subtask_payload.completedDate,
-            assignee_id=subtask_payload.assignee_id,
-        )
+        for subtask_payload in payload.subtasks:
+            subtask = Subtask(
+                id=subtask_payload.id or generate_id("subtask"),
+                title=subtask_payload.title,
+                status=subtask_payload.status,
+                dueDate=subtask_payload.dueDate,
+                completedDate=subtask_payload.completedDate,
+                assignee_id=subtask_payload.assignee_id,
+            )
 
-        if session is not None:
-            # Same explicit-clear behavior for subtasks if 'assignee' exists
-            subtask_fields_set = getattr(subtask_payload, "model_fields_set", getattr(subtask_payload, "__fields_set__", set()))
-            if "assignee" in subtask_fields_set and subtask_payload.assignee is None:
-                subtask.assignee = None
-                subtask.assignee_id = None
-            else:
-                ref = None
-                if "assignee" in subtask_fields_set and subtask_payload.assignee:
-                    ref = subtask_payload.assignee
-                elif hasattr(subtask_payload, "assignee_id") and subtask_payload.assignee_id:
-                    ref = subtask_payload.assignee_id
+            if session is not None:
+                # Same explicit-clear behavior for subtasks if 'assignee' exists
+                subtask_fields_set = getattr(subtask_payload, "model_fields_set", getattr(subtask_payload, "__fields_set__", set()))
+                if "assignee" in subtask_fields_set and subtask_payload.assignee is None:
+                    subtask.assignee = None
+                    subtask.assignee_id = None
+                else:
+                    ref = None
+                    if "assignee" in subtask_fields_set and subtask_payload.assignee:
+                        ref = subtask_payload.assignee
+                    elif hasattr(subtask_payload, "assignee_id") and subtask_payload.assignee_id:
+                        ref = subtask_payload.assignee_id
 
-                if ref is not None:
-                    assignee = resolve_person_reference(session, ref)
-                    subtask.assignee = assignee
-                    subtask.assignee_id = assignee.id if assignee else None
+                    if ref is not None:
+                        assignee = resolve_person_reference(session, ref)
+                        subtask.assignee = assignee
+                        subtask.assignee_id = assignee.id if assignee else None
 
-        task.subtasks.append(subtask)
+            task.subtasks.append(subtask)
 
     return task
 
