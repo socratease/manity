@@ -41,12 +41,15 @@ export const useProjects = ({ personRefForApi } = {}) => {
 
   const mapTaskForApi = useCallback((task = {}) => {
     const assigneeRef = personRefForApi?.(task.assignee || task.assigneeId);
-    return {
+    const mappedTask = {
       ...task,
       assigneeId: assigneeRef?.id || task.assigneeId || null,
-      assignee: assigneeRef || null,
-      subtasks: (task.subtasks || []).map(mapSubtaskForApi)
+      assignee: assigneeRef || null
     };
+    if (Object.prototype.hasOwnProperty.call(task, 'subtasks')) {
+      mappedTask.subtasks = (task.subtasks || []).map(mapSubtaskForApi);
+    }
+    return mappedTask;
   }, [mapSubtaskForApi, personRefForApi]);
 
   const mapProjectForApi = useCallback((project = {}) => {
