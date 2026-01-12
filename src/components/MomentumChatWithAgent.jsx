@@ -11,7 +11,10 @@
 
 import React, { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { usePortfolioData } from '../hooks/usePortfolioData';
-import { getTheme } from '../lib/theme';
+import { useInitiatives } from '../hooks/useInitiatives';
+import { useSeasonalTheme } from '../themes/hooks';
+import { getAllTags } from '../lib/tagging';
+import { parseTaggedText } from '../lib/taggedText';
 
 // Import the new agent SDK
 import { useAgentRuntime } from '../agent-sdk';
@@ -19,9 +22,7 @@ import { useAgentRuntime } from '../agent-sdk';
 // Import UI components
 import ThinkingProcess from './ThinkingProcess';
 import UserQuestionPrompt from './UserQuestionPrompt';
-
-// Default to base theme, can be overridden by props
-const getColors = (isSantafied = false) => getTheme(isSantafied ? 'santa' : 'base');
+import InitiativeContainer from './InitiativeContainer';
 
 export default function MomentumChatWithAgent({
   messages = [],
@@ -30,11 +31,29 @@ export default function MomentumChatWithAgent({
   onUndoAction,
   loggedInUser = 'You',
   people = [],
-  isSantafied = false,
-  recentlyUpdatedProjects = {}
+  recentlyUpdatedProjects = {},
+  seasonalThemeEnabled = true,
 }) {
-  const colors = getColors(isSantafied);
+  const theme = useSeasonalTheme(undefined, seasonalThemeEnabled);
+  const colors = theme.colors;
   const styles = getStyles(colors);
+
+  // Get data and services from portfolio hook
+  const {
+    projects,
+    createProject,
+    updateProject,
+    addActivity,
+    addTask,
+    updateTask,
+    addSubtask,
+    updateSubtask,
+    createPerson,
+    sendEmail,
+  } = usePortfolioData();
+
+  // Get initiatives
+  const { initiatives, createInitiative, addProjectToInitiative, addOwnerToInitiative } = useInitiatives();
 
   const seededAgentHistory = useMemo(
     () =>
@@ -53,34 +72,99 @@ export default function MomentumChatWithAgent({
   };
 
   const getStatusColor = (status) => {
-    const map = { active: colors.sage, planning: colors.amber, 'on-hold': colors.stone, completed: colors.earth };
+    const map = {
+      active: colors.sage,
+      planning: colors.amber,
+      'on-hold': colors.stone,
+      blocked: colors.coral,
+      completed: colors.earth,
+    };
     return map[status] || colors.stone;
   };
 
-  // Get data and services from portfolio hook
-  const {
-    projects,
-    createProject,
-    updateProject,
-    addActivity,
-    addTask,
-    updateTask,
-    addSubtask,
-    updateSubtask,
-    createPerson,
-    sendEmail,
-  } = usePortfolioData();
+  const findProjectForTag = useCallback(
+    (tag) => {
+      if (!tag?.value) return null;
+      if (tag.tagType === 'task') {
+        return projects.find((project) =>
+          project.plan?.some((task) => `${task.id}` === `${tag.value}`)
+        );
+      }
+      if (tag.tagType === 'subtask') {
+        return projects.find((project) =>
+          project.plan?.some((task) =>
+            task.subtasks?.some((subtask) => `${subtask.id}` === `${tag.value}`)
+          )
+        );
+      }
+      return null;
+    },
+    [projects]
+  );
+
+  const handleMentionClick = useCallback(
+    (tag) => {
+      if (!tag?.tagType) return;
+      if (tag.tagType === 'project') {
+        window.location.hash = `#/project/${tag.value}`;
+        return;
+      }
+      if (tag.tagType === 'person') {
+        window.location.hash = '#/people';
+        return;
+      }
+      if (tag.tagType === 'task' || tag.tagType === 'subtask') {
+        const project = findProjectForTag(tag);
+        if (project?.id) {
+          window.location.hash = `#/project/${project.id}`;
+        }
+      }
+    },
+    [findProjectForTag]
+  );
+
+  // Group projects by initiative for display
+  const { initiativeGroups, ungroupedProjects } = useMemo(() => {
+    const grouped = {};
+    const ungrouped = [];
+
+    // Create a map of initiative ID to initiative
+    const initiativeMap = {};
+    initiatives.forEach(init => {
+      initiativeMap[init.id] = init;
+      grouped[init.id] = { initiative: init, projects: [] };
+    });
+
+    // Group projects
+    projects.forEach(project => {
+      if (project.initiativeId && grouped[project.initiativeId]) {
+        grouped[project.initiativeId].projects.push(project);
+      } else {
+        ungrouped.push(project);
+      }
+    });
+
+    return {
+      initiativeGroups: Object.values(grouped).filter(g => g.projects.length > 0 || g.initiative),
+      ungroupedProjects: ungrouped,
+    };
+  }, [projects, initiatives]);
 
   // Component state
   const [inputValue, setInputValue] = useState('');
   const [hoveredProject, setHoveredProject] = useState(null);
   const [linkedMessageId, setLinkedMessageId] = useState(null);
   const [isTyping, setIsTyping] = useState(false);
+  const [showTagSuggestions, setShowTagSuggestions] = useState(false);
+  const [tagSearchTerm, setTagSearchTerm] = useState('');
+  const [selectedTagIndex, setSelectedTagIndex] = useState(0);
+  const [cursorPosition, setCursorPosition] = useState(0);
   const [projectPositions, setProjectPositions] = useState({});
   const messagesEndRef = useRef(null);
   const chatContainerRef = useRef(null);
   const messageRefs = useRef({});
   const activeAssistantMessageId = useRef(null);
+  const textareaRef = useRef(null);
 
   // Initialize agent runtime using the new SDK hook
   const {
@@ -92,10 +176,14 @@ export default function MomentumChatWithAgent({
     pendingQuestion,
   } = useAgentRuntime({
     projects,
+    initiatives,
     people,
     loggedInUser,
     createPerson,
     sendEmail,
+    createInitiative,
+    addProjectToInitiative,
+    addOwnerToInitiative,
     initialConversationHistory: seededAgentHistory,
   });
 
@@ -223,6 +311,70 @@ export default function MomentumChatWithAgent({
     prevMessagesLengthRef.current = messages.length;
   }, [messages]);
 
+  // Auto-resize textarea as user types
+  useEffect(() => {
+    const textarea = textareaRef.current;
+    if (textarea) {
+      textarea.style.height = 'auto';
+      textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
+    }
+  }, [inputValue]);
+
+  const allTags = useMemo(() => getAllTags(people, projects), [people, projects]);
+
+  const filteredTags = useMemo(() => {
+    if (!showTagSuggestions) return [];
+    const lowerSearch = tagSearchTerm.toLowerCase();
+    return allTags
+      .filter(tag => tag.display.toLowerCase().includes(lowerSearch))
+      .slice(0, 8);
+  }, [allTags, showTagSuggestions, tagSearchTerm]);
+
+  const handleInputChange = (e) => {
+    const text = e.target.value;
+    const cursorPos = e.target.selectionStart;
+
+    setInputValue(text);
+    setCursorPosition(cursorPos);
+
+    const textUpToCursor = text.substring(0, cursorPos);
+    const lastAtSymbol = textUpToCursor.lastIndexOf('@');
+
+    if (lastAtSymbol !== -1) {
+      const textAfterAt = textUpToCursor.substring(lastAtSymbol + 1);
+      if (!textAfterAt.includes(' ')) {
+        setTagSearchTerm(textAfterAt);
+        setShowTagSuggestions(true);
+        setSelectedTagIndex(0);
+      } else {
+        setShowTagSuggestions(false);
+      }
+    } else {
+      setShowTagSuggestions(false);
+    }
+  };
+
+  const insertTag = (tag) => {
+    const textBeforeCursor = inputValue.substring(0, cursorPosition);
+    const textAfterCursor = inputValue.substring(cursorPosition);
+    const lastAtSymbol = textBeforeCursor.lastIndexOf('@');
+    if (lastAtSymbol === -1) {
+      return;
+    }
+
+    const beforeAt = inputValue.substring(0, lastAtSymbol);
+    const tagText = `@${tag.display}`;
+    const newText = beforeAt + tagText + ' ' + textAfterCursor;
+
+    setInputValue(newText);
+    setShowTagSuggestions(false);
+    setTagSearchTerm('');
+
+    if (textareaRef.current) {
+      textareaRef.current.focus();
+    }
+  };
+
   const displayedMessages = useMemo(() => {
     if (!inProgressAssistantMessage) return messages;
 
@@ -288,6 +440,10 @@ export default function MomentumChatWithAgent({
     }
 
     setInputValue('');
+    setShowTagSuggestions(false);
+    setTagSearchTerm('');
+    setSelectedTagIndex(0);
+    setCursorPosition(0);
     setIsTyping(true);
     setStreamingThinkingSteps([]); // Reset thinking steps
     const assistantId = `msg-${Date.now() + 1}`;
@@ -587,7 +743,11 @@ export default function MomentumChatWithAgent({
                   ...(isUser ? styles.userText : styles.assistantText),
                 }}
               >
-                {renderMarkdownBlocks(message.note || message.content)}
+                {renderMarkdownBlocks(message.note || message.content, {
+                  onMentionClick: handleMentionClick,
+                  mentionStyle: styles.mentionTag,
+                  mentionClickableStyle: styles.mentionTagClickable,
+                })}
               </div>
             )}
             {/* User Question Prompt - when agent needs clarification */}
@@ -742,9 +902,8 @@ export default function MomentumChatWithAgent({
       <div style={styles.chatColumn}>
         <div style={styles.chatHeader} className="momentum-chat-header">
           <div style={styles.headerLeft}>
-            <span style={styles.logoIcon}>⚡</span>
             <span style={styles.logoText}>Momentum</span>
-            <span style={styles.headerSubtitle}>AI Project Assistant</span>
+            <span style={styles.headerSubtitle}>Dialectic Project Planning</span>
           </div>
           <span style={styles.connectionStatus}>● Connected</span>
         </div>
@@ -789,13 +948,73 @@ export default function MomentumChatWithAgent({
         </div>
 
         <div style={styles.inputContainer} className="momentum-input-container">
-          <input
+          <textarea
+            ref={textareaRef}
             value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && handleSend()}
-            placeholder="Ask Momentum to update projects..."
+            onChange={handleInputChange}
+            onKeyDown={(e) => {
+              if (showTagSuggestions) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setSelectedTagIndex(prev =>
+                    prev < filteredTags.length - 1 ? prev + 1 : prev
+                  );
+                } else if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setSelectedTagIndex(prev => (prev > 0 ? prev - 1 : 0));
+                } else if (e.key === 'Enter') {
+                  e.preventDefault();
+                  if (filteredTags[selectedTagIndex]) {
+                    insertTag(filteredTags[selectedTagIndex]);
+                  }
+                  return;
+                } else if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setShowTagSuggestions(false);
+                }
+              } else if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
+                e.preventDefault();
+                handleSend();
+              }
+            }}
+            placeholder="Ask Momentum to update projects... (⌘/Ctrl+Enter to send)"
             style={styles.input}
+            rows={1}
           />
+          {showTagSuggestions && filteredTags.length > 0 && (
+            <div style={styles.tagSuggestions}>
+              {filteredTags.map((tag, idx) => (
+                <div
+                  key={`${tag.type}-${tag.value}-${idx}`}
+                  style={{
+                    ...styles.tagSuggestionItem,
+                    backgroundColor: idx === selectedTagIndex ? '#F6F1E7' : '#FFFFFF',
+                  }}
+                  onClick={() => insertTag(tag)}
+                  onMouseEnter={() => setSelectedTagIndex(idx)}
+                >
+                  <span
+                    style={{
+                      ...styles.tagTypeLabel,
+                      backgroundColor:
+                        tag.type === 'person' ? `${colors.sage}20` :
+                        tag.type === 'project' ? `${colors.earth}20` :
+                        tag.type === 'task' ? `${colors.amber}20` :
+                        `${colors.coral}20`,
+                      color:
+                        tag.type === 'person' ? colors.sage :
+                        tag.type === 'project' ? colors.earth :
+                        tag.type === 'task' ? colors.amber :
+                        colors.coral,
+                    }}
+                  >
+                    {tag.type}
+                  </span>
+                  <span style={styles.tagSuggestionDisplay}>{tag.display}</span>
+                </div>
+              ))}
+            </div>
+          )}
           <button
             onClick={handleSend}
             disabled={!inputValue.trim() || isTyping}
@@ -814,19 +1033,67 @@ export default function MomentumChatWithAgent({
       <div style={styles.canvasColumn}>
         <div style={styles.canvasHeader}>
           <h3 style={styles.canvasTitle}>Projects</h3>
-          <span style={styles.projectCount}>{projects.length} total</span>
+          <span style={styles.projectCount}>
+            {initiatives.length > 0 ? `${initiatives.length} initiatives, ` : ''}{projects.length} projects
+          </span>
         </div>
         <div style={styles.projectsContainer}>
-          {[...projects]
+          {/* Render initiatives with their grouped projects */}
+          {[...initiativeGroups]
             .sort((a, b) => {
-              const aTime = recentlyUpdatedProjects[a.id] || 0;
-              const bTime = recentlyUpdatedProjects[b.id] || 0;
-              if (aTime !== bTime) return bTime - aTime;
-              const priorityOrder = { high: 3, medium: 2, low: 1 };
-              return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
+              // Sort initiatives by their most recently updated project
+              const getMaxUpdateTime = (projects) => {
+                return Math.max(0, ...projects.map(p => recentlyUpdatedProjects[p.id] || 0));
+              };
+              const aTime = getMaxUpdateTime(a.projects);
+              const bTime = getMaxUpdateTime(b.projects);
+              return bTime - aTime;
             })
-            .map((p, i) => renderProjectCard(p, i))
-          }
+            .map(({ initiative, projects: initiativeProjects }) => (
+              <InitiativeContainer
+                key={initiative.id}
+                initiative={{
+                  ...initiative,
+                  projects: initiativeProjects,
+                }}
+                getPriorityColor={getPriorityColor}
+                getStatusColor={getStatusColor}
+              >
+                {[...initiativeProjects]
+                  .sort((a, b) => {
+                    const aTime = recentlyUpdatedProjects[a.id] || 0;
+                    const bTime = recentlyUpdatedProjects[b.id] || 0;
+                    if (aTime !== bTime) return bTime - aTime;
+                    const priorityOrder = { high: 3, medium: 2, low: 1 };
+                    return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
+                  })
+                  .map((p, i) => renderProjectCard(p, i))
+                }
+              </InitiativeContainer>
+            ))}
+
+          {/* Render ungrouped projects */}
+          {ungroupedProjects.length > 0 && (
+            <>
+              {initiatives.length > 0 && (
+                <div style={styles.ungroupedHeader}>
+                  <span style={styles.ungroupedLabel}>Ungrouped Projects</span>
+                </div>
+              )}
+              <div style={styles.ungroupedProjects}>
+                {[...ungroupedProjects]
+                  .sort((a, b) => {
+                    const aTime = recentlyUpdatedProjects[a.id] || 0;
+                    const bTime = recentlyUpdatedProjects[b.id] || 0;
+                    if (aTime !== bTime) return bTime - aTime;
+                    const priorityOrder = { high: 3, medium: 2, low: 1 };
+                    return (priorityOrder[b.priority] || 0) - (priorityOrder[a.priority] || 0);
+                  })
+                  .map((p, i) => renderProjectCard(p, i))
+                }
+              </div>
+            </>
+          )}
         </div>
         <div style={styles.canvasLegend}>
           <div style={styles.legendItem}><span style={{ ...styles.legendDot, backgroundColor: colors.coral }} />High</div>
@@ -840,86 +1107,327 @@ export default function MomentumChatWithAgent({
 
 function renderInlineMarkdown(text, keyPrefix) {
   const segments = [];
-  const boldRegex = /\*\*(.+?)\*\*/g;
+  // Match bold (**text**), inline code (`code`), and links ([text](url))
+  const inlineRegex = /(\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\))/g;
   let lastIndex = 0;
   let match;
 
-  while ((match = boldRegex.exec(text)) !== null) {
+  while ((match = inlineRegex.exec(text)) !== null) {
     if (match.index > lastIndex) {
       segments.push(text.slice(lastIndex, match.index));
     }
 
-    segments.push(<strong key={`${keyPrefix}-bold-${segments.length}`}>{match[1]}</strong>);
-    lastIndex = boldRegex.lastIndex;
+    if (match[2]) {
+      // Bold text
+      segments.push(<strong key={`${keyPrefix}-bold-${segments.length}`}>{match[2]}</strong>);
+    } else if (match[3]) {
+      // Inline code
+      segments.push(
+        <code
+          key={`${keyPrefix}-code-${segments.length}`}
+          style={{
+            backgroundColor: '#F0EDE6',
+            padding: '2px 6px',
+            borderRadius: '4px',
+            fontFamily: 'Monaco, Consolas, monospace',
+            fontSize: '13px',
+            color: '#8B6F47',
+          }}
+        >
+          {match[3]}
+        </code>
+      );
+    } else if (match[4] && match[5]) {
+      // Link
+      segments.push(
+        <a
+          key={`${keyPrefix}-link-${segments.length}`}
+          href={match[5]}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{
+            color: '#8B6F47',
+            textDecoration: 'underline',
+          }}
+        >
+          {match[4]}
+        </a>
+      );
+    }
+
+    lastIndex = inlineRegex.lastIndex;
   }
 
   if (lastIndex < text.length) {
     segments.push(text.slice(lastIndex));
   }
 
-  return segments;
+  return segments.length > 0 ? segments : [text];
 }
 
-function renderMarkdownBlocks(text) {
+function renderInlineMarkdownWithTags(text, keyPrefix, options = {}) {
+  const parts = parseTaggedText(text);
+  const segments = [];
+
+  parts.forEach((part, idx) => {
+    if (part.type === 'tag') {
+      const handleClick = options.onMentionClick ? () => options.onMentionClick(part) : null;
+      const isClickable = Boolean(handleClick);
+      segments.push(
+        <span
+          key={`${keyPrefix}-tag-${idx}`}
+          onClick={handleClick || undefined}
+          onKeyDown={
+            isClickable
+              ? (event) => {
+                  if (event.key === 'Enter' || event.key === ' ') {
+                    event.preventDefault();
+                    handleClick();
+                  }
+                }
+              : undefined
+          }
+          role={isClickable ? 'button' : undefined}
+          tabIndex={isClickable ? 0 : undefined}
+          style={{
+            ...options.mentionStyle,
+            ...(isClickable ? options.mentionClickableStyle : {}),
+          }}
+        >
+          {part.display}
+        </span>
+      );
+    } else {
+      segments.push(...renderInlineMarkdown(part.content, `${keyPrefix}-text-${idx}`));
+    }
+  });
+
+  return segments.length > 0 ? segments : [text];
+}
+
+function renderMarkdownBlocks(text, options = {}) {
   const lines = text.split(/\r?\n/);
   const blocks = [];
   let currentList = null;
+  let currentCodeBlock = null;
+  let currentTable = null;
+  let i = 0;
 
   const flushList = () => {
     if (!currentList) return;
-
     const ListTag = currentList.type === 'ol' ? 'ol' : 'ul';
     blocks.push(
-      <ListTag
-        key={`list-${blocks.length}`}
-        style={{ paddingLeft: 20, margin: '8px 0' }}
-      >
+      <ListTag key={`list-${blocks.length}`} style={{ paddingLeft: 20, margin: '8px 0' }}>
         {currentList.items.map((item, idx) => (
           <li key={`${currentList.type}-${idx}`} style={{ marginBottom: 4 }}>
-            {renderInlineMarkdown(item, `${currentList.type}-${idx}`)}
+            {renderInlineMarkdownWithTags(item, `${currentList.type}-${idx}`, options)}
           </li>
         ))}
       </ListTag>
     );
-
     currentList = null;
   };
 
-  lines.forEach((line, idx) => {
-    const trimmed = line.trim();
-    const unorderedMatch = /^[-*]\s+(.*)/.exec(trimmed);
-    const orderedMatch = /^\d+\.\s+(.*)/.exec(trimmed);
+  const flushCodeBlock = () => {
+    if (!currentCodeBlock) return;
+    blocks.push(
+      <pre
+        key={`code-${blocks.length}`}
+        style={{
+          backgroundColor: '#F0EDE6',
+          padding: '12px',
+          borderRadius: '8px',
+          overflow: 'auto',
+          margin: '8px 0',
+          border: '1px solid #E8E3D8',
+        }}
+      >
+        <code
+          style={{
+            fontFamily: 'Monaco, Consolas, monospace',
+            fontSize: '13px',
+            color: '#3A3631',
+            whiteSpace: 'pre',
+          }}
+        >
+          {currentCodeBlock.content.join('\n')}
+        </code>
+      </pre>
+    );
+    currentCodeBlock = null;
+  };
 
+  const flushTable = () => {
+    if (!currentTable || currentTable.rows.length === 0) return;
+    blocks.push(
+      <table
+        key={`table-${blocks.length}`}
+        style={{
+          borderCollapse: 'collapse',
+          margin: '8px 0',
+          width: '100%',
+          border: '1px solid #E8E3D8',
+        }}
+      >
+        <thead>
+          <tr>
+            {currentTable.headers.map((header, idx) => (
+              <th
+                key={`th-${idx}`}
+                style={{
+                  border: '1px solid #E8E3D8',
+                  padding: '8px',
+                  backgroundColor: '#F0EDE6',
+                  textAlign: 'left',
+                  fontWeight: '600',
+                }}
+              >
+                {renderInlineMarkdownWithTags(header.trim(), `th-${idx}`, options)}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {currentTable.rows.map((row, rowIdx) => (
+            <tr key={`tr-${rowIdx}`}>
+              {row.map((cell, cellIdx) => (
+                <td
+                  key={`td-${rowIdx}-${cellIdx}`}
+                  style={{
+                    border: '1px solid #E8E3D8',
+                    padding: '8px',
+                  }}
+                >
+                  {renderInlineMarkdownWithTags(cell.trim(), `td-${rowIdx}-${cellIdx}`, options)}
+                </td>
+              ))}
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    );
+    currentTable = null;
+  };
+
+  while (i < lines.length) {
+    const line = lines[i];
+    const trimmed = line.trim();
+
+    // Check for code block start/end
+    if (trimmed.startsWith('```')) {
+      if (currentCodeBlock) {
+        flushCodeBlock();
+        i++;
+        continue;
+      } else {
+        flushList();
+        flushTable();
+        currentCodeBlock = { content: [] };
+        i++;
+        continue;
+      }
+    }
+
+    // If inside code block, accumulate content
+    if (currentCodeBlock) {
+      currentCodeBlock.content.push(line);
+      i++;
+      continue;
+    }
+
+    // Check for table row
+    const tableMatch = /^\|(.+)\|$/.exec(trimmed);
+    if (tableMatch) {
+      flushList();
+      const cells = tableMatch[1].split('|').map(c => c.trim());
+
+      // Check if this is a header separator row (e.g., |---|---|)
+      if (cells.every(c => /^[-:]+$/.test(c))) {
+        i++;
+        continue; // Skip separator rows
+      }
+
+      if (!currentTable) {
+        // First row becomes headers
+        currentTable = { headers: cells, rows: [] };
+      } else {
+        // Subsequent rows become data
+        currentTable.rows.push(cells);
+      }
+      i++;
+      continue;
+    } else {
+      flushTable();
+    }
+
+    // Check for headers
+    const headerMatch = /^(#{1,6})\s+(.+)$/.exec(trimmed);
+    if (headerMatch) {
+      flushList();
+      const level = headerMatch[1].length;
+      const HeaderTag = `h${level}`;
+      blocks.push(
+        React.createElement(
+          HeaderTag,
+          {
+            key: `h${level}-${i}`,
+            style: {
+              margin: '12px 0 8px',
+              fontSize: `${20 - level * 2}px`,
+              fontWeight: '700',
+              color: '#3A3631',
+          },
+        },
+        renderInlineMarkdownWithTags(headerMatch[2], `h${level}-${i}`, options)
+        )
+      );
+      i++;
+      continue;
+    }
+
+    // Check for unordered list
+    const unorderedMatch = /^[-*]\s+(.*)/.exec(trimmed);
     if (unorderedMatch) {
+      flushTable();
       if (!currentList || currentList.type !== 'ul') {
         flushList();
         currentList = { type: 'ul', items: [] };
       }
       currentList.items.push(unorderedMatch[1]);
-      return;
+      i++;
+      continue;
     }
 
+    // Check for ordered list
+    const orderedMatch = /^\d+\.\s+(.*)/.exec(trimmed);
     if (orderedMatch) {
+      flushTable();
       if (!currentList || currentList.type !== 'ol') {
         flushList();
         currentList = { type: 'ol', items: [] };
       }
       currentList.items.push(orderedMatch[1]);
-      return;
+      i++;
+      continue;
     }
 
+    // Regular paragraph
     flushList();
-
     if (trimmed.length > 0) {
       blocks.push(
-        <p key={`p-${idx}`} style={{ margin: '8px 0' }}>
-          {renderInlineMarkdown(trimmed, `p-${idx}`)}
+        <p key={`p-${i}`} style={{ margin: '8px 0' }}>
+          {renderInlineMarkdownWithTags(trimmed, `p-${i}`, options)}
         </p>
       );
     }
-  });
 
+    i++;
+  }
+
+  // Flush any remaining blocks
   flushList();
+  flushCodeBlock();
+  flushTable();
 
   return blocks.length > 0 ? blocks : [text];
 }
@@ -931,15 +1439,18 @@ const getStyles = (colors) => ({
     height: '100%',
     minHeight: 0,
     width: '100%',
-    backgroundColor: '#FAF8F3',
+    backgroundColor: colors.cream,
     fontFamily: "system-ui, -apple-system, sans-serif",
+    borderRadius: '18px',
+    border: `1px solid ${colors.cloud}`,
+    overflow: 'hidden',
   },
   chatColumn: {
     flex: 1,
     display: 'flex',
     flexDirection: 'column',
-    borderRight: '1px solid #E8E3D8',
-    backgroundColor: '#FFFFFF',
+    borderRight: `1px solid ${colors.cloud}`,
+    backgroundColor: colors.cream,
     minWidth: 0,
   },
   chatHeader: {
@@ -947,30 +1458,30 @@ const getStyles = (colors) => ({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '16px 24px',
-    borderBottom: '1px solid #E8E3D8',
-    backgroundColor: '#FDFCFA',
+    borderBottom: `1px solid ${colors.cloud}`,
+    backgroundColor: colors.cream,
   },
   headerLeft: {
     display: 'flex',
     alignItems: 'center',
     gap: '12px',
   },
-  logoIcon: { fontSize: '22px' },
   logoText: {
-    fontSize: '20px',
-    fontFamily: "Georgia, serif",
+    fontSize: '28px',
     fontWeight: '600',
-    color: '#3A3631',
+    color: colors.charcoal,
+    letterSpacing: '-0.5px',
+    fontFamily: "'Crimson Pro', Georgia, serif",
   },
   headerSubtitle: {
     fontSize: '12px',
-    color: '#6B6554',
+    color: colors.stone,
     paddingLeft: '12px',
-    borderLeft: '1px solid #E8E3D8',
+    borderLeft: `1px solid ${colors.cloud}`,
   },
   connectionStatus: {
     fontSize: '11px',
-    color: '#7A9B76',
+    color: colors.sage,
     fontWeight: '600',
   },
   messagesContainer: {
@@ -996,7 +1507,7 @@ const getStyles = (colors) => ({
     width: '32px',
     height: '32px',
     borderRadius: '10px',
-    background: 'linear-gradient(135deg, #8B6F47, #E8A75D)',
+    background: `linear-gradient(135deg, ${colors.earth}, ${colors.amber})`,
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
@@ -1018,15 +1529,33 @@ const getStyles = (colors) => ({
     lineHeight: '1.5',
   },
   userText: {
-    background: 'linear-gradient(135deg, #8B6F47, #A68559)',
+    background: `linear-gradient(135deg, ${colors.earth}, ${colors.coral})`,
     color: '#FFFFFF',
     borderBottomRightRadius: '4px',
   },
   assistantText: {
-    background: '#F7F4EE',
-    border: '1px solid #E8E3D8',
-    color: '#3A3631',
+    background: colors.cream,
+    border: `1px solid ${colors.cloud}`,
+    color: colors.charcoal,
     borderBottomLeftRadius: '4px',
+  },
+  mentionTag: {
+    display: 'inline-flex',
+    alignItems: 'center',
+    padding: '2px 6px',
+    borderRadius: '10px',
+    fontSize: '12px',
+    fontWeight: '600',
+    backgroundColor: colors.cloud,
+    color: colors.earth,
+    margin: '0 2px',
+    lineHeight: '1.3',
+    whiteSpace: 'nowrap',
+    width: 'fit-content',
+  },
+  mentionTagClickable: {
+    cursor: 'pointer',
+    textDecoration: 'underline',
   },
   actionsContainer: {
     display: 'flex',
@@ -1035,11 +1564,11 @@ const getStyles = (colors) => ({
     marginTop: '4px',
   },
   actionCard: {
-    backgroundColor: '#F9F7F3',
-    border: '1px solid #E8E3D8',
+    backgroundColor: colors.cream,
+    border: `1px solid ${colors.cloud}`,
     borderRadius: '10px',
     padding: '10px 12px',
-    borderLeft: '3px solid #E8A75D',
+    borderLeft: `3px solid ${colors.amber}`,
   },
   actionHeader: {
     display: 'flex',
@@ -1056,19 +1585,19 @@ const getStyles = (colors) => ({
     justifyContent: 'center',
     backgroundColor: '#FFF',
     borderRadius: '5px',
-    border: '1px solid #E8E3D8',
+    border: `1px solid ${colors.cloud}`,
   },
   actionLabel: {
     fontSize: '11px',
     fontWeight: '600',
-    color: '#6B6554',
+    color: colors.stone,
     textTransform: 'uppercase',
     letterSpacing: '0.3px',
   },
   actionProject: {
     fontSize: '12px',
     fontWeight: '700',
-    color: '#3A3631',
+    color: colors.charcoal,
   },
   actionStatus: {
     fontSize: '9px',
@@ -1081,27 +1610,27 @@ const getStyles = (colors) => ({
   actionContent: {
     marginTop: '6px',
     fontSize: '12px',
-    color: '#D67C5C',
+    color: colors.coral,
     paddingLeft: '8px',
-    borderLeft: '2px solid #E8E3D8',
+    borderLeft: `2px solid ${colors.cloud}`,
   },
   actionSecondary: {
     marginTop: '2px',
     fontSize: '11px',
-    color: '#3A3631',
+    color: colors.charcoal,
     paddingLeft: '28px',
   },
   actionDetail: {
     marginTop: '6px',
     fontSize: '11px',
-    color: '#6B6554',
+    color: colors.stone,
     paddingLeft: '8px',
-    borderLeft: '2px solid #E8A75D',
+    borderLeft: `2px solid ${colors.amber}`,
     fontStyle: 'italic',
   },
   timestamp: {
     fontSize: '10px',
-    color: '#6B6554',
+    color: colors.stone,
     marginTop: '2px',
   },
   typingWrapper: {
@@ -1114,14 +1643,14 @@ const getStyles = (colors) => ({
     alignItems: 'center',
     gap: '5px',
     padding: '14px 18px',
-    backgroundColor: '#F7F4EE',
+    backgroundColor: colors.cream,
     borderRadius: '18px',
   },
   typingDot: {
     width: '7px',
     height: '7px',
     borderRadius: '50%',
-    backgroundColor: '#8B6F47',
+    backgroundColor: colors.earth,
     animation: 'pulse 1s infinite',
   },
   inputContainer: {
@@ -1129,38 +1658,81 @@ const getStyles = (colors) => ({
     alignItems: 'center',
     gap: '10px',
     padding: '16px 24px',
-    borderTop: '1px solid #E8E3D8',
-    backgroundColor: '#FDFCFA',
+    borderTop: `1px solid ${colors.cloud}`,
+    backgroundColor: colors.cream,
+    position: 'relative',
   },
   input: {
     flex: 1,
     padding: '12px 16px',
     borderRadius: '14px',
-    border: '2px solid #E8E3D8',
+    border: `2px solid ${colors.cloud}`,
     backgroundColor: '#FFF',
     fontSize: '14px',
-    color: '#3A3631',
+    color: colors.charcoal,
     outline: 'none',
+    resize: 'none',
+    overflowY: 'auto',
+    minHeight: '44px',
+    maxHeight: '200px',
+    lineHeight: '1.5',
+    fontFamily: 'inherit',
+  },
+  tagSuggestions: {
+    position: 'absolute',
+    bottom: '100%',
+    marginBottom: '8px',
+    left: '24px',
+    right: '78px',
+    backgroundColor: '#FFFFFF',
+    border: '1px solid #E8E3D8',
+    borderRadius: '12px',
+    boxShadow: '0 6px 16px rgba(139, 111, 71, 0.12)',
+    maxHeight: '220px',
+    overflowY: 'auto',
+    zIndex: 20,
+  },
+  tagSuggestionItem: {
+    padding: '8px 12px',
+    cursor: 'pointer',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '8px',
+    borderBottom: '1px solid #EFE6D8',
+    transition: 'background-color 0.15s ease',
+  },
+  tagTypeLabel: {
+    padding: '2px 6px',
+    borderRadius: '4px',
+    fontSize: '9px',
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: '0.3px',
+  },
+  tagSuggestionDisplay: {
+    fontSize: '13px',
+    color: '#3A3631',
+    fontWeight: '500',
   },
   sendButton: {
     width: '44px',
     height: '44px',
     borderRadius: '12px',
     border: 'none',
-    background: 'linear-gradient(135deg, #8B6F47, #E8A75D)',
+    background: `linear-gradient(135deg, ${colors.earth}, ${colors.amber})`,
     color: '#FFF',
     fontSize: '18px',
     fontWeight: '700',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    boxShadow: '0 3px 10px rgba(139, 111, 71, 0.25)',
+    boxShadow: '0 3px 10px rgba(0, 0, 0, 0.12)',
   },
   canvasColumn: {
     width: '300px',
     display: 'flex',
     flexDirection: 'column',
-    backgroundColor: '#FAF8F3',
+    backgroundColor: colors.cream,
     flexShrink: 0,
   },
   canvasHeader: {
@@ -1168,18 +1740,19 @@ const getStyles = (colors) => ({
     justifyContent: 'space-between',
     alignItems: 'center',
     padding: '16px 20px',
-    borderBottom: '1px solid #E8E3D8',
+    borderBottom: `1px solid ${colors.cloud}`,
   },
   canvasTitle: {
-    fontSize: '15px',
-    fontFamily: 'Georgia, serif',
+    fontSize: '28px',
     fontWeight: '600',
-    color: '#3A3631',
+    color: colors.charcoal,
     margin: 0,
+    letterSpacing: '-0.5px',
+    fontFamily: "'Crimson Pro', Georgia, serif",
   },
   projectCount: {
     fontSize: '11px',
-    color: '#6B6554',
+    color: colors.stone,
   },
   projectsContainer: {
     flex: 1,
@@ -1189,10 +1762,27 @@ const getStyles = (colors) => ({
     gap: '10px',
     overflowY: 'auto',
   },
+  ungroupedHeader: {
+    marginTop: '16px',
+    paddingBottom: '8px',
+    borderBottom: `1px solid ${colors.cloud}`,
+  },
+  ungroupedLabel: {
+    fontSize: '12px',
+    fontWeight: '600',
+    color: colors.stone,
+    textTransform: 'uppercase',
+    letterSpacing: '0.5px',
+  },
+  ungroupedProjects: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '10px',
+  },
   projectCard: {
     position: 'relative',
     backgroundColor: '#FFF',
-    border: '1px solid #E8E3D8',
+    border: `1px solid ${colors.cloud}`,
     borderRadius: '12px',
     padding: '12px 14px',
     cursor: 'pointer',
@@ -1200,7 +1790,7 @@ const getStyles = (colors) => ({
     animation: 'slideIn 0.4s ease backwards',
   },
   projectCardHovered: {
-    backgroundColor: '#FDFCFA',
+    backgroundColor: colors.cream,
     boxShadow: '0 6px 20px rgba(0,0,0,0.08)',
     transform: 'translateX(-3px)',
   },
@@ -1231,7 +1821,7 @@ const getStyles = (colors) => ({
   projectName: {
     fontSize: '13px',
     fontWeight: '600',
-    color: '#3A3631',
+    color: colors.charcoal,
     flex: 1,
     minWidth: 0,
     whiteSpace: 'nowrap',
@@ -1250,18 +1840,18 @@ const getStyles = (colors) => ({
     position: 'absolute',
     fontSize: '8px',
     fontWeight: '700',
-    color: '#6B6554',
+    color: colors.stone,
   },
   projectExpanded: {
     marginTop: '12px',
     paddingTop: '12px',
-    borderTop: '1px solid #E8E3D8',
+    borderTop: `1px solid ${colors.cloud}`,
     animation: 'fadeIn 0.25s ease',
   },
   projectDescription: {
     margin: '0 0 10px',
     fontSize: '12px',
-    color: '#6B6554',
+    color: colors.stone,
     lineHeight: '1.45',
   },
   recentActivityPreview: {
@@ -1283,7 +1873,7 @@ const getStyles = (colors) => ({
   recentActivityText: {
     display: 'block',
     fontSize: '11px',
-    color: '#3A3631',
+    color: colors.charcoal,
     lineHeight: '1.4',
   },
   projectMeta: {
@@ -1301,7 +1891,7 @@ const getStyles = (colors) => ({
   },
   targetDate: {
     fontSize: '11px',
-    color: '#6B6554',
+    color: colors.stone,
   },
   stakeholderRow: {
     display: 'flex',
@@ -1312,8 +1902,8 @@ const getStyles = (colors) => ({
     fontSize: '10px',
     padding: '3px 8px',
     borderRadius: '6px',
-    backgroundColor: '#F7F4EE',
-    color: '#3A3631',
+    backgroundColor: colors.cream,
+    color: colors.charcoal,
     fontWeight: '500',
   },
   canvasLegend: {
@@ -1321,7 +1911,7 @@ const getStyles = (colors) => ({
     justifyContent: 'center',
     gap: '16px',
     padding: '14px',
-    borderTop: '1px solid #E8E3D8',
+    borderTop: `1px solid ${colors.cloud}`,
     backgroundColor: '#FFF',
   },
   legendItem: {
@@ -1329,7 +1919,7 @@ const getStyles = (colors) => ({
     alignItems: 'center',
     gap: '5px',
     fontSize: '10px',
-    color: '#6B6554',
+    color: colors.stone,
   },
   legendDot: {
     width: '7px',

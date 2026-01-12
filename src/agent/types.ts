@@ -67,6 +67,7 @@ export interface RestoreProjectDelta extends BaseDelta {
     targetDate?: string;
     startDate?: string;
     lastUpdate?: string;
+    stakeholders?: Stakeholder[];
   };
 }
 
@@ -91,6 +92,7 @@ export type ToolName =
   | 'add_subtask'
   | 'update_subtask'
   | 'update_project'
+  | 'add_stakeholders'
   | 'add_person'
   | 'query_portfolio'
   | 'send_email';
@@ -390,7 +392,7 @@ export interface Project {
   id: string | number;
   name: string;
   stakeholders: Stakeholder[];
-  status: 'planning' | 'active' | 'on-hold' | 'cancelled' | 'completed';
+  status: 'planning' | 'active' | 'on-hold' | 'blocked' | 'cancelled' | 'completed';
   priority: 'high' | 'medium' | 'low';
   progress: number;
   progressMode?: 'auto' | 'manual';

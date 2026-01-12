@@ -472,7 +472,7 @@ export default function DataPage({
                   {renderInput(draft.name ?? project.name, (value) => handleProjectChange(project.id, 'name', value), 'Project name')}
                 </div>
                 <div style={{ ...styles.cell, flex: 0.9 }}>
-                  {renderSelect(draft.status || project.status, (value) => handleProjectChange(project.id, 'status', value), ['planning', 'active', 'completed'])}
+                  {renderSelect(draft.status || project.status, (value) => handleProjectChange(project.id, 'status', value), ['planning', 'active', 'on-hold', 'blocked', 'cancelled', 'completed'])}
                 </div>
                 <div style={{ ...styles.cell, flex: 0.9 }}>
                   {renderSelect(draft.priority || project.priority, (value) => handleProjectChange(project.id, 'priority', value), ['high', 'medium', 'low'])}

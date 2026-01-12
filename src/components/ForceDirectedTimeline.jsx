@@ -6,10 +6,12 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
   const animationRef = useRef(null);
   const [dimensions, setDimensions] = useState({ width: 900, height: 250 });
   const [nodes, setNodes] = useState([]);
+  const nodesRef = useRef([]);
   const [hoveredNode, setHoveredNode] = useState(null);
   const [draggedNode, setDraggedNode] = useState(null);
   const [dragOffset, setDragOffset] = useState({ x: 0, y: 0 });
   const [timelineZoom, setTimelineZoom] = useState(3);
+  const [simulationVersion, setSimulationVersion] = useState(0);
 
   // Fallback sample data if no tasks provided - memoized to prevent re-renders
   const sampleTasks = useMemo(() => tasks.length > 0 ? tasks : [
@@ -69,18 +71,20 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
 
   const physics = {
     springStrength: 0.012,
-    repulsion: 4000, // Reduced to allow smoother settling
+    repulsion: 4000,
     maxRepulsionForce: 35,
-    damping: 0.88, // Increased damping to reduce jitter
+    damping: 0.88, // Keep original damping for springiness
     verticalSpring: 0.015,
-    verticalRepulsion: 2500, // Reduced for smoother separation
+    verticalRepulsion: 2500,
     verticalComfortRadius: 120,
-    settleThreshold: 0.15, // Increased to catch micro-movements and stop jitter
+    settleThreshold: 0.15,
     boundaryForce: 0.8,
-    dotTug: 0.006, // Further reduced pull toward dots
-    dotRepulsion: 6000, // Reduced repulsion force
+    dotTug: 0.006,
+    dotRepulsion: 6000,
     dotRepulsionRadius: 50,
     dotComfortRadius: 35,
+    dotTransitionStart: 30, // Below this: pure repulsion
+    dotTransitionEnd: 55, // Above this: pure tug (narrower zone than before)
     positionTolerance: 2.5,
     velocityTolerance: 0.05,
   };
@@ -94,15 +98,14 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     return padding.left + (dateMs / totalMs) * timelineWidth;
   }, [dimensions.width, getTimelineRange]);
 
-  // Initialize nodes
-  useEffect(() => {
+  const seededNodes = useMemo(() => {
     const { startDate: rangeStart, endDate: rangeEnd } = getTimelineRange();
     const visibleTasks = sampleTasks.filter(task => {
       const date = new Date(task.dueDate);
       return date >= rangeStart && date <= rangeEnd;
     });
 
-    const initialNodes = visibleTasks.map((task, index) => {
+    return visibleTasks.map((task, index) => {
       const targetX = getTimelineX(task.dueDate);
       const isAbove = index % 2 === 0;
       const baseOffset = 35;
@@ -126,69 +129,77 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         settled: false,
       };
     });
-    setNodes(initialNodes);
-  }, [getTimelineX, getTimelineRange, sampleTasks]);
+  }, [getTimelineRange, getTimelineX, sampleTasks, timelineZoom, startDate, dimensions.width]);
+
+  // Initialize nodes - directly update nodesRef to ensure physics effect
+  // has fresh data when it restarts (fixes race condition where physics
+  // would read stale ref before the sync effect could update it)
+  useEffect(() => {
+    nodesRef.current = seededNodes;
+    setNodes(seededNodes);
+    setSimulationVersion(version => version + 1);
+  }, [seededNodes]);
+
+  useEffect(() => {
+    nodesRef.current = nodes;
+  }, [nodes]);
 
   // Physics simulation
   useEffect(() => {
     if (nodes.length === 0) return;
 
     const simulate = () => {
-      let allSettled = true;
+      const applyCappedRepulsion = (distX, distY, strength, comfortRadius, maxForce, maxRange) => {
+        const dist = Math.sqrt(distX * distX + distY * distY);
+        if (dist === 0 || (maxRange && dist > maxRange)) return { fx: 0, fy: 0 };
 
-      setNodes(prevNodes => {
-        const applyCappedRepulsion = (distX, distY, strength, comfortRadius, maxForce, maxRange) => {
-          const dist = Math.sqrt(distX * distX + distY * distY);
-          if (dist === 0 || (maxRange && dist > maxRange)) return { fx: 0, fy: 0 };
+        const falloff = dist > comfortRadius ? comfortRadius / dist : 1;
+        const rawForce = strength / (dist * dist);
+        const magnitude = Math.min(rawForce * falloff, maxForce);
 
-          const falloff = dist > comfortRadius ? comfortRadius / dist : 1;
-          const rawForce = strength / (dist * dist);
-          const magnitude = Math.min(rawForce * falloff, maxForce);
-
-          return {
-            fx: (distX / dist) * magnitude,
-            fy: (distY / dist) * magnitude,
-          };
+        return {
+          fx: (distX / dist) * magnitude,
+          fy: (distY / dist) * magnitude,
         };
+      };
 
-        const newNodes = prevNodes.map((node, i) => {
-          // Skip physics for dragged node
-          if (draggedNode === node.id) {
-            allSettled = false;
-            return { ...node, vx: 0, vy: 0, settled: false };
-          }
+      let nextAllSettled = true;
+      const prevNodes = nodesRef.current;
 
-          if (node.settled) {
-            return node;
-          }
+      const newNodes = prevNodes.map((node, i) => {
+        // Skip physics for dragged node
+        if (draggedNode === node.id) {
+          nextAllSettled = false;
+          return { ...node, vx: 0, vy: 0, settled: false };
+        }
 
-          let fx = 0;
-          let fy = 0;
+        if (node.settled) {
+          return node;
+        }
 
-          // Spring force toward target position (horizontal and vertical offsets)
-          const dx = node.targetX - node.x;
-          fx += dx * physics.springStrength;
+        let fx = 0;
+        let fy = 0;
 
-          const dy = node.targetY - node.y;
-          fy += dy * physics.verticalSpring;
+        // Spring force toward target position (horizontal and vertical offsets)
+        const dx = node.targetX - node.x;
+        fx += dx * physics.springStrength;
 
-          // Tug force toward the connected dot on timeline (reduced)
-          const dotX = node.targetX;
-          const dotY = timelineConfig.lineY;
-          const dotDx = dotX - node.x;
-          const dotDy = dotY - node.y;
-          fx += dotDx * physics.dotTug;
-          fy += dotDy * physics.dotTug;
+        const dy = node.targetY - node.y;
+        fy += dy * physics.verticalSpring;
 
-          // Repulsion from the dot to prevent overlap
-          const dotDistX = node.x - dotX;
-          const dotDistY = node.y - dotY;
-          const dotDist = Math.sqrt(dotDistX * dotDistX + dotDistY * dotDistY);
+        // Dot force with transition zone to prevent tug/repulsion conflict
+        const dotX = node.targetX;
+        const dotY = timelineConfig.lineY;
+        const dotDx = dotX - node.x;
+        const dotDy = dotY - node.y;
+        const dotDist = Math.sqrt(dotDx * dotDx + dotDy * dotDy);
 
-          if (dotDist > 0 && dotDist < physics.dotRepulsionRadius) {
+        if (dotDist > 0) {
+          if (dotDist < physics.dotTransitionStart) {
+            // Close to dot: only repulsion (push away)
             const { fx: dotFx, fy: dotFy } = applyCappedRepulsion(
-              dotDistX,
-              dotDistY,
+              -dotDx,
+              -dotDy,
               physics.dotRepulsion,
               physics.dotComfortRadius,
               physics.maxRepulsionForce,
@@ -196,89 +207,136 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
             );
             fx += dotFx;
             fy += dotFy;
+          } else if (dotDist > physics.dotTransitionEnd) {
+            // Far from dot: only tug (pull toward)
+            fx += dotDx * physics.dotTug;
+            fy += dotDy * physics.dotTug;
+          } else {
+            // Transition zone: blend forces smoothly
+            const t = (dotDist - physics.dotTransitionStart) / (physics.dotTransitionEnd - physics.dotTransitionStart);
+            // Tug fades in
+            fx += dotDx * physics.dotTug * t;
+            fy += dotDy * physics.dotTug * t;
+            // Repulsion fades out
+            const { fx: repFx, fy: repFy } = applyCappedRepulsion(
+              -dotDx,
+              -dotDy,
+              physics.dotRepulsion * (1 - t),
+              physics.dotComfortRadius,
+              physics.maxRepulsionForce * (1 - t),
+              physics.dotRepulsionRadius,
+            );
+            fx += repFx;
+            fy += repFy;
           }
+        }
 
-          prevNodes.forEach((other, j) => {
-            if (i === j) return;
+        prevNodes.forEach((other, j) => {
+          if (i === j) return;
 
-            const distX = node.x - other.x;
-            const distY = node.y - other.y;
-            const dist = Math.sqrt(distX * distX + distY * distY);
+          const distX = node.x - other.x;
+          const distY = node.y - other.y;
+          const dist = Math.sqrt(distX * distX + distY * distY);
 
-            const minDist = (node.width + other.width) / 2 + 30;
+          const minDist = (node.width + other.width) / 2 + 30;
 
-            if (dist < minDist * 1.5 && dist > 0) {
-              const { fx: repelFx, fy: repelFy } = applyCappedRepulsion(
-                distX,
-                distY,
-                physics.repulsion,
-                minDist,
-                physics.maxRepulsionForce,
-                minDist * 1.5,
-              );
-              const { fx: verticalFx, fy: verticalFy } = applyCappedRepulsion(
-                distX,
-                distY,
-                physics.verticalRepulsion,
-                physics.verticalComfortRadius,
-                physics.maxRepulsionForce,
-                minDist * 1.5,
-              );
+          if (dist < minDist * 1.5 && dist > 0) {
+            const { fx: repelFx, fy: repelFy } = applyCappedRepulsion(
+              distX,
+              distY,
+              physics.repulsion,
+              minDist,
+              physics.maxRepulsionForce,
+              minDist * 1.5,
+            );
+            const { fx: verticalFx, fy: verticalFy } = applyCappedRepulsion(
+              distX,
+              distY,
+              physics.verticalRepulsion,
+              physics.verticalComfortRadius,
+              physics.maxRepulsionForce,
+              minDist * 1.5,
+            );
 
-              fx += repelFx;
-              fy += repelFy + verticalFy;
-            }
-          });
-
-          const { padding } = timelineConfig;
-          const minX = padding.left;
-          const maxX = dimensions.width - padding.right;
-          const minY = 35;
-          const maxY = dimensions.height - 35;
-
-          if (node.x - node.width / 2 < minX) {
-            fx += (minX - (node.x - node.width / 2)) * physics.boundaryForce;
+            fx += repelFx;
+            fy += repelFy + verticalFy;
           }
-          if (node.x + node.width / 2 > maxX) {
-            fx += (maxX - (node.x + node.width / 2)) * physics.boundaryForce;
-          }
-          if (node.y - node.height / 2 < minY) {
-            fy += (minY - (node.y - node.height / 2)) * physics.boundaryForce;
-          }
-          if (node.y + node.height / 2 > maxY) {
-            fy += (maxY - (node.y + node.height / 2)) * physics.boundaryForce;
-          }
-
-          let newVx = (node.vx + fx) * physics.damping;
-          let newVy = (node.vy + fy) * physics.damping;
-
-          // Stop jittering: if velocity is very small, set to zero
-          const speed = Math.sqrt(newVx * newVx + newVy * newVy);
-          if (speed < physics.settleThreshold) {
-            newVx = 0;
-            newVy = 0;
-          }
-
-          const positionDelta = Math.abs(dx) + Math.abs(dy);
-          const isSettled = positionDelta < physics.positionTolerance && speed < physics.velocityTolerance;
-          if (!isSettled) {
-            allSettled = false;
-          }
-
-          return {
-            ...node,
-            x: node.x + newVx,
-            y: node.y + newVy,
-            vx: newVx,
-            vy: newVy,
-            settled: isSettled,
-          };
         });
 
-        return newNodes;
+        const { padding } = timelineConfig;
+        const minX = padding.left;
+        const maxX = dimensions.width - padding.right;
+        const minY = 35;
+        const maxY = dimensions.height - 35;
+
+        if (node.x - node.width / 2 < minX) {
+          fx += (minX - (node.x - node.width / 2)) * physics.boundaryForce;
+        }
+        if (node.x + node.width / 2 > maxX) {
+          fx += (maxX - (node.x + node.width / 2)) * physics.boundaryForce;
+        }
+        if (node.y - node.height / 2 < minY) {
+          fy += (minY - (node.y - node.height / 2)) * physics.boundaryForce;
+        }
+        if (node.y + node.height / 2 > maxY) {
+          fy += (maxY - (node.y + node.height / 2)) * physics.boundaryForce;
+        }
+
+        let newVx = (node.vx + fx) * physics.damping;
+        let newVy = (node.vy + fy) * physics.damping;
+
+        // Track velocity sign changes to detect micro-oscillation
+        const prevSignX = node.prevSignX ?? 0;
+        const prevSignY = node.prevSignY ?? 0;
+        const currSignX = Math.sign(newVx);
+        const currSignY = Math.sign(newVy);
+        let oscillationCount = node.oscillationCount ?? 0;
+
+        // Count consecutive sign changes (oscillation pattern)
+        if ((prevSignX !== 0 && currSignX !== 0 && prevSignX !== currSignX) ||
+            (prevSignY !== 0 && currSignY !== 0 && prevSignY !== currSignY)) {
+          oscillationCount++;
+        } else {
+          oscillationCount = Math.max(0, oscillationCount - 1); // Decay if not oscillating
+        }
+
+        // Stop jittering: if velocity is very small, set to zero
+        const speed = Math.sqrt(newVx * newVx + newVy * newVy);
+        if (speed < physics.settleThreshold) {
+          newVx = 0;
+          newVy = 0;
+        }
+
+        // Only force-settle after 8+ consecutive oscillations with tiny velocity
+        if (oscillationCount > 8 && speed < 0.3) {
+          newVx = 0;
+          newVy = 0;
+          oscillationCount = 0;
+        }
+
+        const positionDelta = Math.abs(dx) + Math.abs(dy);
+        const isSettled = positionDelta < physics.positionTolerance && speed < physics.velocityTolerance;
+        if (!isSettled) {
+          nextAllSettled = false;
+        }
+
+        return {
+          ...node,
+          x: node.x + newVx,
+          y: node.y + newVy,
+          vx: newVx,
+          vy: newVy,
+          prevSignX: currSignX,
+          prevSignY: currSignY,
+          oscillationCount,
+          settled: isSettled,
+        };
       });
 
-      if (allSettled) {
+      nodesRef.current = newNodes;
+      setNodes(newNodes);
+
+      if (nextAllSettled) {
         animationRef.current = null;
         return;
       }
@@ -293,7 +351,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
         cancelAnimationFrame(animationRef.current);
       }
     };
-  }, [nodes.length, dimensions.width, draggedNode]);
+  }, [nodes.length, dimensions.width, draggedNode, simulationVersion, timelineZoom]);
 
   // Handle resize - use full container width
   useEffect(() => {
@@ -390,6 +448,7 @@ export default function ForceDirectedTimeline({ tasks = [], startDate, endDate }
     switch (status) {
       case 'completed': return '#7A9B76';
       case 'in-progress': return '#E8A75D';
+      case 'blocked': return '#D9796A';
       default: return '#8B6F47';
     }
   };

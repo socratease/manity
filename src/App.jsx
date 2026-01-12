@@ -32,6 +32,13 @@ function AppContent() {
     setSettingsData(prev => ({ ...prev, showDataPage: shouldShow }));
   };
 
+  const handleToggleSeasonalTheme = (shouldEnable) => {
+    if (settingsData.setSeasonalThemeEnabled) {
+      settingsData.setSeasonalThemeEnabled(shouldEnable);
+    }
+    setSettingsData(prev => ({ ...prev, seasonalThemeEnabled: shouldEnable }));
+  };
+
   const handleImportWrapper = async (file) => {
     try {
       await handleImport(file, 'merge');
@@ -70,6 +77,8 @@ function AppContent() {
         onRefreshEmailSettings={refreshEmailSettings}
         showDataPage={settingsData.showDataPage}
         onToggleDataPage={handleToggleDataPage}
+        seasonalThemeEnabled={settingsData.seasonalThemeEnabled}
+        onToggleSeasonalTheme={handleToggleSeasonalTheme}
       />
     </>
   );

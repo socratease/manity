@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, useMemo, Suspense } from 'react';
 import { Plus, Users, Clock, TrendingUp, CheckCircle2, Circle, ChevronLeft, ChevronRight, MessageCircle, Sparkles, ArrowLeft, Calendar, AlertCircle, Edit2, Send, ChevronDown, Check, X, MessageSquare, Settings, Lock, Unlock, Trash2, RotateCcw, Search, User, UserCircle } from 'lucide-react';
 import { usePortfolioData } from './hooks/usePortfolioData';
+import { useInitiatives } from './hooks/useInitiatives';
 import { callOpenAIChat } from './lib/llmClient';
 import ForceDirectedTimeline from './components/ForceDirectedTimeline';
 import PeopleGraph from './components/PeopleGraph';
@@ -10,9 +11,11 @@ import PeopleProjectsJuggle from './components/PeopleProjectsJuggle';
 import { supportedMomentumActions, validateThrustActions as validateThrustActionsUtil, resolveMomentumProjectRef as resolveMomentumProjectRefUtil } from './lib/momentumValidation';
 import { MOMENTUM_THRUST_SYSTEM_PROMPT } from './lib/momentumPrompts';
 import { verifyThrustActions } from './lib/momentumVerification';
-import SnowEffect from './components/SnowEffect';
-import ChristmasConfetti from './components/ChristmasConfetti';
+import { useSeasonalEffect, useSeasonalTheme } from './themes/hooks';
+import { parseTaggedText } from './lib/taggedText';
+import { getAllTags } from './lib/tagging';
 import MomentumChatWithAgent from './components/MomentumChatWithAgent';
+import InitiativeContainer from './components/InitiativeContainer';
 import Slides from './components/Slides';
 import DataPage from './components/DataPage';
 
@@ -46,12 +49,14 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     updateActivity,
     deleteActivity: apiDeleteActivity
   } = usePortfolioData();
+  const { initiatives, createInitiative, deleteInitiative } = useInitiatives();
 
   const [showDailyCheckin, setShowDailyCheckin] = useState(false);
   const [selectedProject, setSelectedProject] = useState(null);
   const [checkinNote, setCheckinNote] = useState('');
   const [activeView, setActiveView] = useState('people');
   const [showNewProject, setShowNewProject] = useState(false);
+  const [showNewInitiative, setShowNewInitiative] = useState(false);
   const [viewingProjectId, setViewingProjectId] = useState(null);
   const [newUpdate, setNewUpdate] = useState('');
   const [expandedTasks, setExpandedTasks] = useState({});
@@ -95,6 +100,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [activityEditEnabled, setActivityEditEnabled] = useState(false);
   const [activityEdits, setActivityEdits] = useState({});
   const [projectDeletionEnabled, setProjectDeletionEnabled] = useState(false);
+  const [initiativeDeletionEnabled, setInitiativeDeletionEnabled] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState(null);
   const [deleteConfirmation, setDeleteConfirmation] = useState('');
   const [thrustMessages, setThrustMessages] = useState([]);
@@ -105,10 +111,16 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [thrustRequestStart, setThrustRequestStart] = useState(null);
   const [thrustElapsedMs, setThrustElapsedMs] = useState(0);
   const [expandedMomentumProjects, setExpandedMomentumProjects] = useState({});
+  const [newInitiativeName, setNewInitiativeName] = useState('');
+  const [newInitiativeDescription, setNewInitiativeDescription] = useState('');
+  const [newInitiativeStatus, setNewInitiativeStatus] = useState('planning');
+  const [newInitiativePriority, setNewInitiativePriority] = useState('medium');
+  const [newInitiativeTargetDate, setNewInitiativeTargetDate] = useState('');
   const SIDEBAR_MIN_WIDTH = 200;
   const SIDEBAR_MAX_WIDTH = 360;
   const DEFAULT_SIDEBAR_WIDTH = 238;
   const SIDEBAR_WIDTH_STORAGE_KEY = 'manity_sidebar_width';
+  const SEASONAL_THEME_STORAGE_KEY = 'manity_seasonal_theme_enabled';
 
   const clampSidebarWidth = useCallback(
     (width) => Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, width)),
@@ -200,11 +212,18 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     nextUp: 3
   });
 
-  // Santa-fy mode state (default: enabled)
-  const [isSantafied, setIsSantafied] = useState(() => {
-    const saved = localStorage.getItem('manity_santafied');
-    return saved !== null ? saved === 'true' : true; // Default to true
+  const [seasonalThemeEnabled, setSeasonalThemeEnabled] = useState(() => {
+    const saved = localStorage.getItem(SEASONAL_THEME_STORAGE_KEY);
+    if (saved === null) {
+      return true;
+    }
+    return saved === 'true';
   });
+
+  const seasonalTheme = useSeasonalTheme(undefined, seasonalThemeEnabled);
+  const EffectComponent = useSeasonalEffect(undefined, seasonalThemeEnabled);
+  const showSeasonalBanner = seasonalTheme.id !== 'base';
+  const seasonalBannerGradient = `linear-gradient(90deg, ${seasonalTheme.colors.earth} 0%, ${seasonalTheme.colors.sage} 25%, ${seasonalTheme.colors.amber} 50%, ${seasonalTheme.colors.coral} 75%, ${seasonalTheme.colors.earth} 100%)`;
 
   const [showDataPage, setShowDataPage] = useState(() => {
     const saved = localStorage.getItem('manity_show_data_page');
@@ -306,8 +325,8 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
                 },
                 status: {
                   type: "string",
-                  enum: ["todo", "in-progress", "completed", "planning", "active", "on-hold", "cancelled"],
-                  description: "Status of task, subtask, or project. Use todo/in-progress/completed for tasks; planning/active/on-hold/cancelled/completed for projects (use 'active' instead of 'in_progress')."
+                  enum: ["todo", "in-progress", "completed", "planning", "active", "on-hold", "blocked", "cancelled"],
+                  description: "Status of task, subtask, or project. Use todo/in-progress/completed for tasks; planning/active/on-hold/blocked/cancelled/completed for projects (use 'active' instead of 'in_progress')."
                 },
                 dueDate: {
                   type: "string",
@@ -406,11 +425,6 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     });
   }, [currentSlideIndex, activeView]);
 
-  // Persist Santa-fy mode to localStorage
-  useEffect(() => {
-    localStorage.setItem('manity_santafied', isSantafied.toString());
-  }, [isSantafied]);
-
   useEffect(() => {
     localStorage.setItem('manity_show_data_page', showDataPage ? 'true' : 'false');
     if (!showDataPage && activeView === 'data') {
@@ -418,6 +432,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       window.location.hash = '#/people';
     }
   }, [activeView, showDataPage]);
+
+  useEffect(() => {
+    localStorage.setItem(SEASONAL_THEME_STORAGE_KEY, seasonalThemeEnabled ? 'true' : 'false');
+  }, [seasonalThemeEnabled]);
 
   // Persist sidebar width
   useEffect(() => {
@@ -820,9 +838,9 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
       setCheckinNote('');
 
       // Move to next project the user is a contributor on, or close if done
-      const currentIndex = userProjects.findIndex(p => p.id === projectId);
-      if (currentIndex < userProjects.length - 1) {
-        setSelectedProject(userProjects[currentIndex + 1]);
+      const currentIndex = userActiveProjects.findIndex(p => p.id === projectId);
+      if (currentIndex < userActiveProjects.length - 1) {
+        setSelectedProject(userActiveProjects[currentIndex + 1]);
       } else {
         setShowDailyCheckin(false);
         setSelectedProject(null);
@@ -1517,53 +1535,6 @@ Write a professional executive summary that highlights the project's current sta
     return tasks.sort((a, b) => new Date(a.dueDate || 0) - new Date(b.dueDate || 0));
   };
 
-  // Get all possible tags for autocomplete
-  const getAllTags = () => {
-    const tags = [];
-
-    // Add all people from the database
-    people.forEach(person => {
-      const personString = `${person.name} (${person.team})`;
-      tags.push({ type: 'person', value: person.id, display: personString });
-    });
-
-    // Also add unique stakeholders from projects (for backwards compatibility)
-    const allStakeholders = new Set();
-    visibleProjects.forEach(p => {
-      p.stakeholders.forEach(s => {
-        const stakeholderString = `${s.name} (${s.team})`;
-        if (!people.find(person => person.name === s.name && person.team === s.team)) {
-          allStakeholders.add(stakeholderString);
-        }
-      });
-    });
-    allStakeholders.forEach(name => {
-      tags.push({ type: 'person', value: name, display: name });
-    });
-
-    // Add all projects
-    visibleProjects.forEach(p => {
-      tags.push({ type: 'project', value: p.id, display: p.name });
-
-      // Add all tasks and subtasks
-      p.plan.forEach(task => {
-        tags.push({ type: 'task', value: task.id, display: `${p.name} → ${task.title}`, projectId: p.id });
-        
-        task.subtasks.forEach(subtask => {
-          tags.push({ 
-            type: 'subtask', 
-            value: subtask.id, 
-            display: `${p.name} → ${task.title} → ${subtask.title}`,
-            projectId: p.id,
-            taskId: task.id
-          });
-        });
-      });
-    });
-    
-    return tags;
-  };
-
   // Global search - get filtered results based on query
   const getGlobalSearchResults = (query) => {
     if (!query.trim()) return [];
@@ -1782,62 +1753,6 @@ Write a professional executive summary that highlights the project's current sta
     setCheckinTagSearchTerm('');
   };
 
-  const parseTaggedText = (text) => {
-    if (!text) return [];
-
-    // Parse text with tags in both old format @[Display Name](type:value) and new format @Display
-    const parts = [];
-    let currentIndex = 0;
-
-    // Combined regex: match old format or new format
-    // Old format: @[Display Name](type:value)
-    // New format: @DisplayName (word characters, spaces, and parentheses until space or end)
-    // Mentions must start at the beginning of the string or after whitespace to avoid matching emails
-    const combinedRegex = /(?<!\S)@\[([^\]]+)\]\(([^:]+):([^)]+)\)|(?<!\S)@([\w\s\(\),→.'-]+)(?=\s|$|[.!?])/g;
-    let match;
-
-    while ((match = combinedRegex.exec(text)) !== null) {
-      // Add text before the tag
-      if (match.index > currentIndex) {
-        parts.push({
-          type: 'text',
-          content: text.substring(currentIndex, match.index)
-        });
-      }
-
-      // Add the tag
-      if (match[1]) {
-        // Old format: @[Display](type:value)
-        parts.push({
-          type: 'tag',
-          tagType: match[2],
-          display: match[1],
-          value: match[3]
-        });
-      } else if (match[4]) {
-        // New format: @Display
-        parts.push({
-          type: 'tag',
-          tagType: 'unknown',
-          display: match[4],
-          value: match[4]
-        });
-      }
-
-      currentIndex = match.index + match[0].length;
-    }
-
-    // Add remaining text
-    if (currentIndex < text.length) {
-      parts.push({
-        type: 'text',
-        content: text.substring(currentIndex)
-      });
-    }
-
-    return parts.length > 0 ? parts : [{ type: 'text', content: text }];
-  };
-
   const cloneProjectDeep = (project) => ({
     ...project,
     plan: project.plan.map(task => ({
@@ -1960,6 +1875,14 @@ Write a professional executive summary that highlights the project's current sta
     setNewProjectStakeholders([]);
   };
 
+  const resetNewInitiativeForm = () => {
+    setNewInitiativeName('');
+    setNewInitiativeDescription('');
+    setNewInitiativeStatus('planning');
+    setNewInitiativePriority('medium');
+    setNewInitiativeTargetDate('');
+  };
+
   const handleCreateProject = async () => {
     if (!newProjectName.trim()) return;
 
@@ -2002,6 +1925,28 @@ Write a professional executive summary that highlights the project's current sta
     } catch (error) {
       console.error('Failed to create project:', error);
     }
+  };
+
+  const handleCreateInitiative = async () => {
+    if (!newInitiativeName.trim()) return;
+
+    await createInitiative({
+      name: newInitiativeName.trim(),
+      description: newInitiativeDescription.trim(),
+      status: newInitiativeStatus,
+      priority: newInitiativePriority,
+      targetDate: newInitiativeTargetDate || undefined,
+    });
+
+    setShowNewInitiative(false);
+    resetNewInitiativeForm();
+  };
+
+  const handleDeleteInitiative = async (initiative) => {
+    if (!initiativeDeletionEnabled) return;
+    const confirmed = window.confirm(`Delete initiative "${initiative.name}"? This can't be undone.`);
+    if (!confirmed) return;
+    await deleteInitiative(initiative.id);
   };
 
   const handleStakeholderSelection = (selectedPeople) => {
@@ -2646,6 +2591,60 @@ Write a professional executive summary that highlights the project's current sta
           appendedActionResult = true;
           break;
         }
+        case 'add_stakeholders': {
+          const rawStakeholders = Array.isArray(action.stakeholders)
+            ? action.stakeholders
+            : typeof action.stakeholders === 'string'
+              ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean)
+              : [];
+
+          const stakeholderEntries = rawStakeholders
+            .map(entry => {
+              if (!entry) return null;
+              if (typeof entry === 'string') {
+                return { name: entry };
+              }
+              return {
+                name: entry.name || entry.personName || '',
+                team: entry.team
+              };
+            })
+            .filter(entry => entry?.name)
+            .map(entry => ({ ...entry, name: entry.name.trim() }));
+
+          if (!stakeholderEntries.length) {
+            label = `Skipped action: missing stakeholders for ${project.name}`;
+            detail = `Skipped adding stakeholders because no stakeholder names were provided for ${project.name}.`;
+            break;
+          }
+
+          const normalizedStakeholders = normalizeStakeholderList(stakeholderEntries);
+          const existingStakeholders = project.stakeholders || [];
+          const existingNames = new Set(existingStakeholders.map(s => s.name.toLowerCase()));
+          const addedStakeholders = normalizedStakeholders.filter(s => !existingNames.has(s.name.toLowerCase()));
+
+          if (addedStakeholders.length === 0) {
+            label = `No new stakeholders to add for ${project.name}`;
+            detail = `No changes made because all provided stakeholders already exist on ${project.name}.`;
+            break;
+          }
+
+          const previous = {
+            stakeholders: [...existingStakeholders],
+            lastUpdate: project.lastUpdate
+          };
+
+          project.stakeholders = [...existingStakeholders, ...addedStakeholders];
+          project.lastUpdate = `Added stakeholders: ${addedStakeholders.map(s => s.name).join(', ')}`;
+
+          actionDeltas.push({ type: 'restore_project', projectId: project.id, previous });
+          label = `Added stakeholders to ${project.name}`;
+          detail = `Added ${addedStakeholders.map(s => s.name).join(', ')} to ${project.name}.`;
+          projectsChanged = true;
+          result.updatedProjectIds.add(project.id);
+          await syncStakeholdersToPeople(addedStakeholders);
+          break;
+        }
         case 'update_project': {
           const previous = {
             name: project.name,
@@ -2857,6 +2856,15 @@ Write a professional executive summary that highlights the project's current sta
         return `Update subtask "${action.subtaskTitle || action.title || action.subtaskId || ''}" in ${projectName}`;
       case 'update_project':
         return `Update project ${projectName}: status/progress/date tweaks`;
+      case 'add_stakeholders': {
+        const stakeholders = Array.isArray(action.stakeholders)
+          ? action.stakeholders
+          : typeof action.stakeholders === 'string'
+            ? action.stakeholders.split(',').map(name => name.trim()).filter(Boolean)
+            : [];
+        const stakeholderNames = stakeholders.map(entry => typeof entry === 'string' ? entry : entry?.name).filter(Boolean);
+        return `Add stakeholders ${stakeholderNames.join(', ') || 'to add'} to ${projectName}`;
+      }
       case 'add_person':
         return `Add ${action.name || action.personName || 'a new person'} to People`;
       case 'send_email':
@@ -2903,6 +2911,34 @@ Write a professional executive summary that highlights the project's current sta
 
   // Show all projects, but organize by who is on them
   const visibleProjects = projects.filter(project => project.status !== 'deleted');
+  const allTags = useMemo(() => getAllTags(people, visibleProjects), [people, visibleProjects]);
+
+  // Group projects by initiative for display
+  const { initiativeGroups, ungroupedProjects } = useMemo(() => {
+    const grouped = {};
+    const ungrouped = [];
+
+    // Create a map of initiative ID to initiative
+    const initiativeMap = {};
+    initiatives.forEach(init => {
+      initiativeMap[init.id] = init;
+      grouped[init.id] = { initiative: init, projects: [] };
+    });
+
+    // Group projects
+    visibleProjects.forEach(project => {
+      if (project.initiativeId && grouped[project.initiativeId]) {
+        grouped[project.initiativeId].projects.push(project);
+      } else {
+        ungrouped.push(project);
+      }
+    });
+
+    return {
+      initiativeGroups: Object.values(grouped).filter(g => g.projects.length > 0 || g.initiative),
+      ungroupedProjects: ungrouped,
+    };
+  }, [visibleProjects, initiatives]);
 
   // Filter projects by search query (when search is open) or portfolio filter (persistent)
   const searchFilterProjects = (projectList) => {
@@ -3269,15 +3305,15 @@ PEOPLE & EMAIL ADDRESSES:
   useEffect(() => {
     if (!showDailyCheckin) return;
 
-    if (userProjects.length > 0 && (!selectedProject || !userProjects.some(p => p.id === selectedProject.id))) {
-      setSelectedProject(userProjects[0]);
+    if (userActiveProjects.length > 0 && (!selectedProject || !userActiveProjects.some(p => p.id === selectedProject.id))) {
+      setSelectedProject(userActiveProjects[0]);
     }
 
-    if (showDailyCheckin && userProjects.length === 0) {
+    if (showDailyCheckin && userActiveProjects.length === 0) {
       setShowDailyCheckin(false);
       setSelectedProject(null);
     }
-  }, [showDailyCheckin, userProjects, selectedProject]);
+  }, [showDailyCheckin, userActiveProjects, selectedProject]);
 
   useEffect(() => {
     if (visibleProjects.length === 0) {
@@ -3378,6 +3414,38 @@ PEOPLE & EMAIL ADDRESSES:
       low: 'var(--sage)'
     };
     return colors[priority] || 'var(--stone)';
+  };
+
+  const getInitiativeStatusColor = (status) => {
+    const colors = {
+      planning: 'var(--amber)',
+      active: 'var(--sage)',
+      'on-hold': 'var(--stone)',
+      blocked: 'var(--coral)',
+      cancelled: 'var(--stone)',
+      completed: 'var(--earth)',
+      closed: 'var(--stone)',
+    };
+    return colors[status] || 'var(--stone)';
+  };
+
+  // Generate unique color for each initiative from a harmonious palette
+  const getInitiativeColor = (initiativeId) => {
+    const palette = [
+      '#8B6F47', // earth
+      '#7A9B76', // sage
+      '#D67C5C', // coral
+      '#E8A75D', // amber
+      '#6B8B9B', // slate blue
+      '#9B7B8B', // mauve
+      '#8B9B6F', // olive
+      '#9B8B6F', // tan
+      '#7B8B9B', // steel
+      '#8B7B6F', // taupe
+    ];
+    // Use initiative ID to deterministically pick a color
+    const hash = initiativeId.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+    return palette[hash % palette.length];
   };
 
   const handleSlideAdvance = (direction) => {
@@ -3730,7 +3798,16 @@ PEOPLE & EMAIL ADDRESSES:
   };
 
   return (
-    <>
+    <div style={{
+      '--earth': seasonalTheme.colors.earth,
+      '--sage': seasonalTheme.colors.sage,
+      '--coral': seasonalTheme.colors.coral,
+      '--amber': seasonalTheme.colors.amber,
+      '--cream': seasonalTheme.colors.cream,
+      '--cloud': seasonalTheme.colors.cloud,
+      '--stone': seasonalTheme.colors.stone,
+      '--charcoal': seasonalTheme.colors.charcoal
+    }}>
       <style>{`
         @keyframes fadeInUp {
           from {
@@ -3888,7 +3965,7 @@ PEOPLE & EMAIL ADDRESSES:
                       data-search-index={idx}
                       style={{
                         ...styles.globalSearchResultItem,
-                        backgroundColor: idx === globalSearchSelectedIndex ? 'var(--cream)' : 'transparent'
+                        backgroundColor: idx === globalSearchSelectedIndex ? 'var(--cloud)' : 'transparent'
                       }}
                       onClick={() => handleGlobalSearchSelect(result)}
                       onMouseEnter={() => setGlobalSearchSelectedIndex(idx)}
@@ -3924,23 +4001,23 @@ PEOPLE & EMAIL ADDRESSES:
         </div>
       )}
 
-      {/* Festive Banner */}
-      {isSantafied && (
+      {/* Seasonal Banner */}
+      {showSeasonalBanner && (
         <div style={{
           position: 'fixed',
           top: 0,
           left: 0,
           right: 0,
           height: '3px',
-          background: 'linear-gradient(90deg, #C41E3A 0%, #165B33 25%, #FFD700 50%, #C41E3A 75%, #165B33 100%)',
+          background: seasonalBannerGradient,
           backgroundSize: '200% 100%',
-          animation: 'festiveSlide 3s linear infinite',
+          animation: 'seasonalSlide 3s linear infinite',
           zIndex: 9999,
         }} />
       )}
       <style>
-        {isSantafied && `
-          @keyframes festiveSlide {
+        {showSeasonalBanner && `
+          @keyframes seasonalSlide {
             0% { background-position: 0% 0%; }
             100% { background-position: 200% 0%; }
           }
@@ -3949,18 +4026,8 @@ PEOPLE & EMAIL ADDRESSES:
 
       <div style={{
         ...styles.container,
-        ...(isSantafied && {
-          '--earth': '#C41E3A',     // Classic Christmas red
-          '--sage': '#165B33',      // Deep Christmas green
-          '--coral': '#FF6B6B',     // Bright festive red
-          '--amber': '#FFD700',     // Gold
-          '--cream': '#FFFAF0',     // Warm ivory
-          '--cloud': '#F0E6E6',     // Light pink-tinted cloud
-          '--stone': '#8B4513',     // Warm brown
-          '--charcoal': '#2C1810',  // Deep brown
-          backgroundColor: '#FFFAF0',  // Warm ivory background
-          transition: 'background-color 0.5s ease',
-        })
+        backgroundColor: seasonalTheme.colors.cream,
+        transition: 'background-color 0.5s ease',
       }}>
       {/* Daily Check-in Modal */}
       {showDailyCheckin && selectedProject && (
@@ -4058,7 +4125,7 @@ PEOPLE & EMAIL ADDRESSES:
                   onChange={handleCheckinNoteChange}
                   onKeyDown={(e) => {
                     if (showCheckinTagSuggestions) {
-                      const filteredTags = getAllTags()
+                      const filteredTags = allTags
                         .filter(tag =>
                           tag.display.toLowerCase().includes(checkinTagSearchTerm.toLowerCase())
                         )
@@ -4097,7 +4164,7 @@ PEOPLE & EMAIL ADDRESSES:
                 {/* Tag Suggestions Dropdown for Daily Check-in */}
                 {showCheckinTagSuggestions && (
                   <div style={styles.tagSuggestions}>
-                    {getAllTags()
+                    {allTags
                       .filter(tag =>
                         tag.display.toLowerCase().includes(checkinTagSearchTerm.toLowerCase())
                       )
@@ -4148,9 +4215,9 @@ PEOPLE & EMAIL ADDRESSES:
                 <button
                   onClick={() => {
                     // Skip to next project the user is a contributor on
-                    const currentIndex = userProjects.findIndex(p => p.id === selectedProject.id);
-                    if (currentIndex < userProjects.length - 1) {
-                      setSelectedProject(userProjects[currentIndex + 1]);
+                    const currentIndex = userActiveProjects.findIndex(p => p.id === selectedProject.id);
+                    if (currentIndex < userActiveProjects.length - 1) {
+                      setSelectedProject(userActiveProjects[currentIndex + 1]);
                       setCheckinNote('');
                     } else {
                       setShowDailyCheckin(false);
@@ -4190,13 +4257,13 @@ PEOPLE & EMAIL ADDRESSES:
               </p>
 
               <div style={styles.progressIndicator}>
-                {userProjects.map((p, idx) => (
+                {userActiveProjects.map((p, idx) => (
                   <div
                     key={p.id}
                     style={{
                       ...styles.progressDot,
                       backgroundColor: p.id === selectedProject.id ? 'var(--amber)' : 'var(--cloud)',
-                      opacity: idx <= userProjects.indexOf(selectedProject) ? 1 : 0.3
+                      opacity: idx <= userActiveProjects.indexOf(selectedProject) ? 1 : 0.3
                     }}
                   />
                 ))}
@@ -4436,18 +4503,18 @@ PEOPLE & EMAIL ADDRESSES:
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', marginRight: '12px' }}>
                 <button
                   onClick={() => {
-                    if (userProjects.length > 0) {
-                      setSelectedProject(userProjects[0]);
+                    if (userActiveProjects.length > 0) {
+                      setSelectedProject(userActiveProjects[0]);
                       setShowDailyCheckin(true);
                     }
                   }}
                   style={{
                     ...styles.dailyUpdateButton,
-                    opacity: userProjects.length === 0 ? 0.5 : 1,
-                    cursor: userProjects.length === 0 ? 'not-allowed' : 'pointer'
+                    opacity: userActiveProjects.length === 0 ? 0.5 : 1,
+                    cursor: userActiveProjects.length === 0 ? 'not-allowed' : 'pointer'
                   }}
-                  disabled={userProjects.length === 0}
-                  title={userProjects.length === 0 ? 'No projects you are a contributor on' : 'Start a daily check-in for your projects'}
+                  disabled={userActiveProjects.length === 0}
+                  title={userActiveProjects.length === 0 ? 'No active projects you are a contributor on' : 'Start a daily check-in for your projects'}
                 >
                   Daily Update
                 </button>
@@ -4457,18 +4524,6 @@ PEOPLE & EMAIL ADDRESSES:
               </div>
             )}
             <button
-              onClick={() => setIsSantafied(!isSantafied)}
-              style={{
-                ...styles.settingsIconButton,
-                marginRight: '8px',
-                fontSize: '18px'
-              }}
-              title={isSantafied ? 'Disable Santa-fy mode' : 'Enable Santa-fy mode'}
-              aria-label={isSantafied ? 'Disable Santa-fy mode' : 'Enable Santa-fy mode'}
-            >
-              {isSantafied ? '🎅' : '❄️'}
-            </button>
-            <button
               onClick={() => onOpenSettings({
                 loggedInUser,
                 setLoggedInUser: (newUser) => {
@@ -4477,7 +4532,9 @@ PEOPLE & EMAIL ADDRESSES:
                 },
                 allStakeholders: getAllStakeholders(),
                 showDataPage,
-                setShowDataPage
+                setShowDataPage,
+                seasonalThemeEnabled,
+                setSeasonalThemeEnabled
               })}
               style={styles.settingsIconButton}
               aria-label="Open settings"
@@ -4633,11 +4690,18 @@ PEOPLE & EMAIL ADDRESSES:
                         <option value="planning">Planning</option>
                         <option value="active">Active</option>
                         <option value="on-hold">On Hold</option>
+                        <option value="blocked">Blocked</option>
                         <option value="completed">Completed</option>
                         <option value="closed">Closed</option>
                       </select>
                     ) : (
-                      <span style={styles.statusBadgeSmall}>{viewingProject.status}</span>
+                      <span style={{
+                        ...styles.statusBadgeSmall,
+                        backgroundColor: getInitiativeStatusColor(viewingProject.status) + '20',
+                        color: getInitiativeStatusColor(viewingProject.status),
+                      }}>
+                        {viewingProject.status}
+                      </span>
                     )}
                   </div>
                   <div style={styles.compactInfoItem}>
@@ -5581,7 +5645,7 @@ PEOPLE & EMAIL ADDRESSES:
                       onBlur={() => setFocusedField(null)}
                       onKeyDown={(e) => {
                         if (showProjectTagSuggestions) {
-                          const filteredTags = getAllTags()
+                          const filteredTags = allTags
                             .filter(tag =>
                               tag.display.toLowerCase().includes(projectTagSearchTerm.toLowerCase())
                             )
@@ -5619,7 +5683,7 @@ PEOPLE & EMAIL ADDRESSES:
                   {/* Tag Suggestions Dropdown */}
                   {showProjectTagSuggestions && (
                       <div style={styles.tagSuggestions}>
-                        {getAllTags()
+                        {allTags
                           .filter(tag =>
                             tag.display.toLowerCase().includes(projectTagSearchTerm.toLowerCase())
                           )
@@ -5770,7 +5834,7 @@ PEOPLE & EMAIL ADDRESSES:
                     onBlur={() => setFocusedField(null)}
                     onKeyDown={(e) => {
                       if (showTagSuggestions) {
-                        const filteredTags = getAllTags()
+                        const filteredTags = allTags
                           .filter(tag =>
                             tag.display.toLowerCase().includes(tagSearchTerm.toLowerCase())
                           )
@@ -5808,7 +5872,7 @@ PEOPLE & EMAIL ADDRESSES:
                   {/* Tag Suggestions Dropdown */}
                   {showTagSuggestions && (
                     <div style={styles.tagSuggestions}>
-                      {getAllTags()
+                      {allTags
                         .filter(tag =>
                           tag.display.toLowerCase().includes(tagSearchTerm.toLowerCase())
                         )
@@ -5975,8 +6039,8 @@ PEOPLE & EMAIL ADDRESSES:
               onUndoAction={undoThrustAction}
               loggedInUser={loggedInUser}
               people={people}
-              isSantafied={isSantafied}
               recentlyUpdatedProjects={recentlyUpdatedProjects}
+              seasonalThemeEnabled={seasonalThemeEnabled}
             />
           </div>
         ) : activeView === 'slides' ? (
@@ -6036,7 +6100,7 @@ PEOPLE & EMAIL ADDRESSES:
               <PeopleProjectsJuggle
                 projects={visibleProjects}
                 people={people}
-                isSantafied={isSantafied}
+                seasonalThemeEnabled={seasonalThemeEnabled}
               />
             </div>
             <header style={styles.header}>
@@ -6049,33 +6113,141 @@ PEOPLE & EMAIL ADDRESSES:
               <div style={styles.headerActions}>
                 <div style={styles.primaryActionGroup}>
                   <button
+                    onClick={() => setShowNewInitiative(prev => !prev)}
+                    style={styles.secondaryButton}
+                  >
+                    <Plus size={16} />
+                    New Initiative
+                  </button>
+                  <button
                     onClick={() => setShowNewProject(prev => !prev)}
                     style={styles.newProjectButton}
                   >
-                    <Plus size={18} />
+                    <Plus size={16} />
                     New Project
                   </button>
-                </div>
-                <div style={styles.lockControlGroup}>
-                  <div style={styles.lockHint}>
-                    <span style={styles.lockHintTitle}>Delete projects</span>
-                    <span style={styles.lockHintSubtitle}>Unlock to enable deletion</span>
-                  </div>
                   <button
-                    onClick={() => setProjectDeletionEnabled(prev => !prev)}
-                    style={{
-                      ...styles.activityLockButton,
-                      backgroundColor: projectDeletionEnabled ? 'var(--coral)' + '12' : '#FFFFFF',
-                      borderColor: projectDeletionEnabled ? 'var(--coral)' : 'var(--cloud)',
-                      color: projectDeletionEnabled ? 'var(--coral)' : 'var(--charcoal)'
+                    onClick={() => {
+                      const newValue = !projectDeletionEnabled;
+                      setProjectDeletionEnabled(newValue);
+                      setInitiativeDeletionEnabled(newValue);
                     }}
-                    title={projectDeletionEnabled ? 'Lock to disable project deletion' : 'Unlock to delete projects'}
+                    style={{
+                      ...styles.secondaryButton,
+                      backgroundColor: projectDeletionEnabled ? 'var(--coral)' + '15' : '#FAFAF8',
+                      borderColor: projectDeletionEnabled ? 'var(--coral)' : '#E8E3D8',
+                      color: projectDeletionEnabled ? 'var(--coral)' : '#6B6554'
+                    }}
+                    title={projectDeletionEnabled ? 'Lock to disable deletion' : 'Unlock to delete projects & initiatives'}
                   >
-                    {projectDeletionEnabled ? <Unlock size={18} /> : <Lock size={18} />}
+                    {projectDeletionEnabled ? <Unlock size={16} /> : <Lock size={16} />}
+                    Delete
                   </button>
                 </div>
               </div>
             </header>
+
+            {showNewInitiative && (
+              <div style={styles.newProjectPanel}>
+                <div style={styles.sectionHeaderRow}>
+                  <div>
+                    <h3 style={styles.sectionTitle}>New initiative</h3>
+                    <p style={styles.sectionSubtitle}>Define the umbrella effort for related projects.</p>
+                  </div>
+                </div>
+                <div style={styles.newProjectFormGrid}>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Name</label>
+                    <input
+                      type="text"
+                      value={newInitiativeName}
+                      onChange={(e) => setNewInitiativeName(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.ctrlKey && e.key === 'Enter') {
+                          e.preventDefault();
+                          handleCreateInitiative();
+                        }
+                      }}
+                      placeholder="What are we rallying around?"
+                      style={styles.input}
+                      autoFocus
+                    />
+                  </div>
+                  <div style={{ ...styles.formField, gridColumn: 'span 2' }}>
+                    <label style={styles.formLabel}>Description</label>
+                    <textarea
+                      value={newInitiativeDescription}
+                      onChange={(e) => setNewInitiativeDescription(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.ctrlKey && e.key === 'Enter') {
+                          e.preventDefault();
+                          handleCreateInitiative();
+                        }
+                      }}
+                      placeholder="What outcome does this initiative drive?"
+                      style={styles.projectUpdateInput}
+                    />
+                  </div>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Priority</label>
+                    <select
+                      value={newInitiativePriority}
+                      onChange={(e) => setNewInitiativePriority(e.target.value)}
+                      style={styles.select}
+                    >
+                      <option value="high">High</option>
+                      <option value="medium">Medium</option>
+                      <option value="low">Low</option>
+                    </select>
+                  </div>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Status</label>
+                    <select
+                      value={newInitiativeStatus}
+                      onChange={(e) => setNewInitiativeStatus(e.target.value)}
+                      style={styles.select}
+                    >
+                      <option value="planning">Planning</option>
+                      <option value="active">Active</option>
+                      <option value="on-hold">On Hold</option>
+                      <option value="completed">Completed</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+                  </div>
+                  <div style={styles.formField}>
+                    <label style={styles.formLabel}>Target date</label>
+                    <input
+                      type="date"
+                      value={newInitiativeTargetDate}
+                      onChange={(e) => setNewInitiativeTargetDate(e.target.value)}
+                      style={styles.input}
+                    />
+                  </div>
+                </div>
+                <div style={styles.newProjectActions}>
+                  <button
+                    onClick={handleCreateInitiative}
+                    disabled={!newInitiativeName.trim()}
+                    style={{
+                      ...styles.primaryButton,
+                      opacity: newInitiativeName.trim() ? 1 : 0.5,
+                      cursor: newInitiativeName.trim() ? 'pointer' : 'not-allowed'
+                    }}
+                  >
+                    Create initiative
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowNewInitiative(false);
+                      resetNewInitiativeForm();
+                    }}
+                    style={styles.skipButton}
+                  >
+                    Cancel
+                  </button>
+                </div>
+              </div>
+            )}
 
             {showNewProject && (
               <div style={styles.newProjectPanel}>
@@ -6139,6 +6311,7 @@ PEOPLE & EMAIL ADDRESSES:
                     >
                       <option value="planning">Planning</option>
                       <option value="active">Active</option>
+                      <option value="blocked">Blocked</option>
                       <option value="completed">Completed</option>
                     </select>
                   </div>
@@ -6198,68 +6371,96 @@ PEOPLE & EMAIL ADDRESSES:
                 </div>
               ) : (
                 <>
-                  {/* Your Active Projects */}
-                  <div style={styles.sectionHeaderRow}>
-                    <div>
-                      <h3 style={styles.sectionTitle}>Your Active Projects</h3>
-                      <p style={styles.sectionSubtitle}>{userActiveProjects.length} in progress</p>
-                    </div>
-                  </div>
+                  {/* Active Projects Section */}
+                  <>
+                    {/* Render active initiatives with their active projects */}
+                    {initiativeGroups.map(({ initiative, projects: initiativeProjects }) => {
+                      const activeProjects = searchFilterProjects(
+                        initiativeProjects.filter(p => !['completed', 'closed'].includes(p.status))
+                      );
+                      if (activeProjects.length === 0) return null;
 
-                  {userActiveProjects.length === 0 ? (
-                    <div style={styles.emptyState}>
-                      {loggedInUser ? `No active projects for ${loggedInUser}.` : 'No active projects for you.'}
-                    </div>
-                  ) : (
-                    <div style={styles.projectsGrid}>
-                      {userActiveProjects.map((project, index) => renderProjectCard(project, index))}
-                    </div>
-                  )}
+                      return (
+                        <InitiativeContainer
+                          key={`${initiative.id}-active`}
+                          initiative={{
+                            ...initiative,
+                            projects: activeProjects,
+                          }}
+                          getPriorityColor={getPriorityColor}
+                          getStatusColor={() => getInitiativeColor(initiative.id)}
+                          deletionEnabled={initiativeDeletionEnabled}
+                          onDelete={handleDeleteInitiative}
+                        >
+                          {activeProjects.map((project, index) => renderProjectCard(project, index))}
+                        </InitiativeContainer>
+                      );
+                    })}
 
-                  {/* Other Active Projects */}
-                  {otherActiveProjects.length > 0 && (
-                    <div style={{ marginTop: '32px' }}>
-                      <div style={styles.sectionHeaderRow}>
-                        <div>
-                          <h3 style={styles.sectionTitle}>Other Active Projects</h3>
-                          <p style={styles.sectionSubtitle}>{otherActiveProjects.length} in progress</p>
+                    {/* Render active ungrouped projects */}
+                    {(() => {
+                      const activeUngrouped = searchFilterProjects(
+                        ungroupedProjects.filter(p => !['completed', 'closed'].includes(p.status))
+                      );
+                      if (activeUngrouped.length === 0) return null;
+                      return (
+                        <div style={styles.projectsGrid}>
+                          {activeUngrouped.map((project, index) => renderProjectCard(project, index))}
                         </div>
-                      </div>
-                      <div style={styles.projectsGrid}>
-                        {otherActiveProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length))}
-                      </div>
-                    </div>
-                  )}
+                      );
+                    })()}
+                  </>
 
-                  {/* Your Completed Projects */}
-                  {userCompletedProjects.length > 0 && (
-                    <div style={{ marginTop: '32px' }}>
-                      <div style={styles.sectionHeaderRow}>
-                        <div>
-                          <h3 style={styles.sectionTitle}>Your Completed & Closed</h3>
-                          <p style={styles.sectionSubtitle}>{userCompletedProjects.length} wrapped up</p>
-                        </div>
-                      </div>
-                      <div style={styles.projectsGrid}>
-                        {userCompletedProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length + otherActiveProjects.length))}
-                      </div>
-                    </div>
-                  )}
+                  {/* Closed/Completed Projects Section */}
+                  {(() => {
+                    const hasClosedProjects = visibleProjects.some(p => ['completed', 'closed'].includes(p.status));
+                    if (!hasClosedProjects) return null;
 
-                  {/* Other Completed Projects */}
-                  {otherCompletedProjects.length > 0 && (
-                    <div style={{ marginTop: '32px' }}>
-                      <div style={styles.sectionHeaderRow}>
-                        <div>
-                          <h3 style={styles.sectionTitle}>Other Completed & Closed</h3>
-                          <p style={styles.sectionSubtitle}>{otherCompletedProjects.length} wrapped up</p>
+                    return (
+                      <>
+                        <div style={{ marginTop: '48px', marginBottom: '24px' }}>
+                          <h3 style={styles.sectionTitle}>Completed & Closed Projects</h3>
                         </div>
-                      </div>
-                      <div style={styles.projectsGrid}>
-                        {otherCompletedProjects.map((project, index) => renderProjectCard(project, index + userActiveProjects.length + otherActiveProjects.length + userCompletedProjects.length))}
-                      </div>
-                    </div>
-                  )}
+
+                        {/* Render closed initiatives with their closed projects */}
+                        {initiativeGroups.map(({ initiative, projects: initiativeProjects }) => {
+                          const closedProjects = searchFilterProjects(
+                            initiativeProjects.filter(p => ['completed', 'closed'].includes(p.status))
+                          );
+                          if (closedProjects.length === 0) return null;
+
+                          return (
+                            <InitiativeContainer
+                              key={`${initiative.id}-closed`}
+                              initiative={{
+                                ...initiative,
+                                projects: closedProjects,
+                              }}
+                              getPriorityColor={getPriorityColor}
+                              getStatusColor={() => getInitiativeColor(initiative.id)}
+                              deletionEnabled={initiativeDeletionEnabled}
+                              onDelete={handleDeleteInitiative}
+                            >
+                              {closedProjects.map((project, index) => renderProjectCard(project, index))}
+                            </InitiativeContainer>
+                          );
+                        })}
+
+                        {/* Render closed ungrouped projects */}
+                        {(() => {
+                          const closedUngrouped = searchFilterProjects(
+                            ungroupedProjects.filter(p => ['completed', 'closed'].includes(p.status))
+                          );
+                          if (closedUngrouped.length === 0) return null;
+                          return (
+                            <div style={styles.projectsGrid}>
+                              {closedUngrouped.map((project, index) => renderProjectCard(project, index))}
+                            </div>
+                          );
+                        })()}
+                      </>
+                    );
+                  })()}
                 </>
               )}
             </div>
@@ -6274,15 +6475,14 @@ PEOPLE & EMAIL ADDRESSES:
         onSave={handleCreateNewPerson}
       />
 
-      {/* Santa-fy Effects */}
-      {isSantafied && (
-        <>
-          <SnowEffect />
-          <ChristmasConfetti />
-        </>
+      {/* Seasonal Effects */}
+      {EffectComponent && (
+        <Suspense fallback={null}>
+          <EffectComponent />
+        </Suspense>
       )}
     </div>
-    </>
+    </div>
   );
 }
 
@@ -6440,21 +6640,21 @@ const styles = {
   },
 
   newProjectButton: {
-    padding: '12px 18px',
+    padding: '8px 14px',
     border: '1px solid var(--earth)',
     backgroundColor: 'var(--earth)',
     color: '#FFFFFF',
-    fontSize: '15px',
+    fontSize: '13px',
     fontFamily: "'Inter', sans-serif",
     cursor: 'pointer',
-    borderRadius: '999px',
+    borderRadius: '8px',
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'center',
-    gap: '8px',
+    gap: '6px',
     transition: 'all 0.2s ease',
-    fontWeight: '700',
-    boxShadow: '0 10px 30px rgba(139, 111, 71, 0.25)',
+    fontWeight: '600',
+    boxShadow: '0 2px 8px rgba(139, 111, 71, 0.15)',
   },
 
   settingsIconButton: {
@@ -6977,11 +7177,85 @@ const styles = {
     gap: '16px',
   },
 
+  initiativesSection: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '16px',
+    marginBottom: '24px',
+  },
+
+  initiativesGrid: {
+    display: 'grid',
+    gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))',
+    gap: '20px',
+  },
+
   sectionHeaderRow: {
     display: 'flex',
     alignItems: 'center',
     justifyContent: 'space-between',
     gap: '12px',
+  },
+
+  initiativeCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: '12px',
+    padding: '18px',
+    border: '1px solid var(--cloud)',
+    boxShadow: '0 1px 4px rgba(0,0,0,0.06)',
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '12px',
+  },
+
+  initiativeCardHeader: {
+    display: 'flex',
+    justifyContent: 'space-between',
+    gap: '12px',
+    alignItems: 'flex-start',
+  },
+
+  initiativeTitle: {
+    fontSize: '16px',
+    fontWeight: '700',
+    color: 'var(--charcoal)',
+    margin: 0,
+  },
+
+  initiativeDescription: {
+    margin: '6px 0 0',
+    fontSize: '13px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+    lineHeight: '1.5',
+  },
+
+  initiativeBadgeRow: {
+    display: 'flex',
+    flexDirection: 'column',
+    gap: '6px',
+    alignItems: 'flex-end',
+  },
+
+  initiativeMetaRow: {
+    display: 'flex',
+    gap: '12px',
+    flexWrap: 'wrap',
+    fontSize: '12px',
+    color: 'var(--stone)',
+    fontFamily: "'Inter', sans-serif",
+  },
+
+  initiativeMetaItem: {
+    padding: '4px 8px',
+    borderRadius: '999px',
+    backgroundColor: 'var(--cream)',
+    border: '1px solid var(--cloud)',
+  },
+
+  initiativeActions: {
+    display: 'flex',
+    justifyContent: 'flex-end',
   },
 
   projectCard: {
@@ -7506,16 +7780,19 @@ const styles = {
   },
 
   secondaryButton: {
-    padding: '12px 16px',
-    borderRadius: '10px',
-    border: '1px solid var(--cloud)',
-    backgroundColor: '#FFFFFF',
-    color: 'var(--charcoal)',
-    fontSize: '14px',
+    padding: '8px 14px',
+    borderRadius: '8px',
+    border: '1px solid #E8E3D8',
+    backgroundColor: '#FAFAF8',
+    color: '#6B6554',
+    fontSize: '13px',
     fontFamily: "'Inter', sans-serif",
     fontWeight: '600',
     cursor: 'pointer',
     transition: 'all 0.2s ease',
+    display: 'flex',
+    alignItems: 'center',
+    gap: '6px',
   },
 
   dangerButton: {
@@ -9126,6 +9403,7 @@ const styles = {
   },
 
   tagInlineCompact: {
+    display: 'inline-flex',
     padding: '1px 6px',
     borderRadius: '3px',
     backgroundColor: 'var(--amber)' + '20',
@@ -9133,6 +9411,8 @@ const styles = {
     fontSize: '13px',
     fontFamily: "'Inter', sans-serif",
     fontWeight: '600',
+    whiteSpace: 'nowrap',
+    width: 'fit-content',
   },
 
   // Thrust View

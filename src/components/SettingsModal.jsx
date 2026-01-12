@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from "react";
-import { Download, Upload, Mail, User, Database, RefreshCw, Save, X } from "lucide-react";
+import { Download, Upload, Mail, User, Database, RefreshCw, Save, X, Sparkles } from "lucide-react";
 
 export default function SettingsModal({
   isOpen,
@@ -14,7 +14,9 @@ export default function SettingsModal({
   onSaveEmailSettings,
   onRefreshEmailSettings,
   showDataPage,
-  onToggleDataPage
+  onToggleDataPage,
+  seasonalThemeEnabled,
+  onToggleSeasonalTheme
 }) {
   const [exportTarget, setExportTarget] = useState("all");
   const importInputRef = useRef(null);
@@ -287,6 +289,27 @@ export default function SettingsModal({
                 style={styles.checkbox}
               />
               Show Data page
+            </label>
+          </div>
+        )}
+
+        {typeof seasonalThemeEnabled === 'boolean' && onToggleSeasonalTheme && (
+          <div style={{ ...styles.section, marginTop: 8 }}>
+            <div style={styles.sectionHeader}>
+              <Sparkles size={18} style={styles.sectionIcon} />
+              <h3 style={styles.sectionTitle}>Appearance</h3>
+            </div>
+            <p style={styles.description}>
+              Enable seasonal colors and effects across the app.
+            </p>
+            <label style={styles.checkboxLabel}>
+              <input
+                type="checkbox"
+                checked={!!seasonalThemeEnabled}
+                onChange={(e) => onToggleSeasonalTheme(e.target.checked)}
+                style={styles.checkbox}
+              />
+              Enable seasonal themes
             </label>
           </div>
         )}

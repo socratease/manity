@@ -10,6 +10,7 @@ from sqlmodel import Field, Relationship, SQLModel
 if TYPE_CHECKING:
     from .person import Person
     from .activity import Activity
+    from .initiative import Initiative
 
 
 class Stakeholder(BaseModel):
@@ -100,6 +101,10 @@ class ProjectBase(SQLModel):
 class Project(ProjectBase, table=True):
     """Project entity representing a portfolio project."""
     id: Optional[str] = Field(default=None, primary_key=True)
+    initiative_id: Optional[str] = Field(
+        default=None,
+        sa_column=Column("initiative_id", String, ForeignKey("initiative.id", ondelete="SET NULL"), nullable=True),
+    )
     plan: list[Task] = Relationship(
         back_populates="project",
         sa_relationship_kwargs={"cascade": "all, delete-orphan"},
@@ -112,3 +117,4 @@ class Project(ProjectBase, table=True):
         back_populates="projects",
         link_model=ProjectPersonLink,
     )
+    initiative: Optional["Initiative"] = Relationship(back_populates="projects")

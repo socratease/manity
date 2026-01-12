@@ -4,6 +4,7 @@ Models module for the Manity application.
 This module contains all SQLModel definitions organized by domain:
 - person: Person-related models
 - project: Project, Task, and Subtask models
+- initiative: Initiative models for grouping projects
 - activity: Activity/update models
 - settings: Email settings, audit log, and migration state
 """
@@ -22,6 +23,9 @@ from .project import (
     Task,
     TaskBase,
 )
+
+# Initiative models
+from .initiative import Initiative, InitiativeBase, InitiativePersonLink
 
 # Activity models
 from .activity import Activity, ActivityBase
@@ -43,6 +47,10 @@ __all__ = [
     "SubtaskBase",
     "Task",
     "TaskBase",
+    # Initiative models
+    "Initiative",
+    "InitiativeBase",
+    "InitiativePersonLink",
     # Activity models
     "Activity",
     "ActivityBase",

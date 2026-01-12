@@ -1,4 +1,4 @@
-import { lazy, useMemo, ComponentType } from 'react';
+import { lazy, useMemo, createElement } from 'react';
 import { useSeasonalTheme } from './useSeasonalTheme';
 import type { ThemeEffect } from '../types';
 
@@ -32,8 +32,8 @@ const HeartsEffect = lazy(() => import('../effects/HeartsEffect'));
  * }
  * ```
  */
-export function useSeasonalEffect(dateOverride?: Date) {
-  const theme = useSeasonalTheme(dateOverride);
+export function useSeasonalEffect(dateOverride?: Date, isEnabled: boolean = true) {
+  const theme = useSeasonalTheme(dateOverride, isEnabled);
   const effect = theme.effect;
 
   // Memoize the component selection and configuration to avoid recreating on every render
@@ -45,7 +45,8 @@ export function useSeasonalEffect(dateOverride?: Date) {
         // ConfettiEffect requires emojis prop, so we create a configured wrapper
         if (!effect.emojis) return null;
         // Return a component that renders ConfettiEffect with the emojis
-        const ConfiguredConfetti = () => <ConfettiEffect emojis={effect.emojis || []} />;
+        const ConfiguredConfetti = () =>
+          createElement(ConfettiEffect, { emojis: effect.emojis || [] });
         // Set display name for debugging
         ConfiguredConfetti.displayName = 'ConfiguredConfetti';
         return ConfiguredConfetti;
@@ -85,12 +86,12 @@ export function useSeasonalEffect(dateOverride?: Date) {
  * }
  * ```
  */
-export function useSeasonalEffectWithConfig(dateOverride?: Date): {
+export function useSeasonalEffectWithConfig(dateOverride?: Date, isEnabled: boolean = true): {
   EffectComponent: React.LazyExoticComponent<() => JSX.Element> | null;
   config: ThemeEffect;
 } {
-  const theme = useSeasonalTheme(dateOverride);
-  const EffectComponent = useSeasonalEffect(dateOverride);
+  const theme = useSeasonalTheme(dateOverride, isEnabled);
+  const EffectComponent = useSeasonalEffect(dateOverride, isEnabled);
 
   return {
     EffectComponent,

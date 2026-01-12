@@ -1,5 +1,6 @@
-import { useMemo, useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { getActiveTheme } from '../seasonManager';
+import { baseTheme } from '../colors';
 import type { SeasonalTheme } from '../types';
 
 /**
@@ -21,38 +22,35 @@ import type { SeasonalTheme } from '../types';
  * // Testing with a specific date
  * const christmasTheme = useSeasonalTheme(new Date('2025-12-25'));
  */
-export function useSeasonalTheme(dateOverride?: Date): SeasonalTheme {
-  // Calculate the active theme based on the current or overridden date
-  const activeTheme = useMemo(() => {
-    return getActiveTheme(dateOverride);
-  }, [dateOverride]);
-
+export function useSeasonalTheme(dateOverride?: Date, isEnabled: boolean = true): SeasonalTheme {
   // Track the current theme in state for potential future animations/transitions
-  const [currentTheme, setCurrentTheme] = useState<SeasonalTheme>(activeTheme);
+  const [currentTheme, setCurrentTheme] = useState<SeasonalTheme>(() =>
+    isEnabled ? getActiveTheme(dateOverride) : baseTheme,
+  );
 
   // Update theme when the active theme changes (e.g., crossing a seasonal boundary)
   useEffect(() => {
-    setCurrentTheme(activeTheme);
-  }, [activeTheme]);
+    setCurrentTheme(isEnabled ? getActiveTheme(dateOverride) : baseTheme);
+  }, [dateOverride, isEnabled]);
 
   // If dateOverride is provided, check daily for theme changes
   // This allows the theme to update automatically at midnight
   useEffect(() => {
     // Only set up the interval if we're using the current date (no override)
-    if (dateOverride) {
+    if (dateOverride || !isEnabled) {
       return;
     }
 
     // Check every hour if we've crossed into a new seasonal boundary
     const checkInterval = setInterval(() => {
-      const newTheme = getActiveTheme();
+      const newTheme = getActiveTheme(dateOverride);
       if (newTheme.id !== currentTheme.id) {
         setCurrentTheme(newTheme);
       }
     }, 60 * 60 * 1000); // Check every hour
 
     return () => clearInterval(checkInterval);
-  }, [dateOverride, currentTheme.id]);
+  }, [dateOverride, currentTheme.id, isEnabled]);
 
   return currentTheme;
 }

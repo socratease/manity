@@ -106,6 +106,7 @@ export function applyDelta(
       if (delta.previous.targetDate !== undefined) project.targetDate = delta.previous.targetDate;
       if (delta.previous.startDate !== undefined) project.startDate = delta.previous.startDate;
       if (delta.previous.lastUpdate !== undefined) project.lastUpdate = delta.previous.lastUpdate;
+      if (delta.previous.stakeholders !== undefined) project.stakeholders = delta.previous.stakeholders;
       modified = true;
       break;
     }

@@ -10,7 +10,7 @@
  * - Human-in-the-loop support via ask_user tool
  */
 
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { createProjectManagementAgent, defaultAgentConfig, type AgentConfig } from './agent';
 import {
   createToolExecutionContext,
@@ -46,6 +46,8 @@ const LLM_MODEL = import.meta.env.VITE_LLM_MODEL || 'gpt-4.1';
 export interface UseAgentRuntimeProps {
   /** Current projects */
   projects: Project[];
+  /** Current initiatives */
+  initiatives: import('../types/portfolio').Initiative[];
   /** People database */
   people: Person[];
   /** Logged-in user name */
@@ -54,6 +56,12 @@ export interface UseAgentRuntimeProps {
   createPerson: (person: Partial<Person>) => Promise<Person>;
   /** Send email callback */
   sendEmail: (params: { recipients: string[]; subject: string; body: string }) => Promise<void>;
+  /** Create initiative callback */
+  createInitiative: (initiative: Partial<import('../types/portfolio').Initiative>) => Promise<import('../types/portfolio').Initiative>;
+  /** Add project to initiative callback */
+  addProjectToInitiative: (initiativeId: string, projectId: string | number) => Promise<import('../types/portfolio').Initiative>;
+  /** Add owner to initiative callback */
+  addOwnerToInitiative: (initiativeId: string, personId: string | number) => Promise<import('../types/portfolio').Initiative>;
   /** Callback when projects are updated */
   onProjectsUpdate?: (projects: Project[]) => void;
   /** Agent configuration */
@@ -129,17 +137,25 @@ function getToolDefinitions(tools: FunctionTool[]): ToolDefinition[] {
 export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeReturn {
   const {
     projects,
+    initiatives,
     people,
     loggedInUser,
     createPerson,
     sendEmail,
+    createInitiative,
+    addProjectToInitiative,
+    addOwnerToInitiative,
     config = defaultAgentConfig,
     initialConversationHistory = [],
     enableStreaming = true,
   } = props;
 
   // Create undo manager
-  const undoManager = useMemo(() => new UndoManager(), []);
+  const undoManagerRef = useRef<UndoManager | null>(null);
+  if (!undoManagerRef.current) {
+    undoManagerRef.current = new UndoManager();
+  }
+  const undoManager = undoManagerRef.current;
 
   // State for human-in-the-loop
   const [isAwaitingUser, setIsAwaitingUser] = useState(false);
@@ -172,6 +188,9 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
   const buildServices = useCallback((): ToolServices => ({
     createPerson,
     sendEmail,
+    createInitiative,
+    addProjectToInitiative,
+    addOwnerToInitiative,
     buildThrustContext: () =>
       projects.map(project => ({
         id: project.id,
@@ -196,15 +215,16 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
         })),
         recentActivity: project.recentActivity.slice(0, 3),
       })),
-  }), [createPerson, sendEmail, projects]);
+  }), [addOwnerToInitiative, addProjectToInitiative, createPerson, createInitiative, sendEmail, projects]);
 
   // Build agent context
   const buildContext = useCallback((message: string): AgentContext => ({
     userMessage: message,
     projects: projects.map(cloneProjectDeep),
+    initiatives: initiatives.map((initiative) => JSON.parse(JSON.stringify(initiative))),
     people: [...people],
     loggedInUser,
-  }), [projects, people, loggedInUser]);
+  }), [initiatives, projects, people, loggedInUser]);
 
   /**
    * Execute tools sequentially from a list of tool calls.
@@ -537,6 +557,7 @@ export function useAgentRuntime(props: UseAgentRuntimeProps): UseAgentRuntimeRet
     // Create tool execution context with delta tracking
     const toolContext = createToolExecutionContext(
       agentContext.projects,
+      agentContext.initiatives,
       agentContext.people,
       agentContext.loggedInUser,
       services

@@ -34,9 +34,6 @@ export const useUIStore = create(
       // Timeline state
       timelineView: 6,
 
-      // Santa mode
-      isSantafied: true,
-
       // Data page visibility
       showDataPage: false,
 
@@ -75,7 +72,6 @@ export const useUIStore = create(
 
       setTimelineView: (months) => set({ timelineView: months }),
 
-      setIsSantafied: (santafied) => set({ isSantafied: santafied }),
       setShowDataPage: (show) => set({ showDataPage: show }),
 
       setEditMode: (mode) => set({ editMode: mode }),
@@ -123,7 +119,6 @@ export const useUIStore = create(
       name: 'manity-ui-storage',
       partialize: (state) => ({
         sidebarWidth: state.sidebarWidth,
-        isSantafied: state.isSantafied,
         showDataPage: state.showDataPage,
         timelineView: state.timelineView,
       }),

@@ -67,6 +67,7 @@ export interface RestoreProjectDelta extends BaseDelta {
     targetDate?: string;
     startDate?: string;
     lastUpdate?: string;
+    stakeholders?: Stakeholder[];
   };
 }
 
@@ -91,6 +92,7 @@ export type ToolName =
   | 'add_subtask'
   | 'update_subtask'
   | 'update_project'
+  | 'add_stakeholders'
   | 'add_person'
   | 'query_portfolio'
   | 'send_email';
@@ -390,7 +392,7 @@ export interface Project {
   id: string | number;
   name: string;
   stakeholders: Stakeholder[];
-  status: 'planning' | 'active' | 'on-hold' | 'cancelled' | 'completed';
+  status: 'planning' | 'active' | 'on-hold' | 'blocked' | 'cancelled' | 'completed';
   priority: 'high' | 'medium' | 'low';
   progress: number;
   progressMode?: 'auto' | 'manual';
@@ -401,6 +403,24 @@ export interface Project {
   lastUpdate?: string;
   plan: Task[];
   recentActivity: Activity[];
+  initiativeId?: string;
+  initiative?: {
+    id: string;
+    name: string;
+  } | null;
+}
+
+export interface Initiative {
+  id: string;
+  name: string;
+  description: string;
+  status: 'planning' | 'active' | 'on-hold' | 'cancelled' | 'completed';
+  priority: 'high' | 'medium' | 'low';
+  startDate?: string;
+  targetDate?: string;
+  owners: Person[];           // Direct owners of the initiative
+  stakeholders: Person[];     // Aggregated from all projects
+  projects: Project[];        // Child projects (may be partial in list view)
 }
 
 export interface Person {

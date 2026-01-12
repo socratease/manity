@@ -6,7 +6,6 @@ import { usePortfolioData } from '../hooks/usePortfolioData';
 export default function MomentumView() {
   // Get UI state from stores
   const {
-    isSantafied,
     recentlyUpdatedProjects,
     markProjectUpdated,
   } = useUIStore();
@@ -95,7 +94,6 @@ export default function MomentumView() {
         onUndoAction={handleUndoAction}
         loggedInUser={loggedInUser}
         people={people}
-        isSantafied={isSantafied}
         recentlyUpdatedProjects={recentlyUpdatedProjects}
       />
     </div>

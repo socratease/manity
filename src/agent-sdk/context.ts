@@ -16,6 +16,7 @@ import type {
   StakeholderEntry,
   Activity,
 } from '../agent/types';
+import type { Initiative } from '../types/portfolio';
 import type { ToolServices } from './types';
 
 /**
@@ -25,6 +26,8 @@ export interface ToolExecutionContext {
   // State
   projects: Project[];
   workingProjects: Project[];
+  initiatives: Initiative[];
+  workingInitiatives: Initiative[];
   people: Person[];
   loggedInUser: string;
 
@@ -36,6 +39,7 @@ export interface ToolExecutionContext {
 
   // Helpers
   resolveProject: (target: string | number | undefined) => Project | null;
+  resolveInitiative: (target: string | undefined) => Initiative | null;
   resolveTask: (project: Project | null, target: string | undefined) => Task | null;
   resolveSubtask: (task: Task | null, target: string | undefined) => Subtask | null;
   findPersonByName: (name: string) => Person | null;
@@ -106,11 +110,13 @@ export function cloneProjectDeep(project: Project): Project {
  */
 export function createToolExecutionContext(
   projects: Project[],
+  initiatives: Initiative[],
   people: Person[],
   loggedInUser: string,
   services: ToolServices
 ): ToolExecutionContext {
   const workingProjects = projects.map(cloneProjectDeep);
+  const workingInitiatives = initiatives.map((initiative) => JSON.parse(JSON.stringify(initiative)));
   const projectLookup = buildProjectLookup(workingProjects);
   const deltas: Delta[] = [];
   const updatedEntityIds = new Set<string | number>();
@@ -140,6 +146,19 @@ export function createToolExecutionContext(
     const projectId = projectLookup.get(key);
     if (!projectId) return null;
     return workingProjects.find(p => p.id === projectId) || null;
+  };
+
+  // Resolve initiative by ID or name
+  const resolveInitiative = (target: string | undefined): Initiative | null => {
+    if (!target) return null;
+    const normalizedTarget = String(target).toLowerCase();
+    const simplifiedTarget = normalizedTarget.replace(/[^a-z0-9]/g, '');
+    return workingInitiatives.find((initiative) => {
+      const idMatch = String(initiative.id).toLowerCase() === normalizedTarget;
+      const nameMatch = initiative.name.toLowerCase() === normalizedTarget;
+      const simplifiedName = initiative.name.toLowerCase().replace(/[^a-z0-9]/g, '');
+      return idMatch || nameMatch || simplifiedName === simplifiedTarget;
+    }) || null;
   };
 
   // Resolve task within a project
@@ -231,6 +250,8 @@ export function createToolExecutionContext(
   return {
     projects,
     workingProjects,
+    initiatives,
+    workingInitiatives,
     people,
     loggedInUser,
     projectLookup,
@@ -238,6 +259,7 @@ export function createToolExecutionContext(
 
     // Helpers
     resolveProject,
+    resolveInitiative,
     resolveTask,
     resolveSubtask,
     findPersonByName,
