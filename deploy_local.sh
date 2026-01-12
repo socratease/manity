@@ -3,7 +3,7 @@
 set -euo pipefail
 
 ##############################################
-# Dotenv loader (+ overlay .env.local)
+# Dotenv loader (+ overlay .env.production.local)
 ##############################################
 load_env_file() {
   local f="$1"
@@ -19,9 +19,9 @@ load_env_file() {
 }
 
 load_dotenv() {
-  # Load base .env, then overlay .env.local (if present)
-  load_env_file ".env"
-  load_env_file ".env.local"
+  # Load base production env, then overlay .env.production.local (if present)
+  load_env_file ".env.production"
+  load_env_file ".env.production.local"
 }
 
 ##############################################
