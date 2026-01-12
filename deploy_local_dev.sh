@@ -19,7 +19,7 @@ sanitize_env() {
 sanitize_env
 
 ##############################################
-# Dotenv loader (+ overlay .env.local)
+# Dotenv loader (+ overlay .env.development.local)
 ##############################################
 load_env_file() {
   local f="$1"
@@ -33,8 +33,8 @@ load_env_file() {
 }
 
 load_dotenv() {
-  load_env_file ".env"
-  load_env_file ".env.local"
+  load_env_file ".env.development"
+  load_env_file ".env.development.local"
 }
 
 ##############################################
