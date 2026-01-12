@@ -32,11 +32,17 @@ export const useProjects = ({ personRefForApi } = {}) => {
 
   const mapSubtaskForApi = useCallback((subtask = {}) => {
     const assigneeRef = personRefForApi?.(subtask.assignee || subtask.assigneeId);
-    return {
-      ...subtask,
-      assigneeId: assigneeRef?.id || subtask.assigneeId || null,
-      assignee: assigneeRef || null
-    };
+    const mapped = { ...subtask };
+
+    if (Object.prototype.hasOwnProperty.call(subtask, 'assigneeId')) {
+      mapped.assigneeId = assigneeRef?.id || subtask.assigneeId || null;
+    }
+
+    if (Object.prototype.hasOwnProperty.call(subtask, 'assignee')) {
+      mapped.assignee = assigneeRef || null;
+    }
+
+    return mapped;
   }, [personRefForApi]);
 
   const mapTaskForApi = useCallback((task = {}) => {
