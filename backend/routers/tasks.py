@@ -168,7 +168,8 @@ def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: Subt
     subtask.dueDate = payload.dueDate
     subtask.completedDate = payload.completedDate
     # If caller explicitly provides assignee=None, treat that as "clear", regardless of assignee_id.
-    if hasattr(payload, "assignee") and payload.assignee is None:
+    fields_set = getattr(payload, "model_fields_set", getattr(payload, "__fields_set__", set()))
+    if "assignee" in fields_set and payload.assignee is None:
         subtask.assignee = None
         subtask.assignee_id = None
     else:
