@@ -346,6 +346,62 @@ def migrate_add_unique_constraints(session: Session) -> None:
     logger.info("Migration %s completed successfully", migration_key)
 
 
+def migrate_remove_email_credentials(session: Session) -> None:
+    """Remove email credential columns from the database.
+
+    Email sending is now anonymous-only, so username/password columns are no longer needed.
+    """
+    migration_key = "remove-email-credentials-v1"
+    if session.get(MigrationState, migration_key):
+        logger.info("Migration %s already applied, skipping", migration_key)
+        return
+
+    logger.info("Running migration: %s", migration_key)
+
+    with engine.begin() as connection:
+        # Check if columns exist before trying to drop them
+        result = connection.exec_driver_sql("PRAGMA table_info(emailsettings)")
+        columns = [row[1] for row in result.fetchall()]
+
+        if "username" not in columns and "password" not in columns:
+            logger.info("Credential columns already removed, marking migration as complete")
+            session.add(MigrationState(key=migration_key))
+            session.commit()
+            return
+
+        # SQLite doesn't support DROP COLUMN in older versions, so we recreate the table
+        connection.exec_driver_sql("PRAGMA foreign_keys = OFF")
+
+        # Create new table without credential columns
+        connection.exec_driver_sql("""
+            CREATE TABLE IF NOT EXISTS emailsettings_new (
+                id INTEGER PRIMARY KEY,
+                smtp_server VARCHAR NOT NULL DEFAULT '',
+                smtp_port INTEGER NOT NULL DEFAULT 587,
+                use_tls BOOLEAN NOT NULL DEFAULT 1,
+                from_address VARCHAR
+            )
+        """)
+
+        # Copy data (excluding credentials)
+        connection.exec_driver_sql("""
+            INSERT INTO emailsettings_new (id, smtp_server, smtp_port, use_tls, from_address)
+            SELECT id, smtp_server, smtp_port, use_tls, from_address FROM emailsettings
+        """)
+
+        # Swap tables
+        connection.exec_driver_sql("DROP TABLE emailsettings")
+        connection.exec_driver_sql("ALTER TABLE emailsettings_new RENAME TO emailsettings")
+
+        connection.exec_driver_sql("PRAGMA foreign_keys = ON")
+
+    # Mark migration as complete
+    session.add(MigrationState(key=migration_key))
+    session.commit()
+
+    logger.info("Migration %s completed successfully - email credentials removed", migration_key)
+
+
 def generate_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:8]}"
 
@@ -1846,6 +1902,7 @@ def on_startup() -> None:
     # Run database migrations
     with Session(engine) as session:
         migrate_add_unique_constraints(session)
+        migrate_remove_email_credentials(session)
 
     if not is_dev_seeding_enabled():
         return
