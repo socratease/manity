@@ -36,3 +36,4 @@ wheels/
 .venv/
 venv/
 env/
+.env.development.local
