@@ -1584,13 +1584,14 @@ def apply_task_payload(task: Task, payload: TaskPayload, session: Session | None
 
     # --- Task assignee ---
     if session is not None:
+        fields_set = getattr(payload, "model_fields_set", getattr(payload, "__fields_set__", set()))
         # If payload explicitly includes the assignee field and it is None, clear it.
-        if hasattr(payload, "assignee") and payload.assignee is None:
+        if "assignee" in fields_set and payload.assignee is None:
             task.assignee = None
             task.assignee_id = None
         else:
             ref = None
-            if hasattr(payload, "assignee") and payload.assignee:
+            if "assignee" in fields_set and payload.assignee:
                 ref = payload.assignee
             elif hasattr(payload, "assignee_id") and payload.assignee_id:
                 ref = payload.assignee_id
@@ -1618,12 +1619,13 @@ def apply_task_payload(task: Task, payload: TaskPayload, session: Session | None
 
         if session is not None:
             # Same explicit-clear behavior for subtasks if 'assignee' exists
-            if hasattr(subtask_payload, "assignee") and subtask_payload.assignee is None:
+            subtask_fields_set = getattr(subtask_payload, "model_fields_set", getattr(subtask_payload, "__fields_set__", set()))
+            if "assignee" in subtask_fields_set and subtask_payload.assignee is None:
                 subtask.assignee = None
                 subtask.assignee_id = None
             else:
                 ref = None
-                if hasattr(subtask_payload, "assignee") and subtask_payload.assignee:
+                if "assignee" in subtask_fields_set and subtask_payload.assignee:
                     ref = subtask_payload.assignee
                 elif hasattr(subtask_payload, "assignee_id") and subtask_payload.assignee_id:
                     ref = subtask_payload.assignee_id
@@ -2555,7 +2557,8 @@ def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: Subt
     subtask.dueDate = payload.dueDate
     subtask.completedDate = payload.completedDate
     # If caller explicitly provides assignee=None, treat that as "clear", regardless of assignee_id.
-    if hasattr(payload, "assignee") and payload.assignee is None:
+    fields_set = getattr(payload, "model_fields_set", getattr(payload, "__fields_set__", set()))
+    if "assignee" in fields_set and payload.assignee is None:
         subtask.assignee = None
         subtask.assignee_id = None
     else:
