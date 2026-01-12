@@ -830,8 +830,6 @@ class EmailSettings(SQLModel, table=True):
     id: Optional[int] = Field(default=1, primary_key=True)
     smtp_server: str = ""
     smtp_port: int = 587
-    username: Optional[str] = None
-    password: Optional[str] = None
     use_tls: bool = True
     from_address: Optional[str] = None
 
@@ -996,8 +994,6 @@ class ImportPayload(BaseModel):
 class EmailSettingsPayload(BaseModel):
     smtpServer: str
     smtpPort: int = 587
-    username: Optional[str] = None
-    password: Optional[str] = None
     useTLS: bool = True
     fromAddress: Optional[str] = None
 
@@ -1005,21 +1001,17 @@ class EmailSettingsPayload(BaseModel):
 class EmailSettingsResponse(BaseModel):
     smtpServer: str
     smtpPort: int
-    username: Optional[str] = None
     fromAddress: Optional[str] = None
     useTLS: bool = True
-    hasPassword: bool = False
 
 
 class EmailSendPayload(BaseModel):
     recipients: List[str] | str
     subject: str
     body: str
-    # Inline SMTP settings (now sent with each request, stored in browser)
+    # Inline SMTP settings (sent with each request, stored in browser)
     smtp_server: Optional[str] = None
     smtp_port: Optional[int] = 587
-    username: Optional[str] = None
-    password: Optional[str] = None
     from_address: Optional[str] = None
     use_tls: Optional[bool] = True
 
@@ -1038,10 +1030,8 @@ def serialize_email_settings(settings: EmailSettings) -> dict:
     return {
         "smtpServer": settings.smtp_server,
         "smtpPort": settings.smtp_port,
-        "username": settings.username or "",
         "fromAddress": settings.from_address or "",
         "useTLS": settings.use_tls,
-        "hasPassword": bool(settings.password),
     }
 
 
@@ -1071,14 +1061,11 @@ def dispatch_email(
     recipients: list[str],
     subject: str,
     body: str,
-    username: str | None = None,
-    password: str | None = None,
     use_tls: bool = False
 ) -> dict:
     """
-    Send an email via SMTP and verify the server response.
+    Send an email via SMTP anonymously (no authentication).
 
-    Emails are sent anonymously without authentication by default.
     The server is expected to be a local or trusted SMTP relay.
 
     Returns a dict with 'sent_to' (list of successful recipients) and any 'refused' recipients.
@@ -1119,10 +1106,6 @@ def dispatch_email(
                 except smtplib.SMTPNotSupportedError:
                     logger.info("Server does not support STARTTLS, sending without encryption")
 
-            # Only attempt login if credentials are provided (not typical for anonymous relay)
-            if username and password:
-                smtp.login(username, password)
-
             # send_message returns dict of refused recipients (empty = all accepted)
             refused = smtp.send_message(message)
 
@@ -1148,9 +1131,6 @@ def dispatch_email(
                 "refused": list(refused.keys()) if refused else []
             }
 
-    except smtplib.SMTPAuthenticationError as exc:
-        logger.exception("SMTP authentication failed")
-        raise ValueError(f"Authentication failed: {exc.smtp_error.decode() if exc.smtp_error else str(exc)}")
     except smtplib.SMTPRecipientsRefused as exc:
         logger.exception("All recipients refused")
         raise ValueError(f"All recipients refused by server")

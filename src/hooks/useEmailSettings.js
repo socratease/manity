@@ -11,37 +11,9 @@ import { apiRequest } from './useApi';
 const EMAIL_SETTINGS_KEY = 'manity_email_settings';
 
 /**
- * Clean up any stored credentials from localStorage (migration)
- */
-const cleanupStoredCredentials = () => {
-  try {
-    const stored = localStorage.getItem(EMAIL_SETTINGS_KEY);
-    if (stored) {
-      const parsed = JSON.parse(stored);
-      // Remove credentials if they exist
-      if (parsed.username || parsed.password) {
-        const cleaned = {
-          smtpServer: parsed.smtpServer || '',
-          smtpPort: parsed.smtpPort || 25,
-          fromAddress: parsed.fromAddress || '',
-          useTLS: parsed.useTLS ?? false
-        };
-        localStorage.setItem(EMAIL_SETTINGS_KEY, JSON.stringify(cleaned));
-        console.log('Cleaned up stored email credentials from localStorage');
-      }
-    }
-  } catch (e) {
-    console.error('Failed to clean up stored credentials', e);
-  }
-};
-
-/**
- * Load email settings from localStorage (no credentials)
+ * Load email settings from localStorage
  */
 const loadEmailSettingsFromStorage = () => {
-  // Clean up any legacy stored credentials first
-  cleanupStoredCredentials();
-
   try {
     const stored = localStorage.getItem(EMAIL_SETTINGS_KEY);
     if (stored) {
