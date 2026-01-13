@@ -49,6 +49,9 @@ def send_email_action(payload: EmailSendPayload, request: Request, session: Sess
     Returns 502 for SMTP server errors.
     """
     recipients = normalize_recipients(payload.recipients)
+    cc = normalize_recipients(payload.cc or [])
+    bcc = normalize_recipients(payload.bcc or [])
+    recipient_count = len(recipients) + len(cc) + len(bcc)
 
     settings = get_email_settings(session)
 
@@ -63,15 +66,17 @@ def send_email_action(payload: EmailSendPayload, request: Request, session: Sess
             smtp_port=smtp_port or 587,
             from_address=from_address or "",
             recipients=recipients,
+            cc=cc,
+            bcc=bcc,
             subject=payload.subject,
             body=payload.body,
             use_tls=use_tls if use_tls is not None else True
         )
     except ValueError as exc:
-        log_action(session, "send_email_failed", "email", None, {"error": str(exc), "recipient_count": len(recipients)}, request)
+        log_action(session, "send_email_failed", "email", None, {"error": str(exc), "recipient_count": recipient_count}, request)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except smtplib.SMTPException as exc:
-        log_action(session, "send_email_failed", "email", None, {"error": str(exc), "recipient_count": len(recipients)}, request)
+        log_action(session, "send_email_failed", "email", None, {"error": str(exc), "recipient_count": recipient_count}, request)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"SMTP error: {str(exc)}")
 
     log_action(session, "send_email", "email", None, {"recipient_count": len(result["sent_to"]), "subject_preview": payload.subject[:50] if payload.subject else None}, request)

@@ -2722,21 +2722,28 @@ Write a professional executive summary that highlights the project's current sta
           break;
         }
         case 'send_email': {
-          const recipients = Array.isArray(action.recipients)
-            ? action.recipients
-            : `${action.recipients || ''}`.split(',');
+          const normalizeRecipients = (value) => {
+            const recipients = Array.isArray(value)
+              ? value
+              : `${value || ''}`.split(',');
 
-          const normalizedRecipients = recipients
-            .map(recipient => recipient?.trim())
-            .filter(Boolean)
-            .map(recipient => {
-              if (recipient.includes('@')) return recipient;
-              const person = findPersonByName(recipient);
-              return person?.email || recipient;
-            })
-            .filter(Boolean);
+            return recipients
+              .map(recipient => recipient?.trim())
+              .filter(Boolean)
+              .map(recipient => {
+                if (recipient.includes('@')) return recipient;
+                const person = findPersonByName(recipient);
+                return person?.email || recipient;
+              })
+              .filter(Boolean);
+          };
 
-          if (!normalizedRecipients.length) {
+          const normalizedRecipients = normalizeRecipients(action.recipients);
+          const normalizedCc = normalizeRecipients(action.cc);
+          const normalizedBcc = normalizeRecipients(action.bcc);
+          const allRecipients = [...normalizedRecipients, ...normalizedCc, ...normalizedBcc];
+
+          if (!allRecipients.length) {
             appendActionResult('Skipped action: missing recipients', 'Skipped send_email because no recipients were provided.', actionDeltas);
             continue;
           }
@@ -2757,10 +2764,15 @@ Write a professional executive summary that highlights the project's current sta
           try {
             await sendEmail({
               recipients: normalizedRecipients,
+              cc: normalizedCc.length ? normalizedCc : undefined,
+              bcc: normalizedBcc.length ? normalizedBcc : undefined,
               subject: action.subject,
               body: bodyWithSignature
             });
-            label = `Email sent to ${normalizedRecipients.join(', ')}`;
+            const recipientLabel = allRecipients.length === 1
+              ? allRecipients[0]
+              : `${allRecipients.length} recipients`;
+            label = `Email sent to ${recipientLabel}`;
             detail = `Sent email "${action.subject}"`;
             appendActionResult(label, detail, actionDeltas, {
               type: action.type,

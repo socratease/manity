@@ -1063,6 +1063,8 @@ class EmailSettingsResponse(BaseModel):
 
 class EmailSendPayload(BaseModel):
     recipients: List[str] | str
+    cc: Optional[List[str] | str] = None
+    bcc: Optional[List[str] | str] = None
     subject: str
     body: str
     # Inline SMTP settings (sent with each request, stored in browser)
@@ -1115,6 +1117,8 @@ def dispatch_email(
     smtp_port: int,
     from_address: str,
     recipients: list[str],
+    cc: list[str],
+    bcc: list[str],
     subject: str,
     body: str,
     use_tls: bool = False
@@ -1131,14 +1135,18 @@ def dispatch_email(
         raise ValueError("SMTP server is not configured. Please set the server address in settings.")
     if not from_address:
         raise ValueError("Sender address is not configured. Please set the From address in settings.")
-    if not recipients:
+    if not (recipients or cc or bcc):
         raise ValueError("At least one recipient is required")
 
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = from_address
-    message["To"] = ", ".join(recipients)
+    if recipients:
+        message["To"] = ", ".join(recipients)
+    if cc:
+        message["Cc"] = ", ".join(cc)
     message.set_content(body)
+    all_recipients = [*recipients, *cc, *bcc]
 
     try:
         with smtplib.SMTP(smtp_server, smtp_port, timeout=30) as smtp:
@@ -1163,13 +1171,13 @@ def dispatch_email(
                     logger.info("Server does not support STARTTLS, sending without encryption")
 
             # send_message returns dict of refused recipients (empty = all accepted)
-            refused = smtp.send_message(message)
+            refused = smtp.send_message(message, to_addrs=all_recipients)
 
             # Verify all recipients were accepted
             if refused:
                 refused_addrs = list(refused.keys())
                 logger.warning("Some recipients refused: %s", refused_addrs)
-                if len(refused_addrs) == len(recipients):
+                if len(refused_addrs) == len(all_recipients):
                     raise smtplib.SMTPRecipientsRefused(refused)
 
             # Verify message was queued by checking server response
@@ -1179,7 +1187,7 @@ def dispatch_email(
                 if code != 250:
                     logger.warning("Post-send NOOP returned %d: %s", code, resp.decode())
 
-            successful = [r for r in recipients if r not in (refused or {})]
+            successful = [r for r in all_recipients if r not in (refused or {})]
             logger.info("Email sent successfully to %d recipient(s): %s", len(successful), successful)
 
             return {
@@ -2132,6 +2140,9 @@ def send_email_action(payload: EmailSendPayload, request: Request, session: Sess
     Returns 502 for SMTP server errors.
     """
     recipients = normalize_recipients(payload.recipients)
+    cc = normalize_recipients(payload.cc or [])
+    bcc = normalize_recipients(payload.bcc or [])
+    recipient_count = len(recipients) + len(cc) + len(bcc)
 
     settings = get_email_settings(session)
 
@@ -2146,15 +2157,17 @@ def send_email_action(payload: EmailSendPayload, request: Request, session: Sess
             smtp_port=smtp_port or 587,
             from_address=from_address or "",
             recipients=recipients,
+            cc=cc,
+            bcc=bcc,
             subject=payload.subject,
             body=payload.body,
             use_tls=use_tls if use_tls is not None else True
         )
     except ValueError as exc:
-        log_action(session, "send_email_failed", "email", None, {"error": str(exc), "recipient_count": len(recipients)}, request)
+        log_action(session, "send_email_failed", "email", None, {"error": str(exc), "recipient_count": recipient_count}, request)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     except smtplib.SMTPException as exc:
-        log_action(session, "send_email_failed", "email", None, {"error": str(exc), "recipient_count": len(recipients)}, request)
+        log_action(session, "send_email_failed", "email", None, {"error": str(exc), "recipient_count": recipient_count}, request)
         raise HTTPException(status_code=status.HTTP_502_BAD_GATEWAY, detail=f"SMTP error: {str(exc)}")
 
     log_action(session, "send_email", "email", None, {"recipient_count": len(result["sent_to"]), "subject_preview": payload.subject[:50] if payload.subject else None}, request)

@@ -69,7 +69,7 @@ export const useEmailSettings = () => {
     return toSave;
   }, []);
 
-  const sendEmail = useCallback(async ({ recipients, subject, body }) => {
+  const sendEmail = useCallback(async ({ recipients, cc, bcc, subject, body }) => {
     setIsSending(true);
     setError(null);
 
@@ -86,6 +86,8 @@ export const useEmailSettings = () => {
         method: 'POST',
         body: JSON.stringify({
           recipients,
+          cc,
+          bcc,
           subject,
           body,
           // Pass SMTP settings with request (no credentials - anonymous sending)

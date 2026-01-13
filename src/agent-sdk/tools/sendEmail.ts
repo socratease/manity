@@ -14,6 +14,14 @@ export const SendEmailInput = z.object({
     z.string().describe('Comma-separated email addresses'),
     z.array(z.string()).describe('Array of email addresses'),
   ]).describe('Email recipients'),
+  cc: z.union([
+    z.string().describe('Comma-separated email addresses'),
+    z.array(z.string()).describe('Array of email addresses'),
+  ]).optional().describe('Email CC recipients'),
+  bcc: z.union([
+    z.string().describe('Comma-separated email addresses'),
+    z.array(z.string()).describe('Array of email addresses'),
+  ]).optional().describe('Email BCC recipients'),
   subject: z.string().describe('Email subject line'),
   body: z.string().describe('Email body content'),
 });
@@ -27,18 +35,23 @@ export const sendEmailTool = tool({
   execute: async (input: SendEmailInputType, runContext?: RunContext<ToolExecutionContext>): Promise<string> => {
     const ctx = getContextFromRunContext(runContext);
 
-    // Normalize recipients to array
-    let recipients: string[];
-    if (typeof input.recipients === 'string') {
-      recipients = input.recipients
-        .split(',')
-        .map(r => r.trim())
-        .filter(r => r.length > 0);
-    } else {
-      recipients = input.recipients.filter(r => r && r.trim().length > 0);
-    }
+    const normalizeRecipients = (value?: string | string[]) => {
+      if (!value) return [];
+      if (typeof value === 'string') {
+        return value
+          .split(',')
+          .map(r => r.trim())
+          .filter(r => r.length > 0);
+      }
+      return value.filter(r => r && r.trim().length > 0);
+    };
 
-    if (recipients.length === 0) {
+    // Normalize recipients to array
+    const recipients = normalizeRecipients(input.recipients);
+    const cc = normalizeRecipients(input.cc);
+    const bcc = normalizeRecipients(input.bcc);
+
+    if (recipients.length === 0 && cc.length === 0 && bcc.length === 0) {
       return 'Error: At least one recipient email address is required.';
     }
 
@@ -51,32 +64,53 @@ export const sendEmailTool = tool({
     }
 
     // Resolve email addresses from person names if needed
-    const resolvedRecipients: string[] = [];
-    for (const recipient of recipients) {
-      // Check if it's an email address
-      if (recipient.includes('@')) {
-        resolvedRecipients.push(recipient);
-      } else {
-        // Try to find person by name
+    const resolveEntries = (entries: string[]) => {
+      const resolved: string[] = [];
+      for (const recipient of entries) {
+        if (recipient.includes('@')) {
+          resolved.push(recipient);
+          continue;
+        }
         const person = ctx.findPersonByName(recipient);
         if (person?.email) {
-          resolvedRecipients.push(person.email);
-        } else {
-          return `Error: Could not find email address for "${recipient}". Please provide an email address or ensure the person exists in the database with an email.`;
+          resolved.push(person.email);
+          continue;
         }
+        return {
+          error: `Error: Could not find email address for "${recipient}". Please provide an email address or ensure the person exists in the database with an email.`
+        };
       }
+      return { resolved };
+    };
+
+    const resolvedRecipients: string[] = [];
+    const resolvedCc: string[] = [];
+    const resolvedBcc: string[] = [];
+    for (const [entries, target] of [
+      [recipients, resolvedRecipients],
+      [cc, resolvedCc],
+      [bcc, resolvedBcc],
+    ] as const) {
+      const resolved = resolveEntries(entries);
+      if ('error' in resolved) {
+        return resolved.error;
+      }
+      target.push(...resolved.resolved);
     }
 
     try {
       await ctx.services.sendEmail({
         recipients: resolvedRecipients,
+        cc: resolvedCc.length ? resolvedCc : undefined,
+        bcc: resolvedBcc.length ? resolvedBcc : undefined,
         subject: input.subject.trim(),
         body: input.body.trim(),
       });
 
-      const recipientStr = resolvedRecipients.length === 1
-        ? resolvedRecipients[0]
-        : `${resolvedRecipients.length} recipients`;
+      const totalCount = resolvedRecipients.length + resolvedCc.length + resolvedBcc.length;
+      const recipientStr = totalCount === 1
+        ? (resolvedRecipients[0] || resolvedCc[0] || resolvedBcc[0])
+        : `${totalCount} recipients`;
 
       return `Email sent successfully to ${recipientStr} with subject "${input.subject}".`;
     } catch (error) {
