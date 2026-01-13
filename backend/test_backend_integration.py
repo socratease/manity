@@ -283,15 +283,12 @@ def test_email_settings_and_sending(tmp_path, monkeypatch):
     with create_isolated_client(db_path) as client:
         defaults = client.get("/settings/email").json()
         assert defaults["smtpServer"] == ""
-        assert defaults["hasPassword"] is False
 
         updated = client.put(
             "/settings/email",
             json={
                 "smtpServer": "smtp.example.com",
                 "smtpPort": 2525,
-                "username": "bot@example.com",
-                "password": "secret",
                 "useTLS": True,
                 "fromAddress": "bot@example.com",
             },
@@ -299,7 +296,8 @@ def test_email_settings_and_sending(tmp_path, monkeypatch):
 
         assert updated["smtpServer"] == "smtp.example.com"
         assert updated["smtpPort"] == 2525
-        assert updated["hasPassword"] is True
+        assert updated["useTLS"] is True
+        assert updated["fromAddress"] == "bot@example.com"
 
         response = client.post(
             "/actions/email",
