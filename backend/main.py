@@ -2112,12 +2112,8 @@ def update_email_settings(payload: EmailSettingsPayload, session: Session = Depe
     settings = get_email_settings(session)
     settings.smtp_server = payload.smtpServer
     settings.smtp_port = payload.smtpPort
-    settings.username = payload.username or None
     settings.from_address = payload.fromAddress or None
     settings.use_tls = payload.useTLS
-
-    if payload.password is not None:
-        settings.password = payload.password
 
     session.add(settings)
     session.commit()
@@ -2142,8 +2138,6 @@ def send_email_action(payload: EmailSendPayload, request: Request, session: Sess
     smtp_server = payload.smtp_server or settings.smtp_server
     smtp_port = payload.smtp_port or settings.smtp_port
     from_address = payload.from_address or settings.from_address
-    username = payload.username if payload.username is not None else settings.username
-    password = payload.password if payload.password is not None else settings.password
     use_tls = payload.use_tls if payload.use_tls is not None else settings.use_tls
 
     try:
@@ -2154,8 +2148,6 @@ def send_email_action(payload: EmailSendPayload, request: Request, session: Sess
             recipients=recipients,
             subject=payload.subject,
             body=payload.body,
-            username=username,
-            password=password,
             use_tls=use_tls if use_tls is not None else True
         )
     except ValueError as exc:
