@@ -2112,12 +2112,8 @@ def update_email_settings(payload: EmailSettingsPayload, session: Session = Depe
     settings = get_email_settings(session)
     settings.smtp_server = payload.smtpServer
     settings.smtp_port = payload.smtpPort
-    settings.username = payload.username or None
     settings.from_address = payload.fromAddress or None
     settings.use_tls = payload.useTLS
-
-    if payload.password is not None:
-        settings.password = payload.password
 
     session.add(settings)
     session.commit()
