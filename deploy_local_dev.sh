@@ -64,22 +64,22 @@ validate_port() {
 
 ensure_dir() { mkdir -p "$1"; }
 
+
+
 kill_if_running() {
   local name="$1"; local pid_file="$RUN_DIR/$name.pid"
   if [[ -f "$pid_file" ]]; then
     local pid; pid=$(cat "$pid_file" || true)
     if [[ -n "${pid:-}" ]] && ps -p "$pid" >/dev/null 2>&1; then
-      msg "Stopping $name (pid $pid)"
-      kill "$pid" || true
-      local waited=0
-      while ps -p "$pid" >/dev/null 2>&1; do
-        if (( waited >= 10 )); then
-          err "$name (pid $pid) did not exit after 10s"
-          break
-        fi
+      msg "Stopping $name (pid $pid; killing process group)"
+      # TERM the entire process group
+      kill -TERM -- "-$pid" || true
+      for i in {1..8}; do
+        ps -p "$pid" >/dev/null 2>&1 || break
         sleep 1
-        waited=$((waited + 1))
       done
+      # If still alive, KILL the group
+      ps -p "$pid" >/dev/null 2>&1 && kill -KILL -- "-$pid" || true
     fi
     rm -f "$pid_file"
   fi
@@ -127,14 +127,22 @@ assert_port_free() {
   fi
 }
 
+
+
+
 start_bg() {
   local cmd="$1"; local log_file="$2"; local name="$3"; local pid_file="$RUN_DIR/$name.pid"
   msg "Starting $name -> $cmd"
-  nohup bash -lc "exec $cmd" >"$log_file" 2>&1 &
-  echo $! >"$pid_file"
+
+  # Start the command; create a new session; the bash -lc will exec the final command (see Option A's BACKEND_CMD).
+  setsid nohup bash -lc "$cmd" >>"$log_file" 2>&1 &
+
+  local pid=$!
+  echo "$pid" > "$pid_file"
+
   sleep 1
-  if ps -p "$(cat "$pid_file")" >/dev/null 2>&1; then
-    msg "$name started (pid $(cat "$pid_file")), logs: $log_file"
+  if ps -p "$pid" >/dev/null 2>&1; then
+    msg "$name started (pid $pid), logs: $log_file"
   else
     err "Failed to start $name. Check logs: $log_file"
     exit 1
@@ -275,7 +283,9 @@ kill_if_running "frontend"
 BACKEND_LOG="$LOG_DIR/backend.log"
 BACKEND_CMD="cd \"$BACKEND_DIR\" && \
   env -u BACKEND_PORT -u FRONTEND_PORT -u VITE_API_BASE -u NODE_ENV \
-  DATABASE_URL=\"$DATABASE_URL\" \"$VENV_DIR/bin/uvicorn\" \"$BACKEND_APP\" --host 0.0.0.0 --port $BACKEND_PORT"
+  DATABASE_URL=\"$DATABASE_URL\" \
+  \"$VENV_DIR/bin/uvicorn\" \"$BACKEND_APP\" --host 0.0.0.0 --port $BACKEND_PORT"
+
 assert_port_free "Backend" "$BACKEND_PORT"
 start_bg "$BACKEND_CMD" "$BACKEND_LOG" "backend"
 
