@@ -254,7 +254,6 @@ def test_email_settings_and_sending(tmp_path, monkeypatch):
             self.port = port
             self.timeout = timeout
             self.started_tls = False
-            self.logged_in = False
 
         def __enter__(self):
             return self
@@ -264,11 +263,6 @@ def test_email_settings_and_sending(tmp_path, monkeypatch):
 
         def starttls(self):
             self.started_tls = True
-
-        def login(self, username, password):
-            self.logged_in = True
-            self.username = username
-            self.password = password
 
         def send_message(self, message):
             sent_messages.append({
