@@ -90,7 +90,15 @@ kill_if_running() {
     if [[ -n "${pid:-}" ]] && ps -p "$pid" >/dev/null 2>&1; then
       msg "Stopping $name (pid $pid)"
       kill "$pid" || true
-      sleep 1
+      local waited=0
+      while ps -p "$pid" >/dev/null 2>&1; do
+        if (( waited >= 10 )); then
+          err "$name did not stop after 10s (pid $pid); keeping pid file."
+          return 1
+        fi
+        sleep 1
+        waited=$((waited + 1))
+      done
     fi
     rm -f "$pid_file"
   fi
@@ -100,7 +108,7 @@ start_bg() {
   # $1: command string, $2: log file, $3: pid name
   local cmd="$1"; local log_file="$2"; local name="$3"; local pid_file="$RUN_DIR/$name.pid"
   msg "Starting $name -> $cmd"
-  nohup bash -lc "$cmd" >"$log_file" 2>&1 &
+  nohup bash -lc "exec $cmd" >"$log_file" 2>&1 &
   echo $! >"$pid_file"
   sleep 1
   if ps -p "$(cat "$pid_file")" >/dev/null 2>&1; then
