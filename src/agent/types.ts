@@ -554,6 +554,8 @@ export interface QueryPortfolioInput {
 export interface SendEmailInput {
   type: 'send_email';
   recipients?: string | string[];
+  cc?: string | string[];
+  bcc?: string | string[];
   subject?: string;
   body?: string;
 }

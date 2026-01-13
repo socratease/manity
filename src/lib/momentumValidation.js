@@ -197,13 +197,19 @@ export function validateThrustActions(actions = [], projects = []) {
     }
 
     if (action.type === 'send_email') {
-      const recipients = Array.isArray(action.recipients)
-        ? action.recipients
-        : typeof action.recipients === 'string'
-          ? action.recipients.split(',').map(r => r.trim()).filter(Boolean)
-          : [];
+      const normalizeList = (value) => (
+        Array.isArray(value)
+          ? value
+          : typeof value === 'string'
+            ? value.split(',').map(r => r.trim()).filter(Boolean)
+            : []
+      );
 
-      if (!recipients.length) {
+      const recipients = normalizeList(action.recipients);
+      const cc = normalizeList(action.cc);
+      const bcc = normalizeList(action.bcc);
+
+      if (!recipients.length && !cc.length && !bcc.length) {
         errors.push(`Action ${idx + 1} (send_email) is missing recipients.`);
         return;
       }
@@ -218,7 +224,9 @@ export function validateThrustActions(actions = [], projects = []) {
 
       validActions.push({
         ...action,
-        recipients
+        recipients,
+        cc,
+        bcc,
       });
       return;
     }

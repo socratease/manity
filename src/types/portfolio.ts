@@ -179,7 +179,7 @@ export interface ToolContextServices {
   /** Create a person in the database */
   createPerson: (person: Partial<Person>) => Promise<Person>;
   /** Send an email */
-  sendEmail: (params: { recipients: string[]; subject: string; body: string }) => Promise<void>;
+  sendEmail: (params: { recipients: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string }) => Promise<void>;
   /** Build thrust context for query_portfolio */
   buildThrustContext: () => PortfolioSummary[];
 }
@@ -572,6 +572,8 @@ export interface QueryPortfolioInput {
 export interface SendEmailInput {
   type: 'send_email';
   recipients?: string | string[];
+  cc?: string | string[];
+  bcc?: string | string[];
   subject?: string;
   body?: string;
 }
