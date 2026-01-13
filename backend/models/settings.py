@@ -12,8 +12,6 @@ class EmailSettings(SQLModel, table=True):
     id: Optional[int] = Field(default=1, primary_key=True)
     smtp_server: str = ""
     smtp_port: int = 587
-    username: Optional[str] = None
-    password: Optional[str] = None
     use_tls: bool = True
     from_address: Optional[str] = None
 
