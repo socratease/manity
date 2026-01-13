@@ -85,6 +85,48 @@ kill_if_running() {
   fi
 }
 
+find_listening_process() {
+  local port="$1"
+  local pid=""
+  if command -v lsof >/dev/null 2>&1; then
+    pid=$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null | head -n1 || true)
+  elif command -v ss >/dev/null 2>&1; then
+    pid=$(ss -lptn "sport = :$port" 2>/dev/null | awk 'match($0,/pid=([0-9]+)/,m){print m[1]; exit}')
+  else
+    err "Missing required command: lsof or ss (needed to check port usage)."
+    exit 1
+  fi
+
+  if [[ -n "$pid" ]]; then
+    local cmd=""
+    cmd=$(ps -p "$pid" -o command= 2>/dev/null | sed 's/[[:space:]]*$//' || true)
+    echo "$pid|$cmd"
+    return 0
+  fi
+  return 1
+}
+
+assert_port_free() {
+  local name="$1"; local port="$2"
+  local info=""
+  info=$(find_listening_process "$port" || true)
+  if [[ -n "$info" ]]; then
+    local pid=""; local cmd=""
+    IFS='|' read -r pid cmd <<< "$info"
+    err "$name port $port already in use by pid $pid${cmd:+ ($cmd)}."
+    msg "Attempting to stop process on port $port (pid $pid)"
+    kill "$pid" || true
+    sleep 1
+    info=$(find_listening_process "$port" || true)
+    if [[ -n "$info" ]]; then
+      IFS='|' read -r pid cmd <<< "$info"
+      err "$name port $port still in use by pid $pid${cmd:+ ($cmd)}. Stop it or change ports."
+      exit 1
+    fi
+    msg "$name port $port is now free."
+  fi
+}
+
 start_bg() {
   local cmd="$1"; local log_file="$2"; local name="$3"; local pid_file="$RUN_DIR/$name.pid"
   msg "Starting $name -> $cmd"
@@ -234,6 +276,7 @@ BACKEND_LOG="$LOG_DIR/backend.log"
 BACKEND_CMD="cd \"$BACKEND_DIR\" && \
   env -u BACKEND_PORT -u FRONTEND_PORT -u VITE_API_BASE -u NODE_ENV \
   DATABASE_URL=\"$DATABASE_URL\" \"$VENV_DIR/bin/uvicorn\" \"$BACKEND_APP\" --host 0.0.0.0 --port $BACKEND_PORT"
+assert_port_free "Backend" "$BACKEND_PORT"
 start_bg "$BACKEND_CMD" "$BACKEND_LOG" "backend"
 
 ##############################################
@@ -247,6 +290,7 @@ FRONTEND_LOG="$LOG_DIR/frontend.log"
 FRONTEND_CMD="cd \"$FRONTEND_DIR\" && \
   env -u BACKEND_PORT -u FRONTEND_PORT -u VITE_API_BASE -u NODE_ENV \
   $SERVE_CMD -s \"$FRONTEND_BUILD_DIR\" -l $FRONTEND_PORT"
+assert_port_free "Frontend" "$FRONTEND_PORT"
 start_bg "$FRONTEND_CMD" "$FRONTEND_LOG" "frontend"
 
 ##############################################
