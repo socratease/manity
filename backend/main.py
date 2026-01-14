@@ -1618,9 +1618,11 @@ def apply_task_payload(task: Task, payload: TaskPayload, session: Session | None
     task.dueDate = payload.dueDate
     task.completedDate = payload.completedDate
 
+    # Get fields explicitly set in the payload (works with Pydantic v1 and v2)
+    fields_set = getattr(payload, "model_fields_set", getattr(payload, "__fields_set__", set()))
+
     # --- Task assignee ---
     if session is not None:
-        fields_set = getattr(payload, "model_fields_set", getattr(payload, "__fields_set__", set()))
         # If payload explicitly includes the assignee field and it is None, clear it.
         if "assignee" in fields_set and payload.assignee is None:
             task.assignee = None
@@ -1638,7 +1640,9 @@ def apply_task_payload(task: Task, payload: TaskPayload, session: Session | None
                 task.assignee_id = assignee.id if assignee else None
 
     # --- Subtasks ---
-    if payload.subtasks is not None:
+    # Only update subtasks if they were explicitly included in the payload.
+    # This prevents accidental deletion when updating only task properties (title, status, etc.)
+    if "subtasks" in fields_set:
         if task.subtasks is None:
             task.subtasks = []
         else:
