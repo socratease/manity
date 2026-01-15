@@ -649,6 +649,9 @@ def resolve_person_reference(session: Session, reference) -> "Person | None":
         normalized = reference.strip()
         if not normalized:
             return None
+        person = session.get(Person, normalized)
+        if person:
+            return person
         payload = PersonPayload(name=normalized, team="Contributor")
         return upsert_person_from_payload(session, payload)
 
