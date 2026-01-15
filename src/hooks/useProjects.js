@@ -21,7 +21,7 @@ export const useProjects = ({ personRefForApi } = {}) => {
 
   // Mapping functions for API payloads
   const mapActivityForApi = useCallback((activity = {}) => {
-    const authorRef = personRefForApi?.(activity.authorPerson || activity.authorId || activity.author);
+    const authorRef = personRefForApi?.(activity.authorPerson || activity.author || activity.authorId);
     return {
       ...activity,
       author: activity.author || authorRef?.name || '',
