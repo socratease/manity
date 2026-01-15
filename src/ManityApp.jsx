@@ -99,6 +99,7 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
   const [selectedCheckinTagIndex, setSelectedCheckinTagIndex] = useState(0);
   const [activityEditEnabled, setActivityEditEnabled] = useState(false);
   const [activityEdits, setActivityEdits] = useState({});
+  const [activityAuthorEdits, setActivityAuthorEdits] = useState({});
   const [projectDeletionEnabled, setProjectDeletionEnabled] = useState(false);
   const [initiativeDeletionEnabled, setInitiativeDeletionEnabled] = useState(false);
   const [projectToDelete, setProjectToDelete] = useState(null);
@@ -398,6 +399,88 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     return `${names.slice(0, 5).join(', ')} +${names.length - 5}`;
   };
 
+  const getInitials = (name = '') =>
+    name
+      .split(' ')
+      .filter(Boolean)
+      .map(part => part[0])
+      .join('')
+      .toUpperCase();
+
+  const getActivityAuthorValue = useCallback((activity) => {
+    if (activity?.authorId) return `person:${activity.authorId}`;
+    if (activity?.author) return `name:${activity.author}`;
+    return 'name:Unknown';
+  }, []);
+
+  const getActivityAuthorDisplayName = useCallback((activity) => {
+    const selection = activityAuthorEdits[activity.id] ?? getActivityAuthorValue(activity);
+    if (selection?.startsWith('person:')) {
+      const personId = selection.replace('person:', '');
+      return people.find(person => String(person.id) === personId)?.name || activity.author || 'Unknown';
+    }
+    if (selection?.startsWith('name:')) {
+      const name = selection.replace('name:', '').trim();
+      return name || 'Unknown';
+    }
+    return activity.author || 'Unknown';
+  }, [activityAuthorEdits, getActivityAuthorValue, people]);
+
+  const getActivityAuthorPayload = useCallback((activity, selection) => {
+    const authorSelection = selection || getActivityAuthorValue(activity);
+    if (authorSelection?.startsWith('person:')) {
+      const personId = authorSelection.replace('person:', '');
+      const person = people.find(entry => String(entry.id) === personId);
+      if (person) {
+        return {
+          authorPerson: person,
+          author: person.name,
+          authorId: person.id
+        };
+      }
+    }
+    if (authorSelection?.startsWith('name:')) {
+      const name = authorSelection.replace('name:', '').trim();
+      return {
+        author: name || 'Unknown',
+        authorId: null
+      };
+    }
+    return {
+      author: activity.author,
+      authorId: activity.authorId || null
+    };
+  }, [getActivityAuthorValue, people]);
+
+  const buildActivityAuthorOptions = useCallback((activity) => {
+    const options = people.map(person => ({
+      value: `person:${person.id}`,
+      label: person.name
+    }));
+    const authorName = activity.author?.trim();
+    const authorInPeople = activity.authorId
+      ? people.some(person => String(person.id) === String(activity.authorId))
+      : authorName
+        ? people.some(person => person.name === authorName)
+        : false;
+
+    if (authorName && !authorInPeople) {
+      options.unshift({
+        value: `name:${authorName}`,
+        label: authorName
+      });
+    }
+
+    if (!authorName && options.length === 0) {
+      options.unshift({
+        value: 'name:Unknown',
+        label: 'Unknown'
+      });
+    }
+
+    return options;
+  }, [people]);
+
   useEffect(() => {
     if (activityEditEnabled) {
       setActivityEdits(prev => {
@@ -411,10 +494,22 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
         });
         return updated;
       });
+      setActivityAuthorEdits(prev => {
+        const updated = { ...prev };
+        projects.forEach(project => {
+          project.recentActivity.forEach(activity => {
+            if (!updated[activity.id]) {
+              updated[activity.id] = getActivityAuthorValue(activity);
+            }
+          });
+        });
+        return updated;
+      });
     } else {
       setActivityEdits({});
+      setActivityAuthorEdits({});
     }
-  }, [activityEditEnabled, projects]);
+  }, [activityEditEnabled, getActivityAuthorValue, projects]);
 
   // Reset item counts when slide changes or when switching to slides view
   useEffect(() => {
@@ -926,15 +1021,44 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
 
     const activity = projectWithActivity.recentActivity.find(a => a.id === activityId);
     if (!activity) return;
+    const authorPayload = getActivityAuthorPayload(activity, activityAuthorEdits[activityId]);
 
     try {
       await updateActivity(projectWithActivity.id, activityId, {
         date: activity.date,
         note: newNote,
-        author: activity.author
+        ...authorPayload
       });
     } catch (error) {
       console.error('Failed to update activity note:', error);
+    }
+  };
+
+  const updateActivityAuthor = async (activityId, newAuthorSelection) => {
+    setActivityAuthorEdits(prev => ({
+      ...prev,
+      [activityId]: newAuthorSelection
+    }));
+
+    const projectWithActivity = projects.find(p =>
+      p.recentActivity?.some(activity => activity.id === activityId)
+    );
+    if (!projectWithActivity) return;
+
+    const activity = projectWithActivity.recentActivity.find(a => a.id === activityId);
+    if (!activity) return;
+
+    const authorPayload = getActivityAuthorPayload(activity, newAuthorSelection);
+    const note = activityEdits[activityId] ?? activity.note;
+
+    try {
+      await updateActivity(projectWithActivity.id, activityId, {
+        date: activity.date,
+        note,
+        ...authorPayload
+      });
+    } catch (error) {
+      console.error('Failed to update activity author:', error);
     }
   };
 
@@ -953,6 +1077,10 @@ export default function ManityApp({ onOpenSettings = () => {} }) {
     }
 
     setActivityEdits(prev => {
+      const { [activityId]: _, ...rest } = prev;
+      return rest;
+    });
+    setActivityAuthorEdits(prev => {
       const { [activityId]: _, ...rest } = prev;
       return rest;
     });
@@ -5752,68 +5880,85 @@ PEOPLE & EMAIL ADDRESSES:
                 </div>
 
                 <div style={styles.activityListCompact}>
-                  {[...viewingProject.recentActivity].sort((a, b) => new Date(b.date) - new Date(a.date)).map((activity, idx) => (
-                    <div key={activity.id || idx}>
-                      <div
-                        style={{
-                          ...styles.activityItemCompact,
-                          animationDelay: `${idx * 30}ms`
-                        }}
-                      >
-                        <div style={styles.activityHeaderCompact}>
-                          <div style={styles.activityAuthorCompact}>
-                            <div style={styles.activityAvatarSmall}>
-                              {activity.author.split(' ').map(n => n[0]).join('')}
+                  {[...viewingProject.recentActivity].sort((a, b) => new Date(b.date) - new Date(a.date)).map((activity, idx) => {
+                    const authorDisplayName = getActivityAuthorDisplayName(activity);
+                    const authorSelection = activityAuthorEdits[activity.id] ?? getActivityAuthorValue(activity);
+                    const authorOptions = buildActivityAuthorOptions(activity);
+                    return (
+                      <div key={activity.id || idx}>
+                        <div
+                          style={{
+                            ...styles.activityItemCompact,
+                            animationDelay: `${idx * 30}ms`
+                          }}
+                        >
+                          <div style={styles.activityHeaderCompact}>
+                            <div style={styles.activityAuthorCompact}>
+                              <div style={styles.activityAvatarSmall}>
+                                {getInitials(authorDisplayName)}
+                              </div>
+                              {activityEditEnabled ? (
+                                <select
+                                  value={authorSelection}
+                                  onChange={(e) => updateActivityAuthor(activity.id, e.target.value)}
+                                  style={styles.activityAuthorSelect}
+                                >
+                                  {authorOptions.map(option => (
+                                    <option key={option.value} value={option.value}>{option.label}</option>
+                                  ))}
+                                </select>
+                              ) : (
+                                <span style={styles.activityAuthorNameCompact}>{activity.author}</span>
+                              )}
                             </div>
-                            <span style={styles.activityAuthorNameCompact}>{activity.author}</span>
+                            <span style={styles.activityTimeCompact}>{formatDateTime(activity.date)}</span>
                           </div>
-                          <span style={styles.activityTimeCompact}>{formatDateTime(activity.date)}</span>
-                        </div>
-                        {activity.taskContext && (
-                          <div style={styles.taskContextBadgeCompact}>
-                            <MessageSquare size={11} />
-                            {activity.taskContext.taskTitle} → {activity.taskContext.subtaskTitle}
-                          </div>
-                        )}
-                        <div style={styles.activityNoteRow}>
-                          {activityEditEnabled ? (
-                            <div style={styles.activityEditRow}>
-                              <textarea
-                                value={activityEdits[activity.id] ?? activity.note}
-                                onChange={(e) => updateActivityNote(activity.id, e.target.value)}
-                                onFocus={() => setFocusedField(`activity-${activity.id}`)}
-                                onBlur={() => setFocusedField(null)}
-                                style={styles.activityNoteInput}
-                              />
-                              {renderEditingHint(`activity-${activity.id}`)}
-                              <button
-                                style={styles.activityDeleteButton}
-                                onClick={() => deleteActivity(activity.id)}
-                                aria-label="Delete activity"
-                              >
-                                <Trash2 size={18} />
-                              </button>
+                          {activity.taskContext && (
+                            <div style={styles.taskContextBadgeCompact}>
+                              <MessageSquare size={11} />
+                              {activity.taskContext.taskTitle} → {activity.taskContext.subtaskTitle}
                             </div>
-                          ) : (
-                            <p style={styles.activityNoteCompact}>
-                              {parseTaggedText(activity.note).map((part, idx) => (
-                                part.type === 'tag' ? (
-                                  <span key={idx} style={styles.tagInlineCompact}>
-                                    {part.display}
-                                  </span>
-                                ) : (
-                                  <span key={idx}>{part.content}</span>
-                                )
-                              ))}
-                            </p>
                           )}
+                          <div style={styles.activityNoteRow}>
+                            {activityEditEnabled ? (
+                              <div style={styles.activityEditRow}>
+                                <textarea
+                                  value={activityEdits[activity.id] ?? activity.note}
+                                  onChange={(e) => updateActivityNote(activity.id, e.target.value)}
+                                  onFocus={() => setFocusedField(`activity-${activity.id}`)}
+                                  onBlur={() => setFocusedField(null)}
+                                  style={styles.activityNoteInput}
+                                />
+                                {renderEditingHint(`activity-${activity.id}`)}
+                                <button
+                                  style={styles.activityDeleteButton}
+                                  onClick={() => deleteActivity(activity.id)}
+                                  aria-label="Delete activity"
+                                >
+                                  <Trash2 size={18} />
+                                </button>
+                              </div>
+                            ) : (
+                              <p style={styles.activityNoteCompact}>
+                                {parseTaggedText(activity.note).map((part, idx) => (
+                                  part.type === 'tag' ? (
+                                    <span key={idx} style={styles.tagInlineCompact}>
+                                      {part.display}
+                                    </span>
+                                  ) : (
+                                    <span key={idx}>{part.content}</span>
+                                  )
+                                ))}
+                              </p>
+                            )}
+                          </div>
                         </div>
+                        {idx < viewingProject.recentActivity.length - 1 && (
+                          <div style={styles.activitySeparator} />
+                        )}
                       </div>
-                      {idx < viewingProject.recentActivity.length - 1 && (
-                        <div style={styles.activitySeparator} />
-                      )}
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               </div>
             </div>
@@ -5942,73 +6087,90 @@ PEOPLE & EMAIL ADDRESSES:
 
               {/* All Activities Feed */}
               <div style={styles.timelineFeed}>
-                {getAllActivities().map((activity, idx) => (
-                  <div key={activity.id || idx}>
-                    <div
-                      style={{
-                        ...styles.timelineActivityItemCompact,
-                        animationDelay: `${idx * 30}ms`
-                      }}
-                    >
-                      <div style={styles.timelineActivityHeader}>
-                        <div style={styles.activityAuthorCompact}>
-                          <div style={styles.activityAvatarSmall}>
-                            {activity.author.split(' ').map(n => n[0]).join('')}
+                {getAllActivities().map((activity, idx) => {
+                  const authorDisplayName = getActivityAuthorDisplayName(activity);
+                  const authorSelection = activityAuthorEdits[activity.id] ?? getActivityAuthorValue(activity);
+                  const authorOptions = buildActivityAuthorOptions(activity);
+                  return (
+                    <div key={activity.id || idx}>
+                      <div
+                        style={{
+                          ...styles.timelineActivityItemCompact,
+                          animationDelay: `${idx * 30}ms`
+                        }}
+                      >
+                        <div style={styles.timelineActivityHeader}>
+                          <div style={styles.activityAuthorCompact}>
+                            <div style={styles.activityAvatarSmall}>
+                              {getInitials(authorDisplayName)}
+                            </div>
+                            {activityEditEnabled ? (
+                              <select
+                                value={authorSelection}
+                                onChange={(e) => updateActivityAuthor(activity.id, e.target.value)}
+                                style={styles.activityAuthorSelect}
+                              >
+                                {authorOptions.map(option => (
+                                  <option key={option.value} value={option.value}>{option.label}</option>
+                                ))}
+                              </select>
+                            ) : (
+                              <span style={styles.activityAuthorNameCompact}>{activity.author}</span>
+                            )}
                           </div>
-                          <span style={styles.activityAuthorNameCompact}>{activity.author}</span>
-                        </div>
-                        <div style={styles.projectBadgeSmall}>
-                          {activity.projectName}
-                        </div>
-                        <span style={styles.activityTimeCompact}>{formatDateTime(activity.date)}</span>
-                      </div>
-                      
-                      {activity.taskContext && (
-                        <div style={styles.taskContextBadgeCompact}>
-                          <MessageSquare size={11} />
-                          {activity.taskContext.taskTitle} → {activity.taskContext.subtaskTitle}
-                        </div>
-                      )}
-                      
-                      <div style={styles.activityNoteRow}>
-                        {activityEditEnabled ? (
-                          <div style={styles.activityEditRow}>
-                            <textarea
-                              value={activityEdits[activity.id] ?? activity.note}
-                              onChange={(e) => updateActivityNote(activity.id, e.target.value)}
-                              onFocus={() => setFocusedField(`activity-${activity.id}`)}
-                              onBlur={() => setFocusedField(null)}
-                              style={styles.activityNoteInput}
-                            />
-                            {renderEditingHint(`activity-${activity.id}`)}
-                            <button
-                              style={styles.activityDeleteButton}
-                              onClick={() => deleteActivity(activity.id)}
-                              aria-label="Delete activity"
-                            >
-                              <Trash2 size={18} />
-                            </button>
+                          <div style={styles.projectBadgeSmall}>
+                            {activity.projectName}
                           </div>
-                        ) : (
-                          <p style={styles.activityNoteCompact}>
-                            {parseTaggedText(activity.note).map((part, idx) => (
-                              part.type === 'tag' ? (
-                                <span key={idx} style={styles.tagInlineCompact}>
-                                  {part.display}
-                                </span>
-                              ) : (
-                                <span key={idx}>{part.content}</span>
-                              )
-                            ))}
-                          </p>
+                          <span style={styles.activityTimeCompact}>{formatDateTime(activity.date)}</span>
+                        </div>
+                        
+                        {activity.taskContext && (
+                          <div style={styles.taskContextBadgeCompact}>
+                            <MessageSquare size={11} />
+                            {activity.taskContext.taskTitle} → {activity.taskContext.subtaskTitle}
+                          </div>
                         )}
+                        
+                        <div style={styles.activityNoteRow}>
+                          {activityEditEnabled ? (
+                            <div style={styles.activityEditRow}>
+                              <textarea
+                                value={activityEdits[activity.id] ?? activity.note}
+                                onChange={(e) => updateActivityNote(activity.id, e.target.value)}
+                                onFocus={() => setFocusedField(`activity-${activity.id}`)}
+                                onBlur={() => setFocusedField(null)}
+                                style={styles.activityNoteInput}
+                              />
+                              {renderEditingHint(`activity-${activity.id}`)}
+                              <button
+                                style={styles.activityDeleteButton}
+                                onClick={() => deleteActivity(activity.id)}
+                                aria-label="Delete activity"
+                              >
+                                <Trash2 size={18} />
+                              </button>
+                            </div>
+                          ) : (
+                            <p style={styles.activityNoteCompact}>
+                              {parseTaggedText(activity.note).map((part, idx) => (
+                                part.type === 'tag' ? (
+                                  <span key={idx} style={styles.tagInlineCompact}>
+                                    {part.display}
+                                  </span>
+                                ) : (
+                                  <span key={idx}>{part.content}</span>
+                                )
+                              ))}
+                            </p>
+                          )}
+                        </div>
                       </div>
+                      {idx < getAllActivities().length - 1 && (
+                        <div style={styles.timelineSeparator} />
+                      )}
                     </div>
-                    {idx < getAllActivities().length - 1 && (
-                      <div style={styles.timelineSeparator} />
-                    )}
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             </div>
           </>
@@ -9373,6 +9535,16 @@ const styles = {
     fontFamily: "'Inter', sans-serif",
     fontWeight: '600',
     color: 'var(--charcoal)',
+  },
+
+  activityAuthorSelect: {
+    border: '1px solid var(--cloud)',
+    borderRadius: '6px',
+    padding: '4px 8px',
+    fontSize: '13px',
+    fontFamily: "'Inter', sans-serif",
+    color: 'var(--charcoal)',
+    backgroundColor: '#FFFFFF',
   },
 
   projectBadgeSmall: {
