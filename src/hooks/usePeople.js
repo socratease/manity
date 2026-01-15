@@ -58,6 +58,15 @@ export const usePeople = () => {
     if (!input) return null;
 
     if (typeof input === 'string') {
+      const existingById = findPersonById(input);
+      if (existingById) {
+        return {
+          id: existingById.id,
+          name: existingById.name,
+          team: existingById.team,
+          email: existingById.email ?? null
+        };
+      }
       const existing = findPersonByName(input);
       return existing
         ? { id: existing.id, name: existing.name, team: existing.team, email: existing.email ?? null }
