@@ -2469,16 +2469,6 @@ def create_task(project_id: str, payload: TaskPayload, request: Request, session
     session.commit()
     session.refresh(task)
 
-    # Add activity for task creation
-    assignee_name = None
-    if task.assignee_id:
-        assignee = session.exec(select(Person).where(Person.id == task.assignee_id)).first()
-        assignee_name = assignee.name if assignee else None
-    add_data_change_activity(
-        session, project_id, request,
-        f"Created task: {task.title}" + (f" (assigned to {assignee_name})" if assignee_name else "")
-    )
-
     log_action(session, "create_task", "task", task.id, {"project_id": project_id, "title": task.title}, request)
     return serialize_project_with_people(session, load_project(session, project_id))
 
@@ -2514,7 +2504,7 @@ def update_task(project_id: str, task_id: str, payload: TaskPayload, request: Re
         else:
             changes.append("unassigned")
 
-    if changes:
+    if changes and not (len(changes) == 1 and old_title != task.title):
         add_data_change_activity(
             session, project_id, request,
             f"Updated task '{task.title}': {', '.join(changes)}"
@@ -2562,16 +2552,6 @@ def create_subtask(project_id: str, task_id: str, payload: SubtaskPayload, reque
         subtask.assignee = assignee
     session.add(subtask)
     session.commit()
-
-    # Add activity for subtask creation
-    assignee_name = None
-    if subtask.assignee_id:
-        assignee = session.exec(select(Person).where(Person.id == subtask.assignee_id)).first()
-        assignee_name = assignee.name if assignee else None
-    add_data_change_activity(
-        session, project_id, request,
-        f"Created subtask '{subtask.title}' in task '{task.title}'" + (f" (assigned to {assignee_name})" if assignee_name else "")
-    )
 
     log_action(session, "create_subtask", "subtask", subtask.id, {"project_id": project_id, "task_id": task_id, "title": subtask.title}, request)
     return serialize_project_with_people(session, load_project(session, project_id))
@@ -2625,7 +2605,7 @@ def update_subtask(project_id: str, task_id: str, subtask_id: str, payload: Subt
         else:
             changes.append("unassigned")
 
-    if changes:
+    if changes and not (len(changes) == 1 and old_title != subtask.title):
         add_data_change_activity(
             session, project_id, request,
             f"Updated subtask '{subtask.title}' in task '{task_title}': {', '.join(changes)}"
