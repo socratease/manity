@@ -1,0 +1,51 @@
+# Manity Frontend - systemd user service template
+#
+# Prerequisites:
+#   - Build the frontend first: cd <PROJECT_ROOT> && npm ci && npm run build
+#   - Install a static file server: npm install -g serve
+#     (or use npx - see ExecStart alternatives below)
+#
+# Setup:
+#   1. Copy this file to ~/.config/systemd/user/manity-frontend.service
+#   2. Edit the copy: replace all <PLACEHOLDER> values with your actual paths/ports
+#   3. Run: loginctl enable-linger <your-username>      (requires root, persists service after logout)
+#   4. Run: systemctl --user daemon-reload
+#   5. Run: systemctl --user enable manity-frontend
+#   6. Run: systemctl --user start manity-frontend
+#
+# Common operations:
+#   Restart after a new build:   systemctl --user restart manity-frontend
+#   View logs:                   journalctl --user -u manity-frontend -f
+#   Check status:                systemctl --user status manity-frontend
+#   After editing this file:     systemctl --user daemon-reload && systemctl --user restart manity-frontend
+#
+# NOTE: Do NOT use pkill to stop the process; the service will auto-restart it.
+#       Use systemctl --user stop/restart instead.
+
+[Unit]
+Description=Manity Portfolio Frontend (static serve)
+
+[Service]
+WorkingDirectory=<PROJECT_ROOT>
+
+# Option A: globally installed 'serve'
+ExecStart=<PATH_TO_SERVE> -s <PROJECT_ROOT>/dist -l <FRONTEND_PORT>
+
+# Option B: use npx (uncomment and comment out Option A)
+# ExecStart=<PATH_TO_NPX> --yes serve -s <PROJECT_ROOT>/dist -l <FRONTEND_PORT>
+
+# Option C: use node directly from your nvm/fnm install
+# ExecStart=<HOME>/.nvm/versions/node/<VERSION>/bin/npx --yes serve -s <PROJECT_ROOT>/dist -l <FRONTEND_PORT>
+
+# Set VITE_API_BASE so the frontend build knows where the backend lives.
+# This is only needed at build time, but including it here documents the relationship.
+Environment=NODE_ENV=production
+
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target

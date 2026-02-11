@@ -1,0 +1,39 @@
+# Manity Backend - systemd user service template
+#
+# Setup:
+#   1. Copy this file to ~/.config/systemd/user/manity-backend.service
+#   2. Edit the copy: replace all <PLACEHOLDER> values with your actual paths/ports
+#   3. Run: loginctl enable-linger <your-username>      (requires root, persists service after logout)
+#   4. Run: systemctl --user daemon-reload
+#   5. Run: systemctl --user enable manity-backend
+#   6. Run: systemctl --user start manity-backend
+#
+# Common operations:
+#   Restart after code changes:  systemctl --user restart manity-backend
+#   View logs:                   journalctl --user -u manity-backend -f
+#   Check status:                systemctl --user status manity-backend
+#   After editing this file:     systemctl --user daemon-reload && systemctl --user restart manity-backend
+#
+# NOTE: Do NOT use pkill to stop the process; the service will auto-restart it.
+#       Use systemctl --user stop/restart instead.
+
+[Unit]
+Description=Manity Portfolio Backend (uvicorn)
+
+[Service]
+WorkingDirectory=<PROJECT_ROOT>/backend
+ExecStart=<VENV_PATH>/bin/uvicorn main:app --host 0.0.0.0 --port <BACKEND_PORT>
+
+# Load environment variables (API keys, DATABASE_URL, etc.) from your .env file.
+# Create backend/.env from backend/.env.example with your real values.
+# Alternatively, use multiple Environment= lines below instead.
+EnvironmentFile=<PROJECT_ROOT>/backend/.env
+
+Restart=always
+RestartSec=10
+
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=default.target
