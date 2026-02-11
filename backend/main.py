@@ -634,6 +634,51 @@ def upsert_person_from_details(
     return person
 
 
+def lookup_person(session: Session, reference) -> "Person | None":
+    """
+    Read-only person lookup. Accepts an id string, name string, or structured
+    reference and returns the matching Person without creating or modifying any
+    records.  Use this instead of resolve_person_reference when you only need to
+    link to an existing person (e.g. resolving an activity author).
+    """
+    if reference is None:
+        return None
+
+    if isinstance(reference, Person):
+        return reference
+
+    if isinstance(reference, str):
+        normalized = reference.strip()
+        if not normalized:
+            return None
+        person = session.get(Person, normalized)
+        if person:
+            return person
+        return get_person_by_name(session, normalized)
+
+    person_id = None
+    name = None
+
+    if isinstance(reference, (Stakeholder, AssigneePayload, PersonPayload, PersonReference)):
+        person_id = getattr(reference, "id", None)
+        name = getattr(reference, "name", None)
+    elif isinstance(reference, dict):
+        person_id = reference.get("id")
+        name = reference.get("name")
+    else:
+        return None
+
+    if person_id:
+        person = session.get(Person, person_id)
+        if person:
+            return person
+
+    if name:
+        return get_person_by_name(session, name.strip())
+
+    return None
+
+
 def resolve_person_reference(session: Session, reference) -> "Person | None":
     """
     Accepts a variety of person representations (id dict, PersonPayload, Stakeholder, or name string)
@@ -953,7 +998,7 @@ def resolve_activity_author(
 ) -> tuple[str, str | None]:
     name = get_logged_in_user(request) or fallback
     if name:
-        author_person = resolve_person_reference(session, name)
+        author_person = lookup_person(session, name)
         return author_person.name if author_person else name, author_person.id if author_person else None
     return "Unknown", None
 
@@ -1485,7 +1530,7 @@ def migrate_people_links(session: Session) -> None:
 
         for activity in project.recentActivity or []:
             if activity.author_id is None and activity.author:
-                person = resolve_person_reference(session, activity.author)
+                person = lookup_person(session, activity.author)
                 if person:
                     activity.author_id = person.id
                     activity.author = person.name
@@ -1806,7 +1851,7 @@ def upsert_project(session: Session, payload: ProjectPayload) -> Project:
                 "taskTitle": activity_payload.taskContext.taskTitle,
                 "subtaskTitle": activity_payload.taskContext.subtaskTitle,
             })
-        author_person = resolve_person_reference(session, activity_payload.author_id or activity_payload.author)
+        author_person = lookup_person(session, activity_payload.author_id or activity_payload.author)
         author_name = (author_person.name if author_person else None) or activity_payload.author
         activity = Activity(
             id=activity_payload.id or generate_id("activity"),
@@ -2660,7 +2705,7 @@ def create_activity(project_id: str, payload: ActivityPayload, request: Request,
             "subtaskTitle": payload.taskContext.subtaskTitle,
         })
 
-    author_person = resolve_person_reference(session, payload.author_id or payload.author)
+    author_person = lookup_person(session, payload.author_id or payload.author)
     author_name = (author_person.name if author_person else None) or payload.author or "Unknown"
     activity = Activity(
         id=payload.id or generate_id("activity"),
@@ -2688,7 +2733,7 @@ def update_activity(project_id: str, activity_id: str, payload: ActivityPayload,
     activity = session.exec(select(Activity).where(Activity.id == activity_id, Activity.project_id == project_id)).first()
     if not activity:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Activity not found")
-    author_person = resolve_person_reference(session, payload.author_id or payload.author)
+    author_person = lookup_person(session, payload.author_id or payload.author)
     activity.note = payload.note
     activity.date = payload.date
     # Update taskContext if provided
